@@ -1,5 +1,4 @@
 open! Base
-open Lwt.Let_syntax
 open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 open Typed_endpoint
 
@@ -160,6 +159,8 @@ module Err_rs = struct
   let metadata = Metadata.v ~description:"Error response" ~tags:[ "errors" ] ()
 end
 
+let parse_error_message (error : Parse_error.t) = error.param ^ ": " ^ error.error
+
 module Health_rs = struct
   type t = { status : string } [@@deriving yojson, jsonschema]
 
@@ -245,7 +246,11 @@ let get_user_post_text =
        / query "page" (module Page)
        /? nil)
     ~request:Request.empty
-    ~responses:(ok (Response.text ~description:"Plain text ok" ()))
+    ~on_parse_error:(fun error ->
+      Bad_request Err_rs.{ error = parse_error_message error })
+    ~responses:
+      (ok (Response.text ~description:"Plain text ok" ())
+       |+ bad_request (Response.json_error (module Err_rs)))
   @@ fun user_id post_id q page (_req : B.req) () ->
   let q_s = Option.value q ~default:"<none>" in
   let page_s = Option.value_map page ~default:"<none>" ~f:Int.to_string in
@@ -269,6 +274,8 @@ let create_post =
     ~description:"Create post"
     ~tags:[ "posts" ]
     ~operation_id:"createPost"
+    ~on_parse_error:(fun error ->
+      Bad_request Err_rs.{ error = parse_error_message error })
     ~request:(Request.json (module Create_post_rq))
     ~path:(s "users" / param "user_id" (module User_id) / s "posts" /? nil)
     ~responses:
@@ -292,6 +299,8 @@ let delete_post =
     ~description:"Delete post"
     ~tags:[ "posts" ]
     ~request:Request.empty
+    ~on_parse_error:(fun error ->
+      Bad_request Err_rs.{ error = parse_error_message error })
     ~path:
       (s "users"
        / param "user_id" (module User_id)
@@ -299,7 +308,8 @@ let delete_post =
        / param "post_id" (module Post_id)
        /? nil)
     ~responses:
-      (ok (Response.empty ~description:"Deleted" ())
+      (no_content ~description:"Deleted"
+       |+ bad_request (Response.json_error (module Err_rs))
        |+ not_found (Response.json_error (module Wrap1 (Err_rs)))
        |+ internal_server_error
             (Response.json_custom (module Err_rs) (module Wrap1 (Err_rs))))
@@ -309,7 +319,7 @@ let delete_post =
     let module WE = Wrap1 (Err_rs) in
     Lwt.return (Not_found WE.{ abc = Err_rs.{ error = "post not found" } })
   | "internal" -> Lwt.return (Internal_server_error Err_rs.{ error = "ise" })
-  | _ -> Lwt.return (OK ())
+  | _ -> Lwt.return No_content
 ;;
 
 let update_post =
@@ -318,6 +328,8 @@ let update_post =
     ~description:"Update post"
     ~tags:[ "posts" ]
     ~operation_id:"updatePost"
+    ~on_parse_error:(fun error ->
+      Bad_request Err_rs.{ error = parse_error_message error })
     ~request:(Request.json (module Update_post_rq))
     ~path:
       (s "users"
@@ -351,15 +363,16 @@ let list_posts =
     ~description:"List user posts"
     ~tags:[ "posts" ]
     ~request:Request.empty
+    ~on_parse_error:(fun error ->
+      Bad_request Err_rs.{ error = parse_error_message error })
     ~path:(s "users" / param "user_id" (module User_id) / s "posts" /? nil)
     ~responses:
       (ok (Response.json_ok (module Post_list_rs))
+       |+ bad_request (Response.json_error (module Err_rs))
        |+ not_found (Response.json_error (module Err_rs)))
   @@ fun (user_id : User_id.t) (_req : B.req) () ->
   match user_id with
-  | 0 ->
-    let%bind resp = B.respond_string ~status:`Forbidden "Abc" in
-    Lwt.return @@ Raw resp
+  | 0 -> Lwt.return (Not_found Err_rs.{ error = "user not found" })
   | _ when user_id < 0 -> Lwt.return (Not_found Err_rs.{ error = "user not found" })
   | _ ->
     let posts =
@@ -379,6 +392,8 @@ let cover_all =
     ~meth:B.post
     ~description:"Route that exercises ALL response paths"
     ~tags:[ "cover-all" ]
+    ~on_parse_error:(fun error ->
+      Bad_request Err_rs.{ error = parse_error_message error })
     ~path:
       (s "cover"
        / param "id" (module Int_id)
@@ -421,11 +436,6 @@ let cover_all =
   | "code-status" ->
     Lwt.return
       (Code ((`Not_modified :> B.status_code), Err_rs.{ error = "not modified" }))
-  | "raw" ->
-    let%bind resp =
-      B.respond_string ~status:(`Code 200) ("RAW: id=" ^ Int.to_string id)
-    in
-    Lwt.return (Raw resp)
   | "validate-body" ->
     if String.is_empty body.kind then
       Lwt.return (Bad_request Err_rs.{ error = "kind is empty (validation)" })
@@ -452,8 +462,13 @@ let cover_empty =
     ~tags:[ "cover-all" ]
     ~path:(s "cover" / s "empty" /? nil)
     ~request:Request.empty
-    ~responses:(ok (Response.empty ~description:"No content" ()))
-  @@ fun (_req : B.req) () -> Lwt.return (OK ())
+    ~responses:(no_content ~description:"No content")
+  @@ fun (_req : B.req) () -> Lwt.return No_content
+;;
+
+let unsafe_raw =
+  Unsafe.route ~meth:B.get ~path:"/unsafe/raw" ~handler:(fun _request ->
+    B.respond_string ~status:`Forbidden "unsafe")
 ;;
 
 let cover_json_not_wrapped =
@@ -504,13 +519,21 @@ let groups : Group.t list =
            ~description:"Coverage / demo endpoints (v1)"
            ~tags:[ "cover-all" ]
            ())
-      [ cover_all; cover_text; cover_empty; cover_json_not_wrapped; echo_plain; health ]
+      [ cover_all
+      ; cover_text
+      ; cover_empty
+      ; cover_json_not_wrapped
+      ; echo_plain
+      ; health
+      ; unsafe_raw
+      ]
   ]
 ;;
 
 (* Call generation: *)
-let openapi : Yojson.Safe.t = D.openapi groups
-let app : B.app_builder = D.build_app groups
+let compiled = D.compile_exn groups
+let openapi : Yojson.Safe.t = Compiled.openapi compiled
+let app : B.app_builder = Compiled.app compiled
 
 let%expect_test "openapi snapshot" =
   Stdlib.Printf.printf "%s" (Yojson.Safe.pretty_to_string openapi);
@@ -545,7 +568,20 @@ let%expect_test "openapi snapshot" =
               }
             ],
             "responses": {
-              "200": { "description": "Deleted" },
+              "204": { "description": "Deleted" },
+              "400": {
+                "description": "Error response",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "properties": { "error": { "type": "string" } },
+                      "required": [ "error" ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
               "404": {
                 "description": "Error response",
                 "content": {
@@ -625,6 +661,19 @@ let%expect_test "openapi snapshot" =
               "200": {
                 "description": "Plain text ok",
                 "content": { "text/plain": { "schema": { "type": "string" } } }
+              },
+              "400": {
+                "description": "Error response",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "properties": { "error": { "type": "string" } },
+                      "required": [ "error" ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
               }
             }
           },
@@ -871,6 +920,19 @@ let%expect_test "openapi snapshot" =
                   }
                 }
               },
+              "400": {
+                "description": "Error response",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "properties": { "error": { "type": "string" } },
+                      "required": [ "error" ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
               "404": {
                 "description": "Error response",
                 "content": {
@@ -1075,7 +1137,7 @@ let%expect_test "openapi snapshot" =
             "description": "Empty 204 (covers Response.Empty)",
             "tags": [ "cover-all" ],
             "parameters": [],
-            "responses": { "200": { "description": "No content" } }
+            "responses": { "204": { "description": "No content" } }
           }
         },
         "/v1/cover/json": {

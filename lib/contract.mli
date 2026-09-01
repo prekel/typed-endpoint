@@ -1,0 +1,127 @@
+open! Base
+
+module Metadata : sig
+  type t =
+    { description : string
+    ; summary : string option
+    ; tags : string list
+    ; deprecated : bool
+    ; operation_id : string option
+    }
+
+  val v
+    :  ?summary:string
+    -> ?tags:string list
+    -> ?deprecated:bool
+    -> ?operation_id:string
+    -> description:string
+    -> unit
+    -> t
+end
+
+type param_kind =
+  [ `Path
+  | `Query
+  ]
+
+type param =
+  { name : string
+  ; kind : param_kind
+  ; required : bool
+  ; schema : Ppx_deriving_jsonschema_runtime.t
+  ; metadata : Metadata.t
+  }
+
+type request_body =
+  | No_body
+  | Json_body of
+      { schema : Ppx_deriving_jsonschema_runtime.t
+      ; metadata : Metadata.t
+      }
+  | Text_body of { metadata : Metadata.t }
+
+type response_payload =
+  | Empty of { metadata : Metadata.t }
+  | Text of { metadata : Metadata.t }
+  | Json of
+      { schema : Ppx_deriving_jsonschema_runtime.t
+      ; metadata : Metadata.t
+      }
+
+type response =
+  { status : int
+  ; payload : response_payload
+  }
+
+type endpoint =
+  { meth : string
+  ; path : string
+  ; metadata : Metadata.t option
+  ; params : param list
+  ; request_body : request_body
+  ; responses : response list
+  ; response_families : int list list
+  ; has_parsers : bool
+  ; has_parse_error_mapper : bool
+  }
+
+type route =
+  { meth : string
+  ; path : string
+  ; endpoint : endpoint option
+  }
+
+type group =
+  { prefix : string list
+  ; metadata : Metadata.t
+  ; routes : route list
+  }
+
+module Compile_error : sig
+  type t =
+    | Duplicate_route of
+        { meth : string
+        ; path : string
+        }
+    | Duplicate_operation_id of string
+    | Duplicate_response_status of
+        { meth : string
+        ; path : string
+        ; status : int
+        }
+    | Empty_response_family of
+        { meth : string
+        ; path : string
+        }
+    | Invalid_no_content_response of
+        { meth : string
+        ; path : string
+        }
+    | Missing_parse_error_mapper of
+        { meth : string
+        ; path : string
+        }
+
+  val to_string : t -> string
+end
+
+module Compiled : sig
+  type compiled_route =
+    { meth : string
+    ; path : string
+    ; endpoint : endpoint option
+    }
+
+  type compiled_group =
+    { metadata : Metadata.t
+    ; routes : compiled_route list
+    }
+
+  type t
+
+  val groups : t -> compiled_group list
+end
+
+val prefix_to_string : string list -> string
+val compile : group list -> (Compiled.t, Compile_error.t list) Result.t
+val compile_exn : group list -> Compiled.t

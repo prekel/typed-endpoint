@@ -1,9 +1,10 @@
 (library
  (name typed_endpoint_test)
  (package typed-endpoint-opium)
- (modules routes)
+ (modules invariants routes)
  (libraries
   base
+  cohttp
   lwt
   opium
   ppx_deriving_jsonschema.runtime

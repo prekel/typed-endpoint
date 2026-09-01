@@ -6,19 +6,7 @@ module Json_schema = struct
   type t = Ppx_deriving_jsonschema_runtime.t
 end
 
-module Metadata = struct
-  type t =
-    { description : string
-    ; summary : string option
-    ; tags : string list
-    ; deprecated : bool
-    ; operation_id : string option
-    }
-
-  let v ?summary ?(tags = []) ?(deprecated = false) ?operation_id ~description () =
-    { description; summary; tags; deprecated; operation_id }
-  ;;
-end
+module Metadata = Contract.Metadata
 
 module type Json_schemable = sig
   type t
@@ -167,6 +155,32 @@ module Backend = struct
   end
 end
 
+module Runtime_error = struct
+  type t =
+    | Undeclared_status of
+        { meth : string
+        ; path : string
+        ; status : int
+        ; declared : int list
+        }
+
+  let to_string = function
+    | Undeclared_status { meth; path; status; declared } ->
+      let declared = declared |> List.map ~f:Int.to_string |> String.concat ~sep:", " in
+      "handler returned undeclared status "
+      ^ Int.to_string status
+      ^ " for "
+      ^ meth
+      ^ " "
+      ^ path
+      ^ "; declared: ["
+      ^ declared
+      ^ "]"
+  ;;
+end
+
+exception Runtime_error of Runtime_error.t
+
 module Param = struct
   module type S = sig
     type t
@@ -239,9 +253,6 @@ module Wrapper = struct
   module type S1 = sig
     module Wrap_ok (Inner : Response_payload.S) : Wrapped.S with module Inner = Inner
     module Wrap_error (Inner : Response_payload.S) : Wrapped.S with module Inner = Inner
-
-    module Wrap_parse_error (Inner : Response_payload.S with type t = Parse_error.t) :
-      Wrapped.S with module Inner = Inner
   end
 
   module Identity : S1 = struct
@@ -258,14 +269,6 @@ module Wrapper = struct
 
       let wrap x = x
     end
-
-    module Wrap_parse_error (Inner : Response_payload.S with type t = Parse_error.t) =
-    struct
-      include Inner
-      module Inner = Inner
-
-      let wrap x = x
-    end
   end
 end
 
@@ -273,16 +276,34 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
   module B = B
 
   type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp =
-    | OK of 'ok
-    | Created of 'created
-    | Code_2xx of (B.success_status * 'code2xx)
-    | Not_found of 'nf
-    | Bad_request of 'bad
-    | Code_4xx of (B.client_error_status * 'code4xx)
-    | Internal_server_error of 'ise
-    | Code_5xx of (B.server_error_status * 'code5xx)
-    | Code of (B.status_code * 'code)
-    | Raw of B.resp
+    | OK :
+        'ok
+        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+    | Created :
+        'created
+        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+    | No_content : ('ok, 'created, unit, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+    | Code_2xx :
+        B.success_status * 'code2xx
+        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+    | Not_found :
+        'nf
+        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+    | Bad_request :
+        'bad
+        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+    | Code_4xx :
+        B.client_error_status * 'code4xx
+        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+    | Internal_server_error :
+        'ise
+        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+    | Code_5xx :
+        B.server_error_status * 'code5xx
+        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+    | Code :
+        B.status_code * 'code
+        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
 
   module D = struct
     type never = |
@@ -442,14 +463,21 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         Some (Metadata.v ?summary ~tags ~deprecated ?operation_id ~description ())
     ;;
 
-    module WrappedParseError = W.Wrap_parse_error (Parse_error)
-
-    let render_parse_error (pe : Parse_error.t) : B.resp Lwt.t =
-      let wrapped = WrappedParseError.wrap pe in
-      B.respond_json ~status:`Bad_request (WrappedParseError.to_yojson wrapped)
+    let meth_to_string : B.meth -> string = function
+      | `GET -> "get"
+      | `POST -> "post"
+      | `HEAD -> "head"
+      | `DELETE -> "delete"
+      | `PATCH -> "patch"
+      | `PUT -> "put"
+      | `OPTIONS -> "options"
+      | `TRACE -> "trace"
+      | `CONNECT -> "connect"
+      | `Other method_ -> String.lowercase method_
     ;;
 
-    let rec apply_path : type h f. (h, f) path -> h -> B.req -> (f, B.resp Lwt.t) Result.t
+    let rec apply_path
+      : type h f. (h, f) path -> h -> B.req -> (f, Parse_error.t) Result.t
       =
       fun pattern handler req0 ->
       match pattern with
@@ -458,7 +486,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
       | Param (name, (module P : Param.S with type t = _), rest) ->
         let raw = B.param req0 name in
         (match P.of_string raw with
-         | Error e -> Error (render_parse_error (Parse_error.of_param_error name raw e))
+         | Error e -> Error (Parse_error.of_param_error name raw e)
          | Ok v ->
            let handler' = handler v in
            apply_path rest handler' req0)
@@ -471,9 +499,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         in
         (match parsed with
          | Error e ->
-           Error
-             (render_parse_error
-                (Parse_error.of_query_error name (Option.value raw_opt ~default:"") e))
+           Error (Parse_error.of_query_error name (Option.value raw_opt ~default:"") e)
          | Ok v_opt ->
            let handler' = handler v_opt in
            apply_path rest handler' req0)
@@ -486,16 +512,14 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         in
         (match parsed with
          | Error e ->
-           Error
-             (render_parse_error
-                (Parse_error.of_query_error name (Option.value raw_opt ~default:"") e))
+           Error (Parse_error.of_query_error name (Option.value raw_opt ~default:"") e)
          | Ok v_opt ->
            let handler' = handler v_opt in
            apply_path rest handler' req0)
     ;;
 
     let parse_request
-      : type req. req Request.t -> B.req -> (req, B.resp Lwt.t) Result.t Lwt.t
+      : type req. req Request.t -> B.req -> (req, Parse_error.t) Result.t Lwt.t
       =
       fun spec req0 ->
       match spec with
@@ -507,16 +531,15 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         let%bind s = B.body_to_string req0 in
         let json =
           try Ok (Yojson.Safe.from_string s) with
-          | _ -> Error (Parse_error.of_body_error "body" (`String s) "invalid json")
+          | Yojson.Json_error _ ->
+            Error (Parse_error.of_body_error "body" (`String s) "invalid json")
         in
         (match json with
-         | Error pe -> Lwt.return (Error (render_parse_error pe))
+         | Error pe -> Lwt.return (Error pe)
          | Ok json ->
            (match Rq.of_yojson json with
             | Ok v -> Lwt.return (Ok v)
-            | Error err ->
-              Lwt.return
-                (Error (render_parse_error (Parse_error.of_body_error "body" json err)))))
+            | Error err -> Lwt.return (Error (Parse_error.of_body_error "body" json err))))
     ;;
 
     let respond_ok_with_status
@@ -596,6 +619,8 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
       =
       fun tail -> R_Code2xx (codes, spec, tail)
     ;;
+
+    let no_content ~description = code2xx [ `No_content ] (Response.empty ~description ())
 
     let not_found (spec : 'nf Response.t)
       :  ('ok, 'created, 'code2xx, never, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
@@ -731,9 +756,10 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
 
     let rec get_code2xx_any
       : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> c2 Response.t
+        (ok, created, c2, nf, bad, c4, ise, c5, code) rb
+        -> B.success_status list * c2 Response.t
       = function
-      | R_Code2xx (_codes, spec, _) -> spec
+      | R_Code2xx (codes, spec, _) -> codes, spec
       | R_OK (_, tl) -> get_code2xx_any tl
       | R_Created (_, tl) -> get_code2xx_any tl
       | R_Not_found (_, tl) -> get_code2xx_any tl
@@ -747,9 +773,10 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
 
     let rec get_code4xx_any
       : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> c4 Response.t
+        (ok, created, c2, nf, bad, c4, ise, c5, code) rb
+        -> B.client_error_status list * c4 Response.t
       = function
-      | R_Code4xx (_codes, spec, _) -> spec
+      | R_Code4xx (codes, spec, _) -> codes, spec
       | R_OK (_, tl) -> get_code4xx_any tl
       | R_Created (_, tl) -> get_code4xx_any tl
       | R_Code2xx (_, _, tl) -> get_code4xx_any tl
@@ -763,9 +790,10 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
 
     let rec get_code5xx_any
       : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> c5 Response.t
+        (ok, created, c2, nf, bad, c4, ise, c5, code) rb
+        -> B.server_error_status list * c5 Response.t
       = function
-      | R_Code5xx (_codes, spec, _) -> spec
+      | R_Code5xx (codes, spec, _) -> codes, spec
       | R_OK (_, tl) -> get_code5xx_any tl
       | R_Created (_, tl) -> get_code5xx_any tl
       | R_Code2xx (_, _, tl) -> get_code5xx_any tl
@@ -779,9 +807,10 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
 
     let rec get_code_any
       : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> code Response.t
+        (ok, created, c2, nf, bad, c4, ise, c5, code) rb
+        -> B.status_code list * code Response.t
       = function
-      | R_Code (_codes, spec, _) -> spec
+      | R_Code (codes, spec, _) -> codes, spec
       | R_OK (_, tl) -> get_code_any tl
       | R_Created (_, tl) -> get_code_any tl
       | R_Code2xx (_, _, tl) -> get_code_any tl
@@ -826,6 +855,10 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
       ; responses :
           ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
       ; metadata : Metadata.t option
+      ; on_parse_error :
+          (Parse_error.t
+           -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp)
+            option
       }
 
     type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) responses =
@@ -840,6 +873,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
           ?deprecated
           ?operation_id
           ?description
+          ?on_parse_error
           ~(request : req Request.t)
           ~(path :
              ( h
@@ -859,26 +893,31 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
       ; responses = responses RNil
       ; metadata =
           metadata_of_opts ?summary ?tags ?deprecated ?operation_id ?description ()
+      ; on_parse_error
       }
     ;;
 
     let render_resp
-          (b :
-            ( _
-              , _
-              , 'ok
-              , 'created
-              , 'code2xx
-              , 'nf
-              , 'bad
-              , 'code4xx
-              , 'ise
-              , 'code5xx
-              , 'code )
-              builder)
-          (r : ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp)
-      : B.resp Lwt.t
+      : type h req ok created code2xx nf bad code4xx ise code5xx code.
+        (h, req, ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) builder
+        -> (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) resp
+        -> B.resp Lwt.t
       =
+      fun b r ->
+      let ensure_declared status declared =
+        let status = B.code_of_status status in
+        let declared = List.map declared ~f:(fun status -> B.code_of_status status) in
+        match
+          Runtime.ensure_declared
+            ~meth:(meth_to_string b.meth)
+            ~path:(path_to_string b.pattern)
+            ~status
+            ~declared
+        with
+        | Ok () -> ()
+        | Error { meth; path; status; declared } ->
+          raise (Runtime_error (Undeclared_status { meth; path; status; declared }))
+      in
       match r with
       | OK v ->
         let spec = get_ok b.responses in
@@ -886,9 +925,19 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
       | Created v ->
         let spec = get_created b.responses in
         respond_ok_with_status ~status:`Created spec v
+      | No_content ->
+        let statuses, spec = get_code2xx_any b.responses in
+        ensure_declared
+          (`No_content :> B.status_code)
+          (List.map statuses ~f:(fun status -> ((status :> B.status) :> B.status_code)));
+        respond_ok_with_status ~status:`No_content spec ()
       | Code_2xx (st, v) ->
-        let spec = get_code2xx_any b.responses in
-        respond_ok_with_status ~status:((st :> B.status) :> B.status_code) spec v
+        let statuses, spec = get_code2xx_any b.responses in
+        let status = ((st :> B.status) :> B.status_code) in
+        ensure_declared
+          status
+          (List.map statuses ~f:(fun status -> ((status :> B.status) :> B.status_code)));
+        respond_ok_with_status ~status spec v
       | Not_found v ->
         let spec = get_not_found b.responses in
         respond_ok_with_status ~status:`Not_found spec v
@@ -896,100 +945,54 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         let spec = get_bad_request b.responses in
         respond_ok_with_status ~status:`Bad_request spec v
       | Code_4xx (st, v) ->
-        let spec = get_code4xx_any b.responses in
-        respond_ok_with_status ~status:((st :> B.status) :> B.status_code) spec v
+        let statuses, spec = get_code4xx_any b.responses in
+        let status = ((st :> B.status) :> B.status_code) in
+        ensure_declared
+          status
+          (List.map statuses ~f:(fun status -> ((status :> B.status) :> B.status_code)));
+        respond_ok_with_status ~status spec v
       | Internal_server_error v ->
         let spec = get_internal_server_error b.responses in
         respond_ok_with_status ~status:`Internal_server_error spec v
       | Code_5xx (st, v) ->
-        let spec = get_code5xx_any b.responses in
-        respond_ok_with_status ~status:((st :> B.status) :> B.status_code) spec v
+        let statuses, spec = get_code5xx_any b.responses in
+        let status = ((st :> B.status) :> B.status_code) in
+        ensure_declared
+          status
+          (List.map statuses ~f:(fun status -> ((status :> B.status) :> B.status_code)));
+        respond_ok_with_status ~status spec v
       | Code (st, v) ->
-        let spec = get_code_any b.responses in
+        let statuses, spec = get_code_any b.responses in
+        ensure_declared st statuses;
         respond_ok_with_status ~status:st spec v
-      | Raw resp -> Lwt.return resp
     ;;
 
-    module Openapi_document = Openapi.Make (struct
-        type t = Metadata.t
-
-        let description (metadata : t) = metadata.description
-        let summary (metadata : t) = metadata.summary
-        let tags (metadata : t) = metadata.tags
-        let deprecated (metadata : t) = metadata.deprecated
-        let operation_id (metadata : t) = metadata.operation_id
-      end)
-
     module Openapi_adapter = struct
-      type param_kind = Openapi_document.param_kind
-
-      type param_spec = Openapi_document.param_spec =
-        { name : string
-        ; kind : param_kind
-        ; required : bool
-        ; schema : Json_schema.t
-        ; meta : Metadata.t
-        }
-
-      type request_body_spec = Openapi_document.request_body_spec =
-        | No_body
-        | Json_body of
-            { schema : Json_schema.t
-            ; meta : Metadata.t
-            }
-        | Text_body of { meta : Metadata.t }
-
-      type response_payload_spec = Openapi_document.response_payload_spec =
-        | Resp_empty of { meta : Metadata.t }
-        | Resp_text of { meta : Metadata.t }
-        | Resp_json of
-            { schema : Json_schema.t
-            ; meta : Metadata.t
-            }
-
-      type response_spec = Openapi_document.response_spec =
-        { status : int
-        ; payload : response_payload_spec
-        }
-
-      let meth_to_string : B.meth -> string = function
-        | `GET -> "get"
-        | `POST -> "post"
-        | `HEAD -> "head"
-        | `DELETE -> "delete"
-        | `PATCH -> "patch"
-        | `PUT -> "put"
-        | `OPTIONS -> "options"
-        | `TRACE -> "trace"
-        | `CONNECT -> "connect"
-        | `Other o -> String.lowercase o
-      ;;
-
-      let request_body_spec_of_request : type req. req Request.t -> request_body_spec =
+      let request_body_spec_of_request : type req. req Request.t -> Contract.request_body =
         fun r ->
         match r with
-        | Request.Empty -> No_body
-        | Request.PlainText { metadata } -> Text_body { meta = metadata }
+        | Request.Empty -> Contract.No_body
+        | Request.PlainText { metadata } -> Text_body { metadata }
         | Request.JSON (module Rq) ->
-          Json_body { schema = Rq.t_jsonschema; meta = Rq.metadata }
+          Json_body { schema = Rq.t_jsonschema; metadata = Rq.metadata }
       ;;
 
       let response_payload_spec_of_response
-        : type a. a Response.t -> response_payload_spec
+        : type a. a Response.t -> Contract.response_payload
         =
         fun r ->
         match r.payload with
-        | Response.Empty -> Resp_empty { meta = r.metadata }
-        | Response.PlainText -> Resp_text { meta = r.metadata }
-        | Response.JsonRaw -> Resp_text { meta = r.metadata }
+        | Response.Empty -> Empty { metadata = r.metadata }
+        | Response.PlainText -> Text { metadata = r.metadata }
+        | Response.JsonRaw -> Json { schema = `Bool true; metadata = r.metadata }
         | Response.Json (module P) ->
-          Resp_json { schema = P.t_jsonschema; meta = r.metadata }
+          Json { schema = P.t_jsonschema; metadata = r.metadata }
         | Response.JsonWrapped
             ((_ : (module Response_payload.S with type t = a)), (module F)) ->
-          Resp_json { schema = F.t_jsonschema; meta = r.metadata }
+          Json { schema = F.t_jsonschema; metadata = r.metadata }
       ;;
 
-      let rec path_params : type h f. (h, f) path -> param_spec list =
+      let rec path_params : type h f. (h, f) path -> Contract.param list =
         fun p ->
         match p with
         | End -> []
@@ -999,7 +1002,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
           ; kind = `Path
           ; required = true
           ; schema = P.t_jsonschema
-          ; meta = P.metadata
+          ; metadata = P.metadata
           }
           :: path_params rest
         | Query (name, (module Q : Query.S with type t = _), rest) ->
@@ -1007,7 +1010,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
           ; kind = `Query
           ; required = false
           ; schema = Q.t_jsonschema
-          ; meta = Q.metadata
+          ; metadata = Q.metadata
           }
           :: path_params rest
         | QueryReq (name, (module Q : Query.S with type t = _), rest) ->
@@ -1015,65 +1018,108 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
           ; kind = `Query
           ; required = true
           ; schema = Q.t_jsonschema
-          ; meta = Q.metadata
+          ; metadata = Q.metadata
           }
           :: path_params rest
       ;;
 
       let rec collect_responses
         : type ok created c2 nf bad c4 ise c5 code.
-          (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> response_spec list
+          (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> Contract.response list
         = function
         | RNil -> []
         | R_OK (spec, tl) ->
-          { status = B.code_of_status (`OK :> B.status_code)
+          { Contract.status = B.code_of_status (`OK :> B.status_code)
           ; payload = response_payload_spec_of_response spec
           }
           :: collect_responses tl
         | R_Created (spec, tl) ->
-          { status = B.code_of_status (`Created :> B.status_code)
+          { Contract.status = B.code_of_status (`Created :> B.status_code)
           ; payload = response_payload_spec_of_response spec
           }
           :: collect_responses tl
         | R_Code2xx (codes, spec, tl) ->
           List.map codes ~f:(fun st ->
-            { status = B.code_of_status ((st :> B.status) :> B.status_code)
+            { Contract.status = B.code_of_status ((st :> B.status) :> B.status_code)
             ; payload = response_payload_spec_of_response spec
             })
           @ collect_responses tl
         | R_Not_found (spec, tl) ->
-          { status = B.code_of_status (`Not_found :> B.status_code)
+          { Contract.status = B.code_of_status (`Not_found :> B.status_code)
           ; payload = response_payload_spec_of_response spec
           }
           :: collect_responses tl
         | R_Bad_request (spec, tl) ->
-          { status = B.code_of_status (`Bad_request :> B.status_code)
+          { Contract.status = B.code_of_status (`Bad_request :> B.status_code)
           ; payload = response_payload_spec_of_response spec
           }
           :: collect_responses tl
         | R_Code4xx (codes, spec, tl) ->
           List.map codes ~f:(fun st ->
-            { status = B.code_of_status ((st :> B.status) :> B.status_code)
+            { Contract.status = B.code_of_status ((st :> B.status) :> B.status_code)
             ; payload = response_payload_spec_of_response spec
             })
           @ collect_responses tl
         | R_Internal_server_error (spec, tl) ->
-          { status = B.code_of_status (`Internal_server_error :> B.status_code)
+          { Contract.status = B.code_of_status (`Internal_server_error :> B.status_code)
           ; payload = response_payload_spec_of_response spec
           }
           :: collect_responses tl
         | R_Code5xx (codes, spec, tl) ->
           List.map codes ~f:(fun st ->
-            { status = B.code_of_status ((st :> B.status) :> B.status_code)
+            { Contract.status = B.code_of_status ((st :> B.status) :> B.status_code)
             ; payload = response_payload_spec_of_response spec
             })
           @ collect_responses tl
         | R_Code (codes, spec, tl) ->
           List.map codes ~f:(fun st ->
-            { status = B.code_of_status st
+            { Contract.status = B.code_of_status st
             ; payload = response_payload_spec_of_response spec
             })
           @ collect_responses tl
+      ;;
+
+      let rec response_families
+        : type ok created c2 nf bad c4 ise c5 code.
+          (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> int list list
+        = function
+        | RNil -> []
+        | R_OK (_, tail) ->
+          [ B.code_of_status (`OK :> B.status_code) ] :: response_families tail
+        | R_Created (_, tail) ->
+          [ B.code_of_status (`Created :> B.status_code) ] :: response_families tail
+        | R_Code2xx (statuses, _, tail) ->
+          List.map statuses ~f:(fun status ->
+            B.code_of_status ((status :> B.status) :> B.status_code))
+          :: response_families tail
+        | R_Not_found (_, tail) ->
+          [ B.code_of_status (`Not_found :> B.status_code) ] :: response_families tail
+        | R_Bad_request (_, tail) ->
+          [ B.code_of_status (`Bad_request :> B.status_code) ] :: response_families tail
+        | R_Code4xx (statuses, _, tail) ->
+          List.map statuses ~f:(fun status ->
+            B.code_of_status ((status :> B.status) :> B.status_code))
+          :: response_families tail
+        | R_Internal_server_error (_, tail) ->
+          [ B.code_of_status (`Internal_server_error :> B.status_code) ]
+          :: response_families tail
+        | R_Code5xx (statuses, _, tail) ->
+          List.map statuses ~f:(fun status ->
+            B.code_of_status ((status :> B.status) :> B.status_code))
+          :: response_families tail
+        | R_Code (statuses, _, tail) ->
+          List.map statuses ~f:B.code_of_status :: response_families tail
+      ;;
+
+      let rec path_has_parsers : type h f. (h, f) path -> bool = function
+        | End -> false
+        | Static (_, tail) -> path_has_parsers tail
+        | Param _ | Query _ | QueryReq _ -> true
+      ;;
+
+      let request_has_parser : type request. request Request.t -> bool = function
+        | Request.JSON _ -> true
+        | Request.Empty | Request.PlainText _ -> false
       ;;
     end
 
@@ -1082,8 +1128,18 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         { meth : B.meth
         ; path : string
         ; handler : B.req -> B.resp Lwt.t
-        ; endpoint : Openapi_document.endpoint
+        ; contract : Contract.route
         }
+    end
+
+    module Unsafe = struct
+      let route ~meth ~path ~handler =
+        { Route.meth
+        ; path
+        ; handler
+        ; contract = { Contract.meth = meth_to_string meth; path; endpoint = None }
+        }
+      ;;
     end
 
     module Group = struct
@@ -1097,7 +1153,6 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
     end
 
     let build_app (groups : Group.t list) : B.app_builder =
-      let prefix_to_string = Openapi_document.prefix_to_string in
       let compile_route ~(prefix : string) (r : Route.t) : B.app_builder =
         let full_path =
           if String.is_empty prefix then
@@ -1108,7 +1163,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         B.route r.meth full_path r.handler
       in
       List.fold groups ~init:B.empty ~f:(fun acc g ->
-        let prefix = prefix_to_string g.prefix in
+        let prefix = Contract.prefix_to_string g.prefix in
         let gb =
           List.fold g.routes ~init:B.empty ~f:(fun acc2 r ->
             B.combine acc2 (compile_route ~prefix r))
@@ -1116,15 +1171,67 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         B.combine acc gb)
     ;;
 
-    let openapi (groups : Group.t list) : Yojson.Safe.t =
-      let rendered : Openapi_document.group list =
-        List.map groups ~f:(fun g ->
-          { Openapi_document.group_meta = g.metadata
-          ; prefix = g.prefix
-          ; endpoints = List.map g.routes ~f:(fun r -> r.endpoint)
+    module Compiled = struct
+      type t =
+        { contract : Contract.Compiled.t
+        ; app : B.app_builder
+        }
+
+      let app compiled = compiled.app
+
+      let openapi ?title ?version compiled =
+        Openapi.render ?title ?version compiled.contract
+      ;;
+    end
+
+    module Compile_error = struct
+      type t = Contract.Compile_error.t =
+        | Duplicate_route of
+            { meth : string
+            ; path : string
+            }
+        | Duplicate_operation_id of string
+        | Duplicate_response_status of
+            { meth : string
+            ; path : string
+            ; status : int
+            }
+        | Empty_response_family of
+            { meth : string
+            ; path : string
+            }
+        | Invalid_no_content_response of
+            { meth : string
+            ; path : string
+            }
+        | Missing_parse_error_mapper of
+            { meth : string
+            ; path : string
+            }
+
+      let to_string = Contract.Compile_error.to_string
+    end
+
+    let compile (groups : Group.t list) : (Compiled.t, Compile_error.t list) Result.t =
+      let contract_groups =
+        List.map groups ~f:(fun group ->
+          { Contract.prefix = group.prefix
+          ; metadata = group.metadata
+          ; routes = List.map group.routes ~f:(fun route -> route.contract)
           })
       in
-      Openapi_document.render rendered
+      Contract.compile contract_groups
+      |> Result.map ~f:(fun contract -> { Compiled.contract; app = build_app groups })
+    ;;
+
+    let compile_exn groups =
+      match compile groups with
+      | Ok compiled -> compiled
+      | Error errors ->
+        errors
+        |> List.map ~f:Contract.Compile_error.to_string
+        |> String.concat ~sep:"; "
+        |> failwith
     ;;
 
     let make
@@ -1134,6 +1241,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
           ?deprecated
           ?operation_id
           ?description
+          ?on_parse_error
           ~request
           ~path
           ~responses
@@ -1148,33 +1256,54 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
           ?deprecated
           ?operation_id
           ?description
+          ?on_parse_error
           ~request
           ~path
           ~responses
           ()
       in
       let path_str = path_to_string b.pattern in
+      let render_parse_error error =
+        match b.on_parse_error with
+        | Some map -> render_resp b (map error)
+        | None ->
+          failwith
+            ("missing parse-error mapper for " ^ meth_to_string b.meth ^ " " ^ path_str)
+      in
       let wrapped (req0 : B.req) : B.resp Lwt.t =
         match apply_path b.pattern f req0 with
-        | Error resp_lwt -> resp_lwt
+        | Error error -> render_parse_error error
         | Ok f' ->
           let%bind parsed = parse_request b.request req0 in
           (match parsed with
-           | Error resp_lwt -> resp_lwt
+           | Error error -> render_parse_error error
            | Ok body ->
              let%bind r = f' req0 body in
              render_resp b r)
       in
-      let endpoint : Openapi_document.endpoint =
-        { meth = Openapi_adapter.meth_to_string b.meth
+      let endpoint : Contract.endpoint =
+        { meth = meth_to_string b.meth
         ; path = path_str
-        ; operation_meta = b.metadata
+        ; metadata = b.metadata
         ; params = Openapi_adapter.path_params b.pattern
         ; request_body = Openapi_adapter.request_body_spec_of_request b.request
         ; responses = Openapi_adapter.collect_responses b.responses
+        ; response_families = Openapi_adapter.response_families b.responses
+        ; has_parsers =
+            Openapi_adapter.path_has_parsers b.pattern
+            || Openapi_adapter.request_has_parser b.request
+        ; has_parse_error_mapper = Option.is_some b.on_parse_error
         }
       in
-      { Route.meth = b.meth; path = path_str; handler = wrapped; endpoint }
+      { Route.meth = b.meth
+      ; path = path_str
+      ; handler = wrapped
+      ; contract =
+          { Contract.meth = meth_to_string b.meth
+          ; path = path_str
+          ; endpoint = Some endpoint
+          }
+      }
     ;;
   end
 end

@@ -166,6 +166,22 @@ module Backend : sig
   end
 end
 
+(** A response returned by a handler violates its declared status contract. *)
+module Runtime_error : sig
+  type t =
+    | Undeclared_status of
+        { meth : string
+        ; path : string
+        ; status : int
+        ; declared : int list
+        }
+
+  val to_string : t -> string
+end
+
+(** Raised when a handler returns a status absent from its response declaration. *)
+exception Runtime_error of Runtime_error.t
+
 module Param : sig
   module type S = sig
     type t
@@ -236,9 +252,6 @@ module Wrapper : sig
   module type S1 = sig
     module Wrap_ok (Inner : Response_payload.S) : Wrapped.S with module Inner = Inner
     module Wrap_error (Inner : Response_payload.S) : Wrapped.S with module Inner = Inner
-
-    module Wrap_parse_error (Inner : Response_payload.S with type t = Parse_error.t) :
-      Wrapped.S with module Inner = Inner
   end
 
   module Identity : S1
@@ -250,16 +263,35 @@ module Make
     module B : Backend.S
 
     type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp =
-      | OK of 'ok
-      | Created of 'created
-      | Code_2xx of (B.success_status * 'code2xx)
-      | Not_found of 'nf
-      | Bad_request of 'bad
-      | Code_4xx of (B.client_error_status * 'code4xx)
-      | Internal_server_error of 'ise
-      | Code_5xx of (B.server_error_status * 'code5xx)
-      | Code of (B.status_code * 'code)
-      | Raw of B.resp
+      | OK :
+          'ok
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+      | Created :
+          'created
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+      | No_content :
+          ('ok, 'created, unit, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+      | Code_2xx :
+          B.success_status * 'code2xx
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+      | Not_found :
+          'nf
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+      | Bad_request :
+          'bad
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+      | Code_4xx :
+          B.client_error_status * 'code4xx
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+      | Internal_server_error :
+          'ise
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+      | Code_5xx :
+          B.server_error_status * 'code5xx
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+      | Code :
+          B.status_code * 'code
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
 
     module D : sig
       type never = |
@@ -362,6 +394,12 @@ module Make
         -> ('ok, 'created, never, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
         -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
 
+      (** Declares the only body-less successful response, HTTP 204. *)
+      val no_content
+        :  description:string
+        -> ('ok, 'created, never, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
+        -> ('ok, 'created, unit, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
+
       val code4xx
         :  B.client_error_status list
         -> 'code4xx Response.t
@@ -416,6 +454,18 @@ module Make
         -> ?deprecated:bool
         -> ?operation_id:string
         -> ?description:string
+        -> ?on_parse_error:
+             (Parse_error.t
+              -> ( 'ok
+                   , 'created
+                   , 'code2xx
+                   , 'nf
+                   , 'bad
+                   , 'code4xx
+                   , 'ise
+                   , 'code5xx
+                   , 'code )
+                   resp)
         -> request:'req Request.t
         -> path:
              ( 'h
@@ -453,8 +503,58 @@ module Make
         val v : ?prefix:string list -> metadata:Metadata.t -> Route.t list -> t
       end
 
-      val build_app : Group.t list -> B.app_builder
-      val openapi : Group.t list -> Yojson.Safe.t
+      module Unsafe : sig
+        (** Adds a runtime-only route that is deliberately absent from OpenAPI. *)
+        val route
+          :  meth:B.meth
+          -> path:string
+          -> handler:(B.req -> B.resp Lwt.t)
+          -> Route.t
+      end
+
+      module Compile_error : sig
+        type t =
+          | Duplicate_route of
+              { meth : string
+              ; path : string
+              }
+          | Duplicate_operation_id of string
+          | Duplicate_response_status of
+              { meth : string
+              ; path : string
+              ; status : int
+              }
+          | Empty_response_family of
+              { meth : string
+              ; path : string
+              }
+          | Invalid_no_content_response of
+              { meth : string
+              ; path : string
+              }
+          | Missing_parse_error_mapper of
+              { meth : string
+              ; path : string
+              }
+
+        val to_string : t -> string
+      end
+
+      module Compiled : sig
+        type t
+
+        (** Builds the backend-specific runtime application. *)
+        val app : t -> B.app_builder
+
+        (** Renders the OpenAPI document from the compiled contract. *)
+        val openapi : ?title:string -> ?version:string -> t -> Yojson.Safe.t
+      end
+
+      (** Validates route declarations and produces their common contract. *)
+      val compile : Group.t list -> (Compiled.t, Compile_error.t list) Result.t
+
+      (** Like [compile], but raises [Failure] with all validation errors. *)
+      val compile_exn : Group.t list -> Compiled.t
     end
   end
   with module B = B
