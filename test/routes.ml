@@ -1,4 +1,6 @@
 open! Base
+open Lwt.Let_syntax
+open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 open Typed_endpoint
 
 module Wr = struct
@@ -356,7 +358,7 @@ let list_posts =
   @@ fun (user_id : User_id.t) (_req : B.req) () ->
   match user_id with
   | 0 ->
-    let%lwt resp = B.respond_string ~status:`Forbidden "Abc" in
+    let%bind resp = B.respond_string ~status:`Forbidden "Abc" in
     Lwt.return @@ Raw resp
   | _ when user_id < 0 -> Lwt.return (Not_found Err_rs.{ error = "user not found" })
   | _ ->
@@ -420,7 +422,9 @@ let cover_all =
     Lwt.return
       (Code ((`Not_modified :> B.status_code), Err_rs.{ error = "not modified" }))
   | "raw" ->
-    let%lwt resp = B.respond_string ~status:(`Code 200) ("RAW: id=" ^ Int.to_string id) in
+    let%bind resp =
+      B.respond_string ~status:(`Code 200) ("RAW: id=" ^ Int.to_string id)
+    in
     Lwt.return (Raw resp)
   | "validate-body" ->
     if String.is_empty body.kind then
@@ -636,10 +640,10 @@ let%expect_test "openapi snapshot" =
                   "schema": {
                     "type": "object",
                     "properties": {
-                      "body": { "type": "string" },
-                      "title": { "type": "string" }
+                      "body": { "type": [ "string", "null" ] },
+                      "title": { "type": [ "string", "null" ] }
                     },
-                    "required": [],
+                    "required": [ "body", "title" ],
                     "additionalProperties": false
                   }
                 }
@@ -1111,10 +1115,10 @@ let%expect_test "openapi snapshot" =
                   "schema": {
                     "type": "object",
                     "properties": {
-                      "n": { "type": "integer" },
+                      "n": { "type": [ "integer", "null" ] },
                       "kind": { "type": "string" }
                     },
-                    "required": [ "kind" ],
+                    "required": [ "n", "kind" ],
                     "additionalProperties": false
                   }
                 }
@@ -1474,5 +1478,6 @@ let%expect_test "openapi snapshot" =
           }
         }
       }
-    } |}]
+    }
+    |}]
 ;;

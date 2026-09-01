@@ -22,7 +22,7 @@ end
 module type Json_schemable = sig
   type t
 
-  val t_jsonschema : Yojson.Safe.t
+  val t_jsonschema : Ppx_deriving_jsonschema_runtime.t
 end
 
 module type Metadatable = sig

@@ -1,7 +1,9 @@
 open! Base
+open Lwt.Let_syntax
+open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 
 module Json_schema = struct
-  type t = Yojson.Safe.t
+  type t = Ppx_deriving_jsonschema_runtime.t
 end
 
 module Metadata = struct
@@ -499,10 +501,10 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
       match spec with
       | Request.Empty -> Lwt.return (Ok ())
       | Request.PlainText _ ->
-        let%lwt s = B.body_to_string req0 in
+        let%bind s = B.body_to_string req0 in
         Lwt.return (Ok s)
       | Request.JSON (module Rq) ->
-        let%lwt s = B.body_to_string req0 in
+        let%bind s = B.body_to_string req0 in
         let json =
           try Ok (Yojson.Safe.from_string s) with
           | _ -> Error (Parse_error.of_body_error "body" (`String s) "invalid json")
@@ -908,15 +910,20 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
       | Raw resp -> Lwt.return resp
     ;;
 
-    module Openapi = struct
-      type http_meth = B.meth
+    module Openapi_document = Openapi.Make (struct
+        type t = Metadata.t
 
-      type param_kind =
-        [ `Path
-        | `Query
-        ]
+        let description (metadata : t) = metadata.description
+        let summary (metadata : t) = metadata.summary
+        let tags (metadata : t) = metadata.tags
+        let deprecated (metadata : t) = metadata.deprecated
+        let operation_id (metadata : t) = metadata.operation_id
+      end)
 
-      type param_spec =
+    module Openapi_adapter = struct
+      type param_kind = Openapi_document.param_kind
+
+      type param_spec = Openapi_document.param_spec =
         { name : string
         ; kind : param_kind
         ; required : bool
@@ -924,7 +931,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         ; meta : Metadata.t
         }
 
-      type request_body_spec =
+      type request_body_spec = Openapi_document.request_body_spec =
         | No_body
         | Json_body of
             { schema : Json_schema.t
@@ -932,7 +939,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
             }
         | Text_body of { meta : Metadata.t }
 
-      type response_payload_spec =
+      type response_payload_spec = Openapi_document.response_payload_spec =
         | Resp_empty of { meta : Metadata.t }
         | Resp_text of { meta : Metadata.t }
         | Resp_json of
@@ -940,39 +947,12 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
             ; meta : Metadata.t
             }
 
-      type response_spec =
-        { status : B.status_code
+      type response_spec = Openapi_document.response_spec =
+        { status : int
         ; payload : response_payload_spec
         }
 
-      type endpoint =
-        { meth : http_meth
-        ; path : string
-        ; operation_meta : Metadata.t option
-        ; params : param_spec list
-        ; request_body : request_body_spec
-        ; responses : response_spec list
-        }
-
-      let path_to_openapi (path : string) : string =
-        let segs =
-          String.split ~on:'/' path
-          |> List.map ~f:(fun seg ->
-            if String.is_prefix seg ~prefix:":" then
-              "{" ^ String.drop_prefix seg 1 ^ "}"
-            else
-              seg)
-        in
-        String.concat ~sep:"/" segs
-      ;;
-
-      let prefix_to_string (segs : string list) : string =
-        match segs with
-        | [] -> ""
-        | _ -> "/" ^ String.concat ~sep:"/" segs
-      ;;
-
-      let meth_to_string : http_meth -> string = function
+      let meth_to_string : B.meth -> string = function
         | `GET -> "get"
         | `POST -> "post"
         | `HEAD -> "head"
@@ -984,8 +964,6 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         | `CONNECT -> "connect"
         | `Other o -> String.lowercase o
       ;;
-
-      let status_code_to_int = B.code_of_status
 
       let request_body_spec_of_request : type req. req Request.t -> request_body_spec =
         fun r ->
@@ -1048,229 +1026,54 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         = function
         | RNil -> []
         | R_OK (spec, tl) ->
-          { status = (`OK :> B.status_code)
+          { status = B.code_of_status (`OK :> B.status_code)
           ; payload = response_payload_spec_of_response spec
           }
           :: collect_responses tl
         | R_Created (spec, tl) ->
-          { status = (`Created :> B.status_code)
+          { status = B.code_of_status (`Created :> B.status_code)
           ; payload = response_payload_spec_of_response spec
           }
           :: collect_responses tl
         | R_Code2xx (codes, spec, tl) ->
           List.map codes ~f:(fun st ->
-            { status = ((st :> B.status) :> B.status_code)
+            { status = B.code_of_status ((st :> B.status) :> B.status_code)
             ; payload = response_payload_spec_of_response spec
             })
           @ collect_responses tl
         | R_Not_found (spec, tl) ->
-          { status = (`Not_found :> B.status_code)
+          { status = B.code_of_status (`Not_found :> B.status_code)
           ; payload = response_payload_spec_of_response spec
           }
           :: collect_responses tl
         | R_Bad_request (spec, tl) ->
-          { status = (`Bad_request :> B.status_code)
+          { status = B.code_of_status (`Bad_request :> B.status_code)
           ; payload = response_payload_spec_of_response spec
           }
           :: collect_responses tl
         | R_Code4xx (codes, spec, tl) ->
           List.map codes ~f:(fun st ->
-            { status = ((st :> B.status) :> B.status_code)
+            { status = B.code_of_status ((st :> B.status) :> B.status_code)
             ; payload = response_payload_spec_of_response spec
             })
           @ collect_responses tl
         | R_Internal_server_error (spec, tl) ->
-          { status = (`Internal_server_error :> B.status_code)
+          { status = B.code_of_status (`Internal_server_error :> B.status_code)
           ; payload = response_payload_spec_of_response spec
           }
           :: collect_responses tl
         | R_Code5xx (codes, spec, tl) ->
           List.map codes ~f:(fun st ->
-            { status = ((st :> B.status) :> B.status_code)
+            { status = B.code_of_status ((st :> B.status) :> B.status_code)
             ; payload = response_payload_spec_of_response spec
             })
           @ collect_responses tl
         | R_Code (codes, spec, tl) ->
           List.map codes ~f:(fun st ->
-            { status = st; payload = response_payload_spec_of_response spec })
+            { status = B.code_of_status st
+            ; payload = response_payload_spec_of_response spec
+            })
           @ collect_responses tl
-      ;;
-
-      let yo_str s = `String s
-      let yo_bool b = `Bool b
-      let yo_list xs = `List xs
-      let yo_obj xs = `Assoc xs
-
-      let render_param (p : param_spec) : Yojson.Safe.t =
-        yo_obj
-          [ "name", yo_str p.name
-          ; ( "in"
-            , yo_str
-                (match p.kind with
-                 | `Path -> "path"
-                 | `Query -> "query") )
-          ; "required", yo_bool p.required
-          ; "description", yo_str p.meta.description
-          ; "schema", p.schema
-          ]
-      ;;
-
-      let render_request_body (rb : request_body_spec) : Yojson.Safe.t option =
-        match rb with
-        | No_body -> None
-        | Text_body { meta } ->
-          Some
-            (yo_obj
-               [ "required", yo_bool true
-               ; "description", yo_str meta.description
-               ; ( "content"
-                 , yo_obj
-                     [ ( "text/plain"
-                       , yo_obj [ "schema", yo_obj [ "type", yo_str "string" ] ] )
-                     ] )
-               ])
-        | Json_body { schema; meta } ->
-          Some
-            (yo_obj
-               [ "required", yo_bool true
-               ; "description", yo_str meta.description
-               ; "content", yo_obj [ "application/json", yo_obj [ "schema", schema ] ]
-               ])
-      ;;
-
-      let render_response_payload (p : response_payload_spec) : Yojson.Safe.t =
-        match p with
-        | Resp_empty { meta } -> yo_obj [ "description", yo_str meta.description ]
-        | Resp_text { meta } ->
-          yo_obj
-            [ "description", yo_str meta.description
-            ; ( "content"
-              , yo_obj
-                  [ "text/plain", yo_obj [ "schema", yo_obj [ "type", yo_str "string" ] ]
-                  ] )
-            ]
-        | Resp_json { schema; meta } ->
-          yo_obj
-            [ "description", yo_str meta.description
-            ; "content", yo_obj [ "application/json", yo_obj [ "schema", schema ] ]
-            ]
-      ;;
-
-      let merge_operation_meta ~(group : Metadata.t) ~(op : Metadata.t option)
-        : Metadata.t option
-        =
-        match op with
-        | None -> Some group
-        | Some o ->
-          let tags = List.dedup_and_sort ~compare:String.compare (group.tags @ o.tags) in
-          Some { o with tags }
-      ;;
-
-      let render_operation ~(group_meta : Metadata.t) (ep : endpoint) : Yojson.Safe.t =
-        let meta_opt = merge_operation_meta ~group:group_meta ~op:ep.operation_meta in
-        let params = yo_list (List.map ep.params ~f:render_param) in
-        let request_body = render_request_body ep.request_body in
-        let responses =
-          ep.responses
-          |> List.map ~f:(fun r ->
-            Int.to_string (status_code_to_int r.status), render_response_payload r.payload)
-          |> yo_obj
-        in
-        let base = [ "parameters", params; "responses", responses ] in
-        let base =
-          match request_body with
-          | None -> base
-          | Some rb -> ("requestBody", rb) :: base
-        in
-        match meta_opt with
-        | None -> yo_obj base
-        | Some m ->
-          yo_obj
-            (List.concat
-               [ [ "description", yo_str m.description ]
-               ; (match m.summary with
-                  | None -> []
-                  | Some s -> [ "summary", yo_str s ])
-               ; (if List.is_empty m.tags then
-                    []
-                  else
-                    [ "tags", yo_list (List.map m.tags ~f:yo_str) ])
-               ; (if m.deprecated then
-                    [ "deprecated", yo_bool true ]
-                  else
-                    [])
-               ; (match m.operation_id with
-                  | None -> []
-                  | Some op_id -> [ "operationId", yo_str op_id ])
-               ; base
-               ])
-      ;;
-
-      type group_rendered =
-        { group_meta : Metadata.t
-        ; prefix : string list
-        ; endpoints : endpoint list
-        }
-
-      let render_groups
-            ?(title = "API")
-            ?(version = "0.1.0")
-            (groups : group_rendered list)
-        : Yojson.Safe.t
-        =
-        let tags =
-          groups
-          |> List.concat_map ~f:(fun g ->
-            List.map g.group_meta.tags ~f:(fun name ->
-              yo_obj
-                [ "name", yo_str name; "description", yo_str g.group_meta.description ]))
-          |> fun xs ->
-          let tbl = Hashtbl.create (module String) in
-          List.iter xs ~f:(function
-            | `Assoc kvs as t ->
-              (match List.Assoc.find kvs ~equal:String.equal "name" with
-               | Some (`String n) ->
-                 if not (Hashtbl.mem tbl n) then
-                   Hashtbl.set tbl ~key:n ~data:t
-               | _ -> ())
-            | _ -> ());
-          Hashtbl.data tbl |> yo_list
-        in
-        let by_path = Hashtbl.create (module String) in
-        List.iter groups ~f:(fun g ->
-          let pref = prefix_to_string g.prefix in
-          List.iter g.endpoints ~f:(fun ep ->
-            let full_runtime_path =
-              if String.is_empty pref then
-                ep.path
-              else
-                pref ^ ep.path
-            in
-            let path_key = path_to_openapi full_runtime_path in
-            let meth_key = meth_to_string ep.meth in
-            let op =
-              render_operation
-                ~group_meta:g.group_meta
-                { ep with path = full_runtime_path }
-            in
-            Hashtbl.update by_path path_key ~f:(function
-              | None -> Base.Map.singleton (module String) meth_key op
-              | Some m -> Map.set m ~key:meth_key ~data:op)));
-        let paths =
-          Hashtbl.to_alist by_path
-          |> List.map ~f:(fun (p, ops) ->
-            let ops_json =
-              Map.to_alist ops |> List.map ~f:(fun (k, v) -> k, v) |> yo_obj
-            in
-            p, ops_json)
-          |> yo_obj
-        in
-        yo_obj
-          [ "openapi", yo_str "3.1.0"
-          ; "info", yo_obj [ "title", yo_str title; "version", yo_str version ]
-          ; "tags", tags
-          ; "paths", paths
-          ]
       ;;
     end
 
@@ -1279,7 +1082,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         { meth : B.meth
         ; path : string
         ; handler : B.req -> B.resp Lwt.t
-        ; endpoint : Openapi.endpoint
+        ; endpoint : Openapi_document.endpoint
         }
     end
 
@@ -1294,7 +1097,7 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
     end
 
     let build_app (groups : Group.t list) : B.app_builder =
-      let prefix_to_string = Openapi.prefix_to_string in
+      let prefix_to_string = Openapi_document.prefix_to_string in
       let compile_route ~(prefix : string) (r : Route.t) : B.app_builder =
         let full_path =
           if String.is_empty prefix then
@@ -1314,14 +1117,14 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
     ;;
 
     let openapi (groups : Group.t list) : Yojson.Safe.t =
-      let rendered : Openapi.group_rendered list =
+      let rendered : Openapi_document.group list =
         List.map groups ~f:(fun g ->
-          { Openapi.group_meta = g.metadata
+          { Openapi_document.group_meta = g.metadata
           ; prefix = g.prefix
           ; endpoints = List.map g.routes ~f:(fun r -> r.endpoint)
           })
       in
-      Openapi.render_groups rendered
+      Openapi_document.render rendered
     ;;
 
     let make
@@ -1355,20 +1158,20 @@ module Make (B : Backend.S) (W : Wrapper.S1) = struct
         match apply_path b.pattern f req0 with
         | Error resp_lwt -> resp_lwt
         | Ok f' ->
-          let%lwt parsed = parse_request b.request req0 in
+          let%bind parsed = parse_request b.request req0 in
           (match parsed with
            | Error resp_lwt -> resp_lwt
            | Ok body ->
-             let%lwt r = f' req0 body in
+             let%bind r = f' req0 body in
              render_resp b r)
       in
-      let endpoint : Openapi.endpoint =
-        { meth = b.meth
+      let endpoint : Openapi_document.endpoint =
+        { meth = Openapi_adapter.meth_to_string b.meth
         ; path = path_str
         ; operation_meta = b.metadata
-        ; params = Openapi.path_params b.pattern
-        ; request_body = Openapi.request_body_spec_of_request b.request
-        ; responses = Openapi.collect_responses b.responses
+        ; params = Openapi_adapter.path_params b.pattern
+        ; request_body = Openapi_adapter.request_body_spec_of_request b.request
+        ; responses = Openapi_adapter.collect_responses b.responses
         }
       in
       { Route.meth = b.meth; path = path_str; handler = wrapped; endpoint }
