@@ -1,0 +1,6 @@
+(library
+ (name typed_endpoint)
+ (public_name typed-endpoint)
+ (libraries base lwt yojson)
+ (preprocess
+  (pps lwt_ppx ppx_deriving_yojson ppx_deriving_jsonschema)))

@@ -1,0 +1,21 @@
+# OCaml compiler output
+*.annot
+*.cmo
+*.cma
+*.cmi
+*.a
+*.o
+*.cmx
+*.cmxs
+*.cmxa
+
+# Dune output
+_build/
+*.install
+
+# Local opam switch
+_opam/
+
+# Editor state
+.merlin
+.vscode/

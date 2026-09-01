@@ -1,0 +1,13 @@
+(library
+ (name typed_endpoint_test)
+ (package typed-endpoint-opium)
+ (modules routes)
+ (libraries base lwt opium typed-endpoint typed-endpoint-opium yojson)
+ (inline_tests)
+ (preprocess
+  (pps lwt_ppx ppx_deriving_yojson ppx_deriving_jsonschema ppx_expect)))
+
+(executable
+ (name app)
+ (modules app)
+ (libraries base cohttp lwt.unix opium typed_endpoint_test yojson))

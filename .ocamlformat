@@ -1,0 +1,8 @@
+version = 0.29.0
+profile = janestreet
+exp-grouping = preserve
+break-string-literals = never
+break-infix-before-func = false
+if-then-else = vertical
+break-infix = wrap-or-vertical
+ocp-indent-compat = true
