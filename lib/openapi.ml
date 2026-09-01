@@ -57,20 +57,19 @@ let render_request_body (request_body : Contract.request_body) : Yojson.Safe.t o
 ;;
 
 let render_response_payload (payload : Contract.response_payload) : Yojson.Safe.t =
-  match payload with
-  | Empty { metadata } -> yo_obj [ "description", yo_str metadata.description ]
-  | Text { metadata } ->
-    yo_obj
-      [ "description", yo_str metadata.description
-      ; ( "content"
-        , yo_obj [ "text/plain", yo_obj [ "schema", yo_obj [ "type", yo_str "string" ] ] ]
-        )
-      ]
-  | Json { schema; metadata } ->
-    yo_obj
-      [ "description", yo_str metadata.description
-      ; "content", yo_obj [ "application/json", yo_obj [ "schema", yo_schema schema ] ]
-      ]
+  let content =
+    List.filter_map payload.content ~f:(function
+      | Text ->
+        Some ("text/plain", yo_obj [ "schema", yo_obj [ "type", yo_str "string" ] ])
+      | Json schema -> Some ("application/json", yo_obj [ "schema", yo_schema schema ]))
+  in
+  yo_obj
+    ([ "description", yo_str payload.metadata.description ]
+     @
+     if List.is_empty content then
+       []
+     else
+       [ "content", yo_obj content ])
 ;;
 
 let operation_metadata

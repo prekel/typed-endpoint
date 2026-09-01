@@ -28,14 +28,28 @@ web-framework реализуется через `Typed_endpoint.Backend.S`.
 получается OpenAPI и runtime-приложение:
 
 ```ocaml
-let compiled = D.compile_exn groups
+open Typed_endpoint.Make (Typed_endpoint_opium)
+
+let parse_errors =
+  D.Parse_error_response.json
+    ~status:`Bad_request
+    ~payload:(module Error_response)
+    ~map:Error_response.of_parse_error
+
+let compiled = D.compile_exn ~parse_error:parse_errors groups
 let app = D.Compiled.app compiled
 let openapi = D.Compiled.openapi compiled
 ```
 
 `D.compile` возвращает список ошибок, если повторяется метод и путь,
 `operationId` или HTTP-статус, если status-family пуста, либо если маршрут с
-декодированием параметров/body не объявил `on_parse_error`.
+декодированием параметров/body не получил parse-error policy. Политика может
+быть задана на endpoint, группе или при `compile`; применяется первый вариант
+в этом порядке.
+
+JSON-форма ответа всегда задаётся явно через `D.Response.json`. Пагинация и
+envelope являются обычными response DTO конкретного endpoint, а не скрытой
+глобальной настройкой.
 
 `D.no_content` задаёт именно `204` и допускает только `No_content` в
 handler; декларации `204` с text/JSON payload отклоняются при компиляции.

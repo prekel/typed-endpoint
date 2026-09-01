@@ -239,27 +239,8 @@ module Parse_error : sig
   val to_yojson : t -> Yojson.Safe.t
 end
 
-module Wrapper : sig
-  module Wrapped : sig
-    module type S = sig
-      include Response_payload.S
-      module Inner : Response_payload.S
-
-      val wrap : Inner.t -> t
-    end
-  end
-
-  module type S1 = sig
-    module Wrap_ok (Inner : Response_payload.S) : Wrapped.S with module Inner = Inner
-    module Wrap_error (Inner : Response_payload.S) : Wrapped.S with module Inner = Inner
-  end
-
-  module Identity : S1
-end
-
 module Make
-    (B : Backend.S)
-    (_ : Wrapper.S1) : sig
+    (B : Backend.S) : sig
     module B : Backend.S
 
     type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp =
@@ -307,18 +288,23 @@ module Make
       module Response : sig
         type 'a t
 
-        val json_ok : (module Response_payload.S with type t = 'a) -> 'a t
-        val json_error : (module Response_payload.S with type t = 'a) -> 'a t
-        val json_ : (module Response_payload.S with type t = 'a) -> 'a t
-
-        val json_custom
-          :  (module Response_payload.S with type t = 'a)
-          -> (module Wrapper.Wrapped.S with type Inner.t = 'a)
-          -> 'a t
+        (** Declares the exact JSON wire type returned by the handler. *)
+        val json : (module Response_payload.S with type t = 'a) -> 'a t
 
         val text : description:string -> unit -> string t
         val json_raw : description:string -> unit -> Yojson.Safe.t t
         val empty : description:string -> unit -> unit t
+      end
+
+      module Parse_error_response : sig
+        type t
+
+        (** Defines a typed JSON response for path, query, and body decode failures. *)
+        val json
+          :  status:B.client_error_status
+          -> payload:(module Response_payload.S with type t = 'a)
+          -> map:(Parse_error.t -> 'a)
+          -> t
       end
 
       type (_, _) path
@@ -454,18 +440,7 @@ module Make
         -> ?deprecated:bool
         -> ?operation_id:string
         -> ?description:string
-        -> ?on_parse_error:
-             (Parse_error.t
-              -> ( 'ok
-                   , 'created
-                   , 'code2xx
-                   , 'nf
-                   , 'bad
-                   , 'code4xx
-                   , 'ise
-                   , 'code5xx
-                   , 'code )
-                   resp)
+        -> ?parse_error:Parse_error_response.t
         -> request:'req Request.t
         -> path:
              ( 'h
@@ -500,7 +475,14 @@ module Make
       module Group : sig
         type t
 
-        val v : ?prefix:string list -> metadata:Metadata.t -> Route.t list -> t
+        (** [parse_error] overrides the application policy for every fallible route
+            in the group unless the endpoint has its own override. *)
+        val v
+          :  ?prefix:string list
+          -> ?parse_error:Parse_error_response.t
+          -> metadata:Metadata.t
+          -> Route.t list
+          -> t
       end
 
       module Unsafe : sig
@@ -532,7 +514,7 @@ module Make
               { meth : string
               ; path : string
               }
-          | Missing_parse_error_mapper of
+          | Missing_parse_error_policy of
               { meth : string
               ; path : string
               }
@@ -550,11 +532,16 @@ module Make
         val openapi : ?title:string -> ?version:string -> t -> Yojson.Safe.t
       end
 
-      (** Validates route declarations and produces their common contract. *)
-      val compile : Group.t list -> (Compiled.t, Compile_error.t list) Result.t
+      (** Validates route declarations and produces their common contract.
+          Endpoint parse-error policies take precedence over group policies, which
+          take precedence over [parse_error]. *)
+      val compile
+        :  ?parse_error:Parse_error_response.t
+        -> Group.t list
+        -> (Compiled.t, Compile_error.t list) Result.t
 
       (** Like [compile], but raises [Failure] with all validation errors. *)
-      val compile_exn : Group.t list -> Compiled.t
+      val compile_exn : ?parse_error:Parse_error_response.t -> Group.t list -> Compiled.t
     end
   end
   with module B = B

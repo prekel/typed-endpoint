@@ -40,13 +40,14 @@ type request_body =
       }
   | Text_body of { metadata : Metadata.t }
 
+type response_content =
+  | Text
+  | Json of Ppx_deriving_jsonschema_runtime.t
+
 type response_payload =
-  | Empty of { metadata : Metadata.t }
-  | Text of { metadata : Metadata.t }
-  | Json of
-      { schema : Ppx_deriving_jsonschema_runtime.t
-      ; metadata : Metadata.t
-      }
+  { metadata : Metadata.t
+  ; content : response_content list
+  }
 
 type response =
   { status : int
@@ -60,9 +61,9 @@ type endpoint =
   ; params : param list
   ; request_body : request_body
   ; responses : response list
+  ; parse_error_response : response option
   ; response_families : int list list
   ; has_parsers : bool
-  ; has_parse_error_mapper : bool
   }
 
 type route =
@@ -97,7 +98,7 @@ module Compile_error : sig
         { meth : string
         ; path : string
         }
-    | Missing_parse_error_mapper of
+    | Missing_parse_error_policy of
         { meth : string
         ; path : string
         }

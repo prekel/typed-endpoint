@@ -34,7 +34,11 @@
 - Не используй `Obj.magic`, unchecked casts или `Raw` для обхода типовой модели
   без явно документированной необходимости.
 - Автоматические parse errors должны иметь предсказуемый статус и JSON shape;
-  изменения фиксируй regression test.
+  policy разрешается в порядке endpoint → group → compile, а изменения
+  фиксируй regression test.
+- Wire shape JSON-ответа задавай явным `Response_payload.S`. Не вводи
+  глобальный wrapper; пагинацию и envelope оформляй как DTO соответствующего
+  endpoint.
 - Новый backend реализует `Typed_endpoint.Backend.S` в отдельном пакете и не
   добавляет framework-зависимость в ядро.
 - Для асинхронного кода используй `ppx_let` (`let%bind`, `let%map`) через

@@ -41,7 +41,7 @@ module Test_backend = struct
   let empty = []
 end
 
-module Endpoint = Make (Test_backend) (Wrapper.Identity)
+module Endpoint = Make (Test_backend)
 open Endpoint
 open Endpoint.D
 
@@ -55,6 +55,25 @@ module Int_param = struct
 
   let metadata = Metadata.v ~description:"Integer parameter" ()
 end
+
+module Parse_body = struct
+  type t = { source : string } [@@deriving yojson, jsonschema]
+
+  let metadata = Metadata.v ~description:"Parse error" ()
+end
+
+module Business_error = struct
+  type t = { message : string } [@@deriving yojson, jsonschema]
+
+  let metadata = Metadata.v ~description:"Business error" ()
+end
+
+let parse_policy ~status source =
+  Parse_error_response.json
+    ~status
+    ~payload:(module Parse_body)
+    ~map:(fun _error -> Parse_body.{ source })
+;;
 
 let group routes = Group.v ~metadata:(Metadata.v ~description:"Test routes" ()) routes
 
@@ -95,7 +114,7 @@ let%expect_test "duplicate operation ids are rejected" =
   [%expect {| duplicate operationId: duplicateOperation |}]
 ;;
 
-let missing_parse_error_mapper =
+let missing_parse_error_policy =
   make
     ~meth:B.get
     ~path:(s "users" / param "id" (module Int_param) /? nil)
@@ -104,9 +123,124 @@ let missing_parse_error_mapper =
   @@ fun id _request () -> Lwt.return (OK (Int.to_string id))
 ;;
 
-let%expect_test "fallible input requires an explicit parse-error mapper" =
-  print_compile_result [ group [ missing_parse_error_mapper ] ];
-  [%expect {| missing parse-error mapper: get /users/:id |}]
+let%expect_test "fallible input requires an explicit parse-error policy" =
+  print_compile_result [ group [ missing_parse_error_policy ] ];
+  [%expect {| missing parse-error policy: get /users/:id |}]
+;;
+
+let parsing_route ?parse_error route_path =
+  make
+    ~meth:B.get
+    ?parse_error
+    ~path:(s route_path / param "id" (module Int_param) /? nil)
+    ~request:Request.empty
+    ~responses:(ok (Response.text ~description:"OK" ()))
+  @@ fun id _request () -> Lwt.return (OK (Int.to_string id))
+;;
+
+let response_at compiled path =
+  let _, _, handler =
+    Compiled.app compiled
+    |> List.find_exn ~f:(fun (_, route_path, _) -> String.equal path route_path)
+  in
+  let request = Test_backend.{ params = [ "id", "invalid" ]; queries = []; body = "" } in
+  match Lwt.state (handler request) with
+  | Return response -> response
+  | Fail error -> Stdlib.raise error
+  | Sleep -> failwith "unexpected pending response"
+;;
+
+let%expect_test "parse-error policies inherit from endpoint, group, and compile" =
+  let compile_policy = parse_policy ~status:`Bad_request "compile" in
+  let group_policy = parse_policy ~status:`Unprocessable_entity "group" in
+  let endpoint_policy = parse_policy ~status:`Conflict "endpoint" in
+  let groups =
+    [ group [ parsing_route "compile" ]
+    ; Group.v
+        ~parse_error:group_policy
+        ~metadata:(Metadata.v ~description:"Group override" ())
+        [ parsing_route "group" ]
+    ; Group.v
+        ~parse_error:group_policy
+        ~metadata:(Metadata.v ~description:"Endpoint override" ())
+        [ parsing_route ~parse_error:endpoint_policy "endpoint" ]
+    ]
+  in
+  let compiled = compile_exn ~parse_error:compile_policy groups in
+  List.iter [ "/compile/:id"; "/group/:id"; "/endpoint/:id" ] ~f:(fun path ->
+    let response = response_at compiled path in
+    Stdlib.Printf.printf "%d %s\n" response.status response.body);
+  [%expect
+    {|
+    400 {"source":"compile"}
+    422 {"source":"group"}
+    409 {"source":"endpoint"}
+    |}]
+;;
+
+let response_schema compiled path_name status =
+  let open Yojson.Safe.Util in
+  Compiled.openapi compiled
+  |> member "paths"
+  |> member path_name
+  |> member "get"
+  |> member "responses"
+  |> member (Int.to_string status)
+  |> member "content"
+  |> member "application/json"
+  |> member "schema"
+;;
+
+let schema_route ~business_schema route_path =
+  make
+    ~meth:B.get
+    ~path:(s route_path / param "id" (module Int_param) /? nil)
+    ~request:Request.empty
+    ~responses:(ok (Response.text ~description:"OK" ()) |+ bad_request business_schema)
+  @@ fun _id _request () -> Lwt.return (OK "ok")
+;;
+
+let%expect_test "parse-error schemas are deduplicated or combined with oneOf" =
+  let policy = parse_policy ~status:`Bad_request "parse" in
+  let same =
+    schema_route ~business_schema:(Response.json (module Parse_body)) "same-schema"
+  in
+  let different =
+    schema_route
+      ~business_schema:(Response.json (module Business_error))
+      "different-schema"
+  in
+  let static =
+    make
+      ~meth:B.get
+      ~path:(s "static" /? nil)
+      ~request:Request.empty
+      ~responses:(ok (Response.text ~description:"OK" ()))
+    @@ fun _request () -> Lwt.return (OK "ok")
+  in
+  let compiled = compile_exn ~parse_error:policy [ group [ same; different; static ] ] in
+  let open Yojson.Safe.Util in
+  let same_one_of = response_schema compiled "/same-schema/{id}" 400 |> member "oneOf" in
+  let different_one_of =
+    response_schema compiled "/different-schema/{id}" 400
+    |> member "oneOf"
+    |> to_list
+    |> List.length
+  in
+  let static_parse_response =
+    Compiled.openapi compiled
+    |> member "paths"
+    |> member "/static"
+    |> member "get"
+    |> member "responses"
+    |> member "400"
+  in
+  Stdlib.Printf.printf
+    "same_one_of=%b different_one_of=%d static_parse_response=%b"
+    (not (Yojson.Safe.equal same_one_of `Null))
+    different_one_of
+    (not (Yojson.Safe.equal static_parse_response `Null));
+  [%expect {| same_one_of=false different_one_of=2 static_parse_response=false |}]
 ;;
 
 let empty_response_family =

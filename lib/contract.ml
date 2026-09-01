@@ -35,13 +35,14 @@ type request_body =
       }
   | Text_body of { metadata : Metadata.t }
 
+type response_content =
+  | Text
+  | Json of Ppx_deriving_jsonschema_runtime.t
+
 type response_payload =
-  | Empty of { metadata : Metadata.t }
-  | Text of { metadata : Metadata.t }
-  | Json of
-      { schema : Ppx_deriving_jsonschema_runtime.t
-      ; metadata : Metadata.t
-      }
+  { metadata : Metadata.t
+  ; content : response_content list
+  }
 
 type response =
   { status : int
@@ -55,9 +56,9 @@ type endpoint =
   ; params : param list
   ; request_body : request_body
   ; responses : response list
+  ; parse_error_response : response option
   ; response_families : int list list
   ; has_parsers : bool
-  ; has_parse_error_mapper : bool
   }
 
 type route =
@@ -92,7 +93,7 @@ module Compile_error = struct
         { meth : string
         ; path : string
         }
-    | Missing_parse_error_mapper of
+    | Missing_parse_error_policy of
         { meth : string
         ; path : string
         }
@@ -106,8 +107,8 @@ module Compile_error = struct
       "empty response status family: " ^ meth ^ " " ^ path
     | Invalid_no_content_response { meth; path } ->
       "204 response must use an empty payload: " ^ meth ^ " " ^ path
-    | Missing_parse_error_mapper { meth; path } ->
-      "missing parse-error mapper: " ^ meth ^ " " ^ path
+    | Missing_parse_error_policy { meth; path } ->
+      "missing parse-error policy: " ^ meth ^ " " ^ path
   ;;
 end
 
@@ -150,6 +151,85 @@ let duplicate_statuses statuses =
       false))
 ;;
 
+let schema_equal
+      (left : Ppx_deriving_jsonschema_runtime.t)
+      (right : Ppx_deriving_jsonschema_runtime.t)
+  =
+  Yojson.Safe.equal (left :> Yojson.Safe.t) (right :> Yojson.Safe.t)
+;;
+
+let deduplicate_schemas (schemas : Ppx_deriving_jsonschema_runtime.t list)
+  : Ppx_deriving_jsonschema_runtime.t list
+  =
+  List.fold schemas ~init:[] ~f:(fun unique schema ->
+    if List.exists unique ~f:(schema_equal schema) then
+      unique
+    else
+      unique @ [ schema ])
+;;
+
+let merge_payloads primary secondary =
+  let contents = primary.content @ secondary.content in
+  let has_text =
+    List.exists contents ~f:(function
+      | Text -> true
+      | Json _ -> false)
+  in
+  let schemas =
+    List.filter_map contents ~f:(function
+      | Text -> None
+      | Json schema -> Some schema)
+    |> deduplicate_schemas
+  in
+  let json_content =
+    match schemas with
+    | [] -> []
+    | [ schema ] -> [ Json schema ]
+    | schemas ->
+      let schema : Ppx_deriving_jsonschema_runtime.t =
+        `Assoc [ "oneOf", `List schemas ]
+      in
+      [ Json schema ]
+  in
+  { primary with
+    content =
+      (if has_text then
+         [ Text ]
+       else
+         [])
+      @ json_content
+  }
+;;
+
+let add_parse_error_response (endpoint : endpoint) =
+  if not endpoint.has_parsers then
+    { endpoint with parse_error_response = None }
+  else (
+    match
+      endpoint.parse_error_response
+    with
+    | None -> endpoint
+    | Some parse_response ->
+      let found = ref false in
+      let responses =
+        List.map endpoint.responses ~f:(fun response ->
+          if Int.equal response.status parse_response.status then (
+            found := true;
+            { response with
+              payload = merge_payloads response.payload parse_response.payload
+            })
+          else
+            response)
+      in
+      let responses =
+        if !found then
+          responses
+        else
+          responses @ [ parse_response ]
+      in
+      { endpoint with responses; parse_error_response = None })
+;;
+
 let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t =
   let routes_seen = Hash_set.create (module String) in
   let operation_ids = Hash_set.create (module String) in
@@ -173,18 +253,18 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                   add_error (Compile_error.Duplicate_operation_id operation_id)
                 else
                   Hash_set.add operation_ids operation_id));
-            if endpoint.has_parsers && not endpoint.has_parse_error_mapper then
+            if endpoint.has_parsers && Option.is_none endpoint.parse_error_response then
               add_error
-                (Compile_error.Missing_parse_error_mapper { meth = route.meth; path });
+                (Compile_error.Missing_parse_error_policy { meth = route.meth; path });
             if List.exists endpoint.response_families ~f:List.is_empty then
               add_error (Compile_error.Empty_response_family { meth = route.meth; path });
             let statuses =
               List.map endpoint.responses ~f:(fun response -> response.status)
             in
             List.iter endpoint.responses ~f:(fun response ->
-              match response.status, response.payload with
-              | 204, Empty _ -> ()
-              | 204, (Text _ | Json _) ->
+              match response.status, response.payload.content with
+              | 204, [] -> ()
+              | 204, _ :: _ ->
                 add_error
                   (Compile_error.Invalid_no_content_response { meth = route.meth; path })
               | _ -> ());
@@ -193,7 +273,10 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
               add_error
                 (Compile_error.Duplicate_response_status
                    { meth = route.meth; path; status })));
-          { Compiled.meth = route.meth; path; endpoint = route.endpoint })
+          { Compiled.meth = route.meth
+          ; path
+          ; endpoint = Option.map route.endpoint ~f:add_parse_error_response
+          })
       in
       { Compiled.metadata = group.metadata; routes })
   in

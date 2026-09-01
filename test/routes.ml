@@ -1,21 +1,7 @@
 open! Base
 open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 open Typed_endpoint
-
-module Wr = struct
-  include Wrapper.Identity
-
-  module Wrap_ok (Inner : Response_payload.S) = struct
-    module Inner = Inner
-
-    type t = { result : Inner.t } [@@deriving to_yojson, jsonschema]
-
-    let wrap x = { result = x }
-    let metadata = Inner.metadata
-  end
-end
-
-open Make (Typed_endpoint_opium) (Wr)
+open Make (Typed_endpoint_opium)
 open D
 
 (* ---------------- Params / Queries ---------------- *)
@@ -198,34 +184,33 @@ module Body_rq = struct
   let of_yojson = of_yojson
 end
 
-(* Custom wrapper example for JsonCustom response *)
-module Wrap_envelope (Inner : Response_payload.S) = struct
-  module Inner = Inner
-
+module Err_envelope = struct
   type t =
-    { data : Inner.t
+    { data : Err_rs.t
     ; trace_id : string
     }
   [@@deriving to_yojson, jsonschema]
 
-  let wrap data = { data; trace_id = "trace-xyz" }
-
   let metadata =
     Metadata.v
-      ~description:("Envelope(" ^ Inner.metadata.description ^ ")")
-      ~tags:("wrapped" :: Inner.metadata.tags)
+      ~description:("Envelope(" ^ Err_rs.metadata.description ^ ")")
+      ~tags:("wrapped" :: Err_rs.metadata.tags)
       ()
   ;;
 end
 
-module Wrap1 (Inner : Response_payload.S) = struct
-  module Inner = Inner
+module Nested_error_response = struct
+  type t = { abc : Err_rs.t } [@@deriving to_yojson, jsonschema]
 
-  type t = { abc : Inner.t } [@@deriving to_yojson, jsonschema]
-
-  let wrap t = { abc = t }
-  let metadata = Inner.metadata
+  let metadata = Err_rs.metadata
 end
+
+let parse_errors =
+  Parse_error_response.json
+    ~status:`Bad_request
+    ~payload:(module Err_rs)
+    ~map:(fun error -> Err_rs.{ error = parse_error_message error })
+;;
 
 (* ========================= *)
 (* ===== Group 1: posts ==== *)
@@ -246,11 +231,7 @@ let get_user_post_text =
        / query "page" (module Page)
        /? nil)
     ~request:Request.empty
-    ~on_parse_error:(fun error ->
-      Bad_request Err_rs.{ error = parse_error_message error })
-    ~responses:
-      (ok (Response.text ~description:"Plain text ok" ())
-       |+ bad_request (Response.json_error (module Err_rs)))
+    ~responses:(ok (Response.text ~description:"Plain text ok" ()))
   @@ fun user_id post_id q page (_req : B.req) () ->
   let q_s = Option.value q ~default:"<none>" in
   let page_s = Option.value_map page ~default:"<none>" ~f:Int.to_string in
@@ -274,14 +255,12 @@ let create_post =
     ~description:"Create post"
     ~tags:[ "posts" ]
     ~operation_id:"createPost"
-    ~on_parse_error:(fun error ->
-      Bad_request Err_rs.{ error = parse_error_message error })
     ~request:(Request.json (module Create_post_rq))
     ~path:(s "users" / param "user_id" (module User_id) / s "posts" /? nil)
     ~responses:
-      (created (Response.json_ok (module Post_rs))
-       |+ bad_request (Response.json_error (module Err_rs))
-       |+ internal_server_error (Response.json_error (module Err_rs)))
+      (created (Response.json (module Post_rs))
+       |+ bad_request (Response.json (module Err_rs))
+       |+ internal_server_error (Response.json (module Err_rs)))
   @@ fun user_id (_req : B.req) (rq : Create_post_rq.t) ->
   if String.is_empty rq.title then
     Lwt.return (Bad_request Err_rs.{ error = "title is empty" })
@@ -299,8 +278,6 @@ let delete_post =
     ~description:"Delete post"
     ~tags:[ "posts" ]
     ~request:Request.empty
-    ~on_parse_error:(fun error ->
-      Bad_request Err_rs.{ error = parse_error_message error })
     ~path:
       (s "users"
        / param "user_id" (module User_id)
@@ -309,16 +286,16 @@ let delete_post =
        /? nil)
     ~responses:
       (no_content ~description:"Deleted"
-       |+ bad_request (Response.json_error (module Err_rs))
-       |+ not_found (Response.json_error (module Wrap1 (Err_rs)))
-       |+ internal_server_error
-            (Response.json_custom (module Err_rs) (module Wrap1 (Err_rs))))
+       |+ not_found (Response.json (module Nested_error_response))
+       |+ internal_server_error (Response.json (module Nested_error_response)))
   @@ fun (_user_id : User_id.t) (post_id : Post_id.t) (_req : B.req) () ->
   match post_id with
   | "missing" ->
-    let module WE = Wrap1 (Err_rs) in
-    Lwt.return (Not_found WE.{ abc = Err_rs.{ error = "post not found" } })
-  | "internal" -> Lwt.return (Internal_server_error Err_rs.{ error = "ise" })
+    Lwt.return
+      (Not_found Nested_error_response.{ abc = Err_rs.{ error = "post not found" } })
+  | "internal" ->
+    Lwt.return
+      (Internal_server_error Nested_error_response.{ abc = Err_rs.{ error = "ise" } })
   | _ -> Lwt.return No_content
 ;;
 
@@ -328,8 +305,6 @@ let update_post =
     ~description:"Update post"
     ~tags:[ "posts" ]
     ~operation_id:"updatePost"
-    ~on_parse_error:(fun error ->
-      Bad_request Err_rs.{ error = parse_error_message error })
     ~request:(Request.json (module Update_post_rq))
     ~path:
       (s "users"
@@ -338,10 +313,10 @@ let update_post =
        / param "post_id" (module Post_id)
        /? nil)
     ~responses:
-      (ok (Response.json_ok (module Post_rs))
-       |+ not_found (Response.json_error (module Err_rs))
-       |+ bad_request (Response.json_error (module Err_rs))
-       |+ internal_server_error (Response.json_error (module Err_rs)))
+      (ok (Response.json (module Post_rs))
+       |+ not_found (Response.json (module Err_rs))
+       |+ bad_request (Response.json (module Err_rs))
+       |+ internal_server_error (Response.json (module Err_rs)))
   @@ fun user_id post_id _req rq ->
   if Int.equal user_id 0 then
     Lwt.return (Internal_server_error Err_rs.{ error = "db down" })
@@ -363,13 +338,10 @@ let list_posts =
     ~description:"List user posts"
     ~tags:[ "posts" ]
     ~request:Request.empty
-    ~on_parse_error:(fun error ->
-      Bad_request Err_rs.{ error = parse_error_message error })
     ~path:(s "users" / param "user_id" (module User_id) / s "posts" /? nil)
     ~responses:
-      (ok (Response.json_ok (module Post_list_rs))
-       |+ bad_request (Response.json_error (module Err_rs))
-       |+ not_found (Response.json_error (module Err_rs)))
+      (ok (Response.json (module Post_list_rs))
+       |+ not_found (Response.json (module Err_rs)))
   @@ fun (user_id : User_id.t) (_req : B.req) () ->
   match user_id with
   | 0 -> Lwt.return (Not_found Err_rs.{ error = "user not found" })
@@ -392,8 +364,6 @@ let cover_all =
     ~meth:B.post
     ~description:"Route that exercises ALL response paths"
     ~tags:[ "cover-all" ]
-    ~on_parse_error:(fun error ->
-      Bad_request Err_rs.{ error = parse_error_message error })
     ~path:
       (s "cover"
        / param "id" (module Int_id)
@@ -406,19 +376,19 @@ let cover_all =
        |+ JSON.created (module Json_created)
        |+ code2xx
             [ `Accepted; `Non_authoritative_information; `Multi_status ]
-            (Response.json_ok (module Json_ok))
+            (Response.json (module Json_ok))
        |+ JSON.not_found (module Err_rs)
        |+ JSON.bad_request (module Err_rs)
        |+ code4xx
             [ `Conflict; `No_response; `Forbidden; `Unauthorized ]
-            (Response.json_error (module Err_rs))
+            (Response.json (module Err_rs))
        |+ JSON.internal_server_error (module Err_rs)
        |+ code5xx
             [ `Bad_gateway; `Service_unavailable; `Gateway_timeout ]
-            (Response.json_error (module Err_rs))
+            (Response.json (module Err_rs))
        |+ code
             [ `Code 418; `Code 499; `Not_modified ]
-            (Response.json_custom (module Err_rs) (module Wrap_envelope (Err_rs))))
+            (Response.json (module Err_envelope)))
   @@ fun id mode page _req body ->
   let _page = page in
   match mode with
@@ -432,10 +402,18 @@ let cover_all =
   | "ise" -> Lwt.return (Internal_server_error Err_rs.{ error = "internal" })
   | "5xx" -> Lwt.return (Code_5xx (`Bad_gateway, Err_rs.{ error = "bad gateway" }))
   | "code-int" ->
-    Lwt.return (Code (`Code 499, Err_rs.{ error = "client closed request" }))
+    Lwt.return
+      (Code
+         ( `Code 499
+         , Err_envelope.
+             { data = Err_rs.{ error = "client closed request" }; trace_id = "trace-xyz" }
+         ))
   | "code-status" ->
     Lwt.return
-      (Code ((`Not_modified :> B.status_code), Err_rs.{ error = "not modified" }))
+      (Code
+         ( (`Not_modified :> B.status_code)
+         , Err_envelope.
+             { data = Err_rs.{ error = "not modified" }; trace_id = "trace-xyz" } ))
   | "validate-body" ->
     if String.is_empty body.kind then
       Lwt.return (Bad_request Err_rs.{ error = "kind is empty (validation)" })
@@ -471,14 +449,14 @@ let unsafe_raw =
     B.respond_string ~status:`Forbidden "unsafe")
 ;;
 
-let cover_json_not_wrapped =
+let cover_json =
   make
     ~meth:B.get
     ~description:"Json not wrapped (covers Response.Json)"
     ~tags:[ "cover-all" ]
     ~path:(s "cover" / s "json" /? nil)
     ~request:Request.empty
-    ~responses:(ok (Response.json_ (module Json_ok)))
+    ~responses:(ok (Response.json (module Json_ok)))
   @@ fun (_req : B.req) () ->
   Lwt.return (OK Json_ok.{ ok = true; msg = "not wrapped json" })
 ;;
@@ -501,7 +479,7 @@ let health =
     ~tags:[ "misc" ]
     ~request:Request.empty
     ~path:(s "health" /? nil)
-    ~responses:(ok (Response.json_ok (module Health_rs)))
+    ~responses:(ok (Response.json (module Health_rs)))
   @@ fun (_req : B.req) () -> Lwt.return (OK Health_rs.{ status = "ok" })
 ;;
 
@@ -519,19 +497,12 @@ let groups : Group.t list =
            ~description:"Coverage / demo endpoints (v1)"
            ~tags:[ "cover-all" ]
            ())
-      [ cover_all
-      ; cover_text
-      ; cover_empty
-      ; cover_json_not_wrapped
-      ; echo_plain
-      ; health
-      ; unsafe_raw
-      ]
+      [ cover_all; cover_text; cover_empty; cover_json; echo_plain; health; unsafe_raw ]
   ]
 ;;
 
 (* Call generation: *)
-let compiled = D.compile_exn groups
+let compiled = D.compile_exn ~parse_error:parse_errors groups
 let openapi : Yojson.Safe.t = Compiled.openapi compiled
 let app : B.app_builder = Compiled.app compiled
 
@@ -569,19 +540,6 @@ let%expect_test "openapi snapshot" =
             ],
             "responses": {
               "204": { "description": "Deleted" },
-              "400": {
-                "description": "Error response",
-                "content": {
-                  "application/json": {
-                    "schema": {
-                      "type": "object",
-                      "properties": { "error": { "type": "string" } },
-                      "required": [ "error" ],
-                      "additionalProperties": false
-                    }
-                  }
-                }
-              },
               "404": {
                 "description": "Error response",
                 "content": {
@@ -617,6 +575,19 @@ let%expect_test "openapi snapshot" =
                         }
                       },
                       "required": [ "abc" ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              "400": {
+                "description": "Error response",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "properties": { "error": { "type": "string" } },
+                      "required": [ "error" ],
                       "additionalProperties": false
                     }
                   }
@@ -722,54 +693,45 @@ let%expect_test "openapi snapshot" =
                     "schema": {
                       "type": "object",
                       "properties": {
-                        "result": {
-                          "type": "object",
-                          "properties": {
-                            "post": {
-                              "anyOf": [
+                        "post": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "prefixItems": [
+                                { "const": "Form1" },
                                 {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "const": "Form1" },
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "text": { "type": "string" }
-                                      },
-                                      "required": [ "text" ],
-                                      "additionalProperties": false
-                                    }
-                                  ],
-                                  "unevaluatedItems": false,
-                                  "minItems": 2,
-                                  "maxItems": 2
-                                },
-                                {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "const": "Form3" }, { "type": "string" }
-                                  ],
-                                  "unevaluatedItems": false,
-                                  "minItems": 2,
-                                  "maxItems": 2
-                                },
-                                {
-                                  "type": "array",
-                                  "prefixItems": [ { "const": "Form4" } ],
-                                  "unevaluatedItems": false,
-                                  "minItems": 1,
-                                  "maxItems": 1
+                                  "type": "object",
+                                  "properties": { "text": { "type": "string" } },
+                                  "required": [ "text" ],
+                                  "additionalProperties": false
                                 }
-                              ]
+                              ],
+                              "unevaluatedItems": false,
+                              "minItems": 2,
+                              "maxItems": 2
                             },
-                            "title": { "type": "string" },
-                            "id": { "type": "string" }
-                          },
-                          "required": [ "post", "title", "id" ],
-                          "additionalProperties": false
-                        }
+                            {
+                              "type": "array",
+                              "prefixItems": [
+                                { "const": "Form3" }, { "type": "string" }
+                              ],
+                              "unevaluatedItems": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            },
+                            {
+                              "type": "array",
+                              "prefixItems": [ { "const": "Form4" } ],
+                              "unevaluatedItems": false,
+                              "minItems": 1,
+                              "maxItems": 1
+                            }
+                          ]
+                        },
+                        "title": { "type": "string" },
+                        "id": { "type": "string" }
                       },
-                      "required": [ "result" ],
+                      "required": [ "post", "title", "id" ],
                       "additionalProperties": false
                     }
                   }
@@ -856,71 +818,63 @@ let%expect_test "openapi snapshot" =
                     "schema": {
                       "type": "object",
                       "properties": {
-                        "result": {
-                          "type": "object",
-                          "properties": {
-                            "posts": {
-                              "type": "array",
-                              "items": {
-                                "type": "object",
-                                "properties": {
-                                  "post": {
-                                    "anyOf": [
+                        "posts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "post": {
+                                "anyOf": [
+                                  {
+                                    "type": "array",
+                                    "prefixItems": [
+                                      { "const": "Form1" },
                                       {
-                                        "type": "array",
-                                        "prefixItems": [
-                                          { "const": "Form1" },
-                                          {
-                                            "type": "object",
-                                            "properties": {
-                                              "text": { "type": "string" }
-                                            },
-                                            "required": [ "text" ],
-                                            "additionalProperties": false
-                                          }
-                                        ],
-                                        "unevaluatedItems": false,
-                                        "minItems": 2,
-                                        "maxItems": 2
-                                      },
-                                      {
-                                        "type": "array",
-                                        "prefixItems": [
-                                          { "const": "Form3" },
-                                          { "type": "string" }
-                                        ],
-                                        "unevaluatedItems": false,
-                                        "minItems": 2,
-                                        "maxItems": 2
-                                      },
-                                      {
-                                        "type": "array",
-                                        "prefixItems": [ { "const": "Form4" } ],
-                                        "unevaluatedItems": false,
-                                        "minItems": 1,
-                                        "maxItems": 1
+                                        "type": "object",
+                                        "properties": {
+                                          "text": { "type": "string" }
+                                        },
+                                        "required": [ "text" ],
+                                        "additionalProperties": false
                                       }
-                                    ]
+                                    ],
+                                    "unevaluatedItems": false,
+                                    "minItems": 2,
+                                    "maxItems": 2
                                   },
-                                  "title": { "type": "string" },
-                                  "id": { "type": "string" }
-                                },
-                                "required": [ "post", "title", "id" ],
-                                "additionalProperties": false
-                              }
-                            }
-                          },
-                          "required": [ "posts" ],
-                          "additionalProperties": false
+                                  {
+                                    "type": "array",
+                                    "prefixItems": [
+                                      { "const": "Form3" }, { "type": "string" }
+                                    ],
+                                    "unevaluatedItems": false,
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  },
+                                  {
+                                    "type": "array",
+                                    "prefixItems": [ { "const": "Form4" } ],
+                                    "unevaluatedItems": false,
+                                    "minItems": 1,
+                                    "maxItems": 1
+                                  }
+                                ]
+                              },
+                              "title": { "type": "string" },
+                              "id": { "type": "string" }
+                            },
+                            "required": [ "post", "title", "id" ],
+                            "additionalProperties": false
+                          }
                         }
                       },
-                      "required": [ "result" ],
+                      "required": [ "posts" ],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "400": {
+              "404": {
                 "description": "Error response",
                 "content": {
                   "application/json": {
@@ -933,7 +887,7 @@ let%expect_test "openapi snapshot" =
                   }
                 }
               },
-              "404": {
+              "400": {
                 "description": "Error response",
                 "content": {
                   "application/json": {
@@ -1021,54 +975,45 @@ let%expect_test "openapi snapshot" =
                     "schema": {
                       "type": "object",
                       "properties": {
-                        "result": {
-                          "type": "object",
-                          "properties": {
-                            "post": {
-                              "anyOf": [
+                        "post": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "prefixItems": [
+                                { "const": "Form1" },
                                 {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "const": "Form1" },
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "text": { "type": "string" }
-                                      },
-                                      "required": [ "text" ],
-                                      "additionalProperties": false
-                                    }
-                                  ],
-                                  "unevaluatedItems": false,
-                                  "minItems": 2,
-                                  "maxItems": 2
-                                },
-                                {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "const": "Form3" }, { "type": "string" }
-                                  ],
-                                  "unevaluatedItems": false,
-                                  "minItems": 2,
-                                  "maxItems": 2
-                                },
-                                {
-                                  "type": "array",
-                                  "prefixItems": [ { "const": "Form4" } ],
-                                  "unevaluatedItems": false,
-                                  "minItems": 1,
-                                  "maxItems": 1
+                                  "type": "object",
+                                  "properties": { "text": { "type": "string" } },
+                                  "required": [ "text" ],
+                                  "additionalProperties": false
                                 }
-                              ]
+                              ],
+                              "unevaluatedItems": false,
+                              "minItems": 2,
+                              "maxItems": 2
                             },
-                            "title": { "type": "string" },
-                            "id": { "type": "string" }
-                          },
-                          "required": [ "post", "title", "id" ],
-                          "additionalProperties": false
-                        }
+                            {
+                              "type": "array",
+                              "prefixItems": [
+                                { "const": "Form3" }, { "type": "string" }
+                              ],
+                              "unevaluatedItems": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            },
+                            {
+                              "type": "array",
+                              "prefixItems": [ { "const": "Form4" } ],
+                              "unevaluatedItems": false,
+                              "minItems": 1,
+                              "maxItems": 1
+                            }
+                          ]
+                        },
+                        "title": { "type": "string" },
+                        "id": { "type": "string" }
                       },
-                      "required": [ "result" ],
+                      "required": [ "post", "title", "id" ],
                       "additionalProperties": false
                     }
                   }
@@ -1115,15 +1060,8 @@ let%expect_test "openapi snapshot" =
                   "application/json": {
                     "schema": {
                       "type": "object",
-                      "properties": {
-                        "result": {
-                          "type": "object",
-                          "properties": { "status": { "type": "string" } },
-                          "required": [ "status" ],
-                          "additionalProperties": false
-                        }
-                      },
-                      "required": [ "result" ],
+                      "properties": { "status": { "type": "string" } },
+                      "required": [ "status" ],
                       "additionalProperties": false
                     }
                   }
@@ -1217,17 +1155,10 @@ let%expect_test "openapi snapshot" =
                     "schema": {
                       "type": "object",
                       "properties": {
-                        "result": {
-                          "type": "object",
-                          "properties": {
-                            "msg": { "type": "string" },
-                            "ok": { "type": "boolean" }
-                          },
-                          "required": [ "msg", "ok" ],
-                          "additionalProperties": false
-                        }
+                        "msg": { "type": "string" },
+                        "ok": { "type": "boolean" }
                       },
-                      "required": [ "result" ],
+                      "required": [ "msg", "ok" ],
                       "additionalProperties": false
                     }
                   }
@@ -1240,17 +1171,10 @@ let%expect_test "openapi snapshot" =
                     "schema": {
                       "type": "object",
                       "properties": {
-                        "result": {
-                          "type": "object",
-                          "properties": {
-                            "note": { "type": "string" },
-                            "id": { "type": "integer" }
-                          },
-                          "required": [ "note", "id" ],
-                          "additionalProperties": false
-                        }
+                        "note": { "type": "string" },
+                        "id": { "type": "integer" }
                       },
-                      "required": [ "result" ],
+                      "required": [ "note", "id" ],
                       "additionalProperties": false
                     }
                   }
@@ -1263,17 +1187,10 @@ let%expect_test "openapi snapshot" =
                     "schema": {
                       "type": "object",
                       "properties": {
-                        "result": {
-                          "type": "object",
-                          "properties": {
-                            "msg": { "type": "string" },
-                            "ok": { "type": "boolean" }
-                          },
-                          "required": [ "msg", "ok" ],
-                          "additionalProperties": false
-                        }
+                        "msg": { "type": "string" },
+                        "ok": { "type": "boolean" }
                       },
-                      "required": [ "result" ],
+                      "required": [ "msg", "ok" ],
                       "additionalProperties": false
                     }
                   }
@@ -1286,17 +1203,10 @@ let%expect_test "openapi snapshot" =
                     "schema": {
                       "type": "object",
                       "properties": {
-                        "result": {
-                          "type": "object",
-                          "properties": {
-                            "msg": { "type": "string" },
-                            "ok": { "type": "boolean" }
-                          },
-                          "required": [ "msg", "ok" ],
-                          "additionalProperties": false
-                        }
+                        "msg": { "type": "string" },
+                        "ok": { "type": "boolean" }
                       },
-                      "required": [ "result" ],
+                      "required": [ "msg", "ok" ],
                       "additionalProperties": false
                     }
                   }
@@ -1309,17 +1219,10 @@ let%expect_test "openapi snapshot" =
                     "schema": {
                       "type": "object",
                       "properties": {
-                        "result": {
-                          "type": "object",
-                          "properties": {
-                            "msg": { "type": "string" },
-                            "ok": { "type": "boolean" }
-                          },
-                          "required": [ "msg", "ok" ],
-                          "additionalProperties": false
-                        }
+                        "msg": { "type": "string" },
+                        "ok": { "type": "boolean" }
                       },
-                      "required": [ "result" ],
+                      "required": [ "msg", "ok" ],
                       "additionalProperties": false
                     }
                   }
@@ -1456,7 +1359,7 @@ let%expect_test "openapi snapshot" =
                 }
               },
               "418": {
-                "description": "Error response",
+                "description": "Envelope(Error response)",
                 "content": {
                   "application/json": {
                     "schema": {
@@ -1477,7 +1380,7 @@ let%expect_test "openapi snapshot" =
                 }
               },
               "499": {
-                "description": "Error response",
+                "description": "Envelope(Error response)",
                 "content": {
                   "application/json": {
                     "schema": {
@@ -1498,7 +1401,7 @@ let%expect_test "openapi snapshot" =
                 }
               },
               "304": {
-                "description": "Error response",
+                "description": "Envelope(Error response)",
                 "content": {
                   "application/json": {
                     "schema": {
