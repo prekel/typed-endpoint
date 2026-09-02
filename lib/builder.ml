@@ -1,5 +1,4 @@
 open! Base
-open Lwt.Let_syntax
 open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 
 module Json_schema = struct
@@ -33,6 +32,7 @@ module Backend = struct
   module type S = sig
     type req
     type resp
+    type 'a io
 
     type meth =
       [ `GET
@@ -153,12 +153,14 @@ module Backend = struct
     val put : meth
     val delete : meth
     val patch : meth
-    val route : meth -> string -> (req -> resp Lwt.t) -> app_builder
+    val return : 'a -> 'a io
+    val bind : 'a io -> f:('a -> 'b io) -> 'b io
+    val route : meth -> string -> (req -> resp io) -> app_builder
     val param : req -> string -> string
     val query : req -> string -> string option
-    val body_to_string : req -> string Lwt.t
-    val respond_string : ?status:status_code -> string -> resp Lwt.t
-    val respond_json : ?status:status_code -> Yojson.Safe.t -> resp Lwt.t
+    val body_to_string : req -> string io
+    val respond_string : ?status:status_code -> string -> resp io
+    val respond_json : ?status:status_code -> Yojson.Safe.t -> resp io
     val combine : app_builder -> app_builder -> app_builder
     val empty : app_builder
   end
@@ -250,6 +252,9 @@ end
 
 module Make (B : Backend.S) = struct
   module B = B
+
+  let ( let* ) value f = B.bind value ~f
+  let ( let+ ) value f = B.bind value ~f:(fun value -> B.return (f value))
 
   type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp =
     | OK :
@@ -348,28 +353,28 @@ module Make (B : Backend.S) = struct
             -> declared_response
 
       type 'a t =
-        { resolve : B.req -> ('a, rejection) Result.t Lwt.t
+        { resolve : B.req -> ('a, rejection) Result.t B.io
         ; responses : declared_response list
         }
 
-      let request = { resolve = (fun request -> Lwt.return (Ok request)); responses = [] }
+      let request = { resolve = (fun request -> B.return (Ok request)); responses = [] }
 
       let map context ~f =
         { context with
           resolve =
             (fun request ->
-              let%map result = context.resolve request in
+              let+ result = context.resolve request in
               Result.map result ~f)
         }
       ;;
 
       let both left right =
         let resolve request =
-          let%bind left_result = left.resolve request in
+          let* left_result = left.resolve request in
           match left_result with
-          | Error rejection -> Lwt.return (Error rejection)
+          | Error rejection -> B.return (Error rejection)
           | Ok left_value ->
-            let%map right_result = right.resolve request in
+            let+ right_result = right.resolve request in
             Result.map right_result ~f:(fun right_value -> left_value, right_value)
         in
         { resolve; responses = left.responses @ right.responses }
@@ -378,13 +383,13 @@ module Make (B : Backend.S) = struct
 
     module Dependency = struct
       let value dependency =
-        { Context.resolve = (fun _request -> Lwt.return (Ok dependency)); responses = [] }
+        { Context.resolve = (fun _request -> B.return (Ok dependency)); responses = [] }
       ;;
 
       let of_request resolve =
         { Context.resolve =
             (fun request ->
-              let%map dependency = resolve request in
+              let+ dependency = resolve request in
               Ok dependency)
         ; responses = []
         }
@@ -394,7 +399,7 @@ module Make (B : Backend.S) = struct
     module Guard = struct
       let v ~status ~response ~check =
         let resolve request =
-          let%map result = check request in
+          let+ result = check request in
           Result.map_error result ~f:(fun error ->
             Context.Rejected { status; response; error })
         in
@@ -552,31 +557,31 @@ module Make (B : Backend.S) = struct
     ;;
 
     let parse_request
-      : type req. req Request.t -> B.req -> (req, Parse_error.t) Result.t Lwt.t
+      : type req. req Request.t -> B.req -> (req, Parse_error.t) Result.t B.io
       =
       fun spec req0 ->
       match spec with
-      | Request.Empty -> Lwt.return (Ok ())
+      | Request.Empty -> B.return (Ok ())
       | Request.PlainText _ ->
-        let%bind s = B.body_to_string req0 in
-        Lwt.return (Ok s)
+        let* s = B.body_to_string req0 in
+        B.return (Ok s)
       | Request.JSON (module Rq) ->
-        let%bind s = B.body_to_string req0 in
+        let* s = B.body_to_string req0 in
         let json =
           try Ok (Yojson.Safe.from_string s) with
           | Yojson.Json_error _ ->
             Error (Parse_error.of_body_error "body" (`String s) "invalid json")
         in
         (match json with
-         | Error pe -> Lwt.return (Error pe)
+         | Error pe -> B.return (Error pe)
          | Ok json ->
            (match Rq.of_yojson json with
-            | Ok v -> Lwt.return (Ok v)
-            | Error err -> Lwt.return (Error (Parse_error.of_body_error "body" json err))))
+            | Ok v -> B.return (Ok v)
+            | Error err -> B.return (Error (Parse_error.of_body_error "body" json err))))
     ;;
 
     let respond_ok_with_status
-      : type a. status:B.status_code -> a Response.t -> a -> B.resp Lwt.t
+      : type a. status:B.status_code -> a Response.t -> a -> B.resp B.io
       =
       fun ~status spec v ->
       match spec.payload with
@@ -885,7 +890,7 @@ module Make (B : Backend.S) = struct
                    , 'code5xx
                    , 'code )
                    resp
-                   Lwt.t )
+                   B.io )
             path
       ; context : 'context Context.t
       ; request : 'req Request.t
@@ -914,8 +919,8 @@ module Make (B : Backend.S) = struct
              ( h
                , context
                  -> req
-                 -> (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) resp
-                      Lwt.t )
+                 -> (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) resp B.io
+               )
                path)
           ~(responses :
              (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) responses)
@@ -961,7 +966,7 @@ module Make (B : Backend.S) = struct
           , code )
           builder
         -> (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) resp
-        -> B.resp Lwt.t
+        -> B.resp B.io
       =
       fun b r ->
       let ensure_declared status declared =
@@ -1028,7 +1033,7 @@ module Make (B : Backend.S) = struct
     ;;
 
     let render_context_rejection (Context.Rejected { status; response; error })
-      : B.resp Lwt.t
+      : B.resp B.io
       =
       let status = ((status :> B.status) :> B.status_code) in
       respond_ok_with_status ~status response error
@@ -1209,7 +1214,7 @@ module Make (B : Backend.S) = struct
       type t =
         { meth : B.meth
         ; path : string
-        ; handler : Parse_error_response.t option -> B.req -> B.resp Lwt.t
+        ; handler : Parse_error_response.t option -> B.req -> B.resp B.io
         ; contract : Parse_error_response.t option -> Contract.route
         }
     end
@@ -1370,19 +1375,19 @@ module Make (B : Backend.S) = struct
           failwith
             ("missing parse-error policy for " ^ meth_to_string b.meth ^ " " ^ path_str)
       in
-      let wrapped inherited (req0 : B.req) : B.resp Lwt.t =
-        let%bind context_result = b.context.resolve req0 in
+      let wrapped inherited (req0 : B.req) : B.resp B.io =
+        let* context_result = b.context.resolve req0 in
         match context_result with
         | Error rejection -> render_context_rejection rejection
         | Ok context ->
           (match apply_path b.pattern f req0 with
            | Error error -> render_parse_error inherited error
            | Ok f' ->
-             let%bind parsed = parse_request b.request req0 in
+             let* parsed = parse_request b.request req0 in
              (match parsed with
               | Error error -> render_parse_error inherited error
               | Ok body ->
-                let%bind r = f' context body in
+                let* r = f' context body in
                 render_resp b r))
       in
       let has_parsers =

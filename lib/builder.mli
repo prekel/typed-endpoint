@@ -45,6 +45,10 @@ module Backend : sig
     type req
     type resp
 
+    (** Backend effect. Lwt adapters use [type 'a io = 'a Lwt.t]; direct-style
+        Eio uses the identity type. *)
+    type 'a io
+
     type meth =
       [ `GET
       | `POST
@@ -164,12 +168,14 @@ module Backend : sig
     val put : meth
     val delete : meth
     val patch : meth
-    val route : meth -> string -> (req -> resp Lwt.t) -> app_builder
+    val return : 'a -> 'a io
+    val bind : 'a io -> f:('a -> 'b io) -> 'b io
+    val route : meth -> string -> (req -> resp io) -> app_builder
     val param : req -> string -> string
     val query : req -> string -> string option
-    val body_to_string : req -> string Lwt.t
-    val respond_string : ?status:status_code -> string -> resp Lwt.t
-    val respond_json : ?status:status_code -> Yojson.Safe.t -> resp Lwt.t
+    val body_to_string : req -> string io
+    val respond_string : ?status:status_code -> string -> resp io
+    val respond_json : ?status:status_code -> Yojson.Safe.t -> resp io
     val combine : app_builder -> app_builder -> app_builder
     val empty : app_builder
   end
@@ -317,7 +323,7 @@ module Make
         val value : 'a -> 'a Context.t
 
         (** Resolves a request-scoped dependency before request decoding. *)
-        val of_request : (B.req -> 'a Lwt.t) -> 'a Context.t
+        val of_request : (B.req -> 'a B.io) -> 'a Context.t
       end
 
       module Guard : sig
@@ -326,7 +332,7 @@ module Make
         val v
           :  status:B.client_error_status
           -> response:'error Response.t
-          -> check:(B.req -> ('context, 'error) Result.t Lwt.t)
+          -> check:(B.req -> ('context, 'error) Result.t B.io)
           -> 'context Context.t
       end
 
@@ -493,7 +499,7 @@ module Make
                       , 'code5xx
                       , 'code )
                       resp
-                      Lwt.t )
+                      B.io )
                path
         -> responses:
              ( 'ok
@@ -532,7 +538,7 @@ module Make
                       , 'code5xx
                       , 'code )
                       resp
-                      Lwt.t )
+                      B.io )
                path
         -> responses:
              ( 'ok
@@ -566,7 +572,7 @@ module Make
         val route
           :  meth:B.meth
           -> path:string
-          -> handler:(B.req -> B.resp Lwt.t)
+          -> handler:(B.req -> B.resp B.io)
           -> Route.t
       end
 

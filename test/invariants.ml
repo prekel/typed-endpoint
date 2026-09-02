@@ -14,6 +14,8 @@ module Test_backend = struct
     ; body : string
     }
 
+  type 'a io = 'a Lwt.t
+
   include Cohttp.Code
 
   type handler = req -> resp Lwt.t
@@ -24,6 +26,8 @@ module Test_backend = struct
   let put = `PUT
   let delete = `DELETE
   let patch = `PATCH
+  let return = Lwt.return
+  let bind value ~f = Lwt.bind value f
   let route meth path handler = [ meth, path, handler ]
   let param request name = List.Assoc.find_exn request.params name ~equal:String.equal
   let query request name = List.Assoc.find request.queries name ~equal:String.equal

@@ -1,0 +1,4 @@
+(test
+ (name adapter_test)
+ (package typed-endpoint-eio)
+ (libraries base cohttp-eio http typed-endpoint typed-endpoint-eio yojson))

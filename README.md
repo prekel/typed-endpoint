@@ -4,23 +4,81 @@
 HTTP API. Одни и те же декларации используются для сборки runtime-маршрутов и
 генерации OpenAPI 3.1.0.
 
-Репозиторий содержит два production-пакета:
+Репозиторий содержит четыре production-пакета:
 
 - `typed-endpoint` — framework-agnostic ядро с описанием путей, запросов,
   ответов и OpenAPI;
-- `typed-endpoint-opium` — адаптер для Opium.
+- `typed-endpoint-opium` — адаптер для Opium;
+- `typed-endpoint-dream` — адаптер для Dream;
+- `typed-endpoint-eio` — нативный Eio-адаптер на `cohttp-eio` со встроенным
+  минимальным router.
 
 ## Структура
 
 ```text
 lib/     ядро и публичный модуль Typed_endpoint
 opium/   адаптер Typed_endpoint_opium
-  test/    демонстрационные маршруты, OpenAPI snapshot и тестовый сервер
-  doc/     проектные решения и примеры для DI и Guard
+dream/   адаптер Typed_endpoint_dream
+eio/     адаптер Typed_endpoint_eio
+test/    демонстрационные маршруты, OpenAPI snapshot и тестовый сервер
+example/ backend-independent пример приложения и точки запуска серверов
+doc/     проектные решения и примеры для DI и Guard
 ```
 
-Ядро зависит от `Base`, `Lwt` и `Yojson`, но не зависит от Opium. Интеграция с
-web-framework реализуется через `Typed_endpoint.Backend.S`.
+Ядро зависит от `Base` и `Yojson`, но не зависит от HTTP server или async
+runtime. Интеграция реализуется через `Typed_endpoint.Backend.S`: Lwt-backends
+используют `type 'a io = 'a Lwt.t`, а Eio — direct style `type 'a io = 'a`.
+
+## HTTP backends
+
+Для Opium и Dream `Compiled.app` преобразуется в framework application:
+
+```ocaml
+let opium_app = Opium.App.empty |> Compiled.app compiled
+let dream_handler = Compiled.app compiled |> Typed_endpoint_dream.router
+```
+
+Eio-адаптер возвращает `Cohttp_eio.Server.t`:
+
+```ocaml
+let server = Compiled.app compiled |> Typed_endpoint_eio.server
+
+Eio_main.run @@ fun env ->
+Eio.Switch.run @@ fun sw ->
+let socket =
+  Eio.Net.listen
+    ~sw
+    ~backlog:128
+    (Eio.Stdenv.net env)
+    (`Tcp (Eio.Net.Ipaddr.V4.any, 8080))
+in
+Cohttp_eio.Server.run ~on_error:Stdlib.raise socket server
+```
+
+В Eio handler возвращает typed response напрямую; `Lwt.return` не требуется.
+Через `Typed_endpoint_eio.Request.http/header` доступны исходный request и
+заголовки.
+
+## Real-world пример
+
+В [`example/realworld`](example/realworld/README.md) находится небольшой API
+статей. Домен, сервис, DTO и декларации маршрутов не зависят от HTTP-фреймворка.
+Один и тот же функтор маршрутов компилируется для локального memory backend,
+Opium, Dream и Eio.
+
+Тест не поднимает сокет и не использует web framework:
+
+```sh
+opam exec -- dune runtest --root . example/realworld/test
+```
+
+Сервер можно запустить на любом из поддерживаемых backend:
+
+```sh
+opam exec -- dune exec --root . example/realworld/servers/opium_server.exe
+opam exec -- dune exec --root . example/realworld/servers/dream_server.exe
+opam exec -- dune exec --root . example/realworld/servers/eio_server.exe
+```
 
 ## Компиляция деклараций
 
@@ -71,7 +129,7 @@ make test
 make fmt
 ```
 
-В Ubuntu для транзитивных TLS-зависимостей Opium нужен системный пакет
-`libgmp-dev`.
+В Ubuntu нужны системные пакеты `libgmp-dev` для транзитивных TLS-зависимостей
+Opium, а для Dream — `libev-dev` и `libssl-dev`.
 
 `make fmt` только проверяет форматирование и не изменяет исходники.

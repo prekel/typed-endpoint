@@ -1,6 +1,7 @@
 all: build
 
-PACKAGES = ./typed-endpoint.opam ./typed-endpoint-opium.opam
+PACKAGES = ./typed-endpoint.opam ./typed-endpoint-opium.opam \
+	./typed-endpoint-dream.opam ./typed-endpoint-eio.opam
 
 .PHONY: create_switch
 create_switch:

@@ -22,9 +22,7 @@
   (ocaml (>= 5.1))
   (dune (>= 3.16))
   base
-  lwt
   yojson
-  (ppx_let (and (>= v0.17.1) :build))
   (ppx_deriving_yojson :build)
   (ppx_deriving_jsonschema (>= 0.0.8))
   (ocamlformat (and (= 0.29.0) :with-dev-setup))
@@ -53,3 +51,38 @@
   (ppx_expect :with-test))
  (tags
   (http routing openapi opium)))
+
+(package
+ (name typed-endpoint-dream)
+ (synopsis "Dream integration for typed-endpoint")
+ (description
+  "A Dream backend that turns typed-endpoint declarations into a Dream router.")
+ (depends
+  (ocaml (>= 5.1))
+  (dune (>= 3.16))
+  (typed-endpoint (= :version))
+  base
+  cohttp
+  (dream (= 1.0.0~alpha8))
+  lwt
+  yojson)
+ (tags
+  (http routing openapi dream)))
+
+(package
+ (name typed-endpoint-eio)
+ (synopsis "Native Eio integration for typed-endpoint")
+ (description
+  "A native cohttp-eio backend with routing for typed-endpoint declarations.")
+ (depends
+  (ocaml (>= 5.1))
+  (dune (>= 3.16))
+  (typed-endpoint (= :version))
+  base
+  (cohttp-eio (= 6.3.0))
+  (eio (>= 1.5))
+  http
+  uri
+  yojson)
+ (tags
+  (http routing openapi eio)))

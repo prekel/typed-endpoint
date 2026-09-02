@@ -7,7 +7,12 @@
 - `opium/` — единственное место для зависимости от Opium.
 - Текущий адаптер использует API Opium 0.18; смену major/minor версии оформляй
   как отдельную migration с проверкой публичного adapter API.
+- `dream/` — адаптер для Dream 1.0.0~alpha8; Dream API не добавляй в ядро.
+- `eio/` — нативный direct-style адаптер для cohttp-eio 6.3; собственный router
+  остаётся внутренней деталью пакета `typed-endpoint-eio`.
 - `test/` — regression tests, OpenAPI snapshots и демонстрационное приложение.
+- `example/realworld/` — backend-independent пример приложения, memory backend
+  для тестов и отдельные entrypoint для поддерживаемых HTTP-фреймворков.
 - Метаданные пакетов задаются в `dune-project`; сгенерированные `.opam` вручную
   не редактируются.
 
@@ -41,8 +46,9 @@
   endpoint.
 - Новый backend реализует `Typed_endpoint.Backend.S` в отдельном пакете и не
   добавляет framework-зависимость в ядро.
-- Для асинхронного кода используй `ppx_let` (`let%bind`, `let%map`) через
-  `Lwt.Let_syntax`; не используй `lwt_ppx`.
+- Ядро выражает эффекты через `Backend.S.io`. В Lwt-адаптерах используй
+  `ppx_let` (`let%bind`, `let%map`) через `Lwt.Let_syntax`; Eio handler оставляй
+  direct-style. Не используй `lwt_ppx`.
 - Не добавляй другие PPX, если задачу можно ясно решить обычным OCaml.
 
 ## Тесты и проверки

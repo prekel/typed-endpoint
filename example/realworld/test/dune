@@ -1,0 +1,4 @@
+(test
+ (name app_test)
+ (modules app_test memory_backend)
+ (libraries base cohttp realworld_app typed-endpoint uri yojson))

@@ -1,0 +1,4 @@
+(library
+ (name typed_endpoint_dream)
+ (public_name typed-endpoint-dream)
+ (libraries base cohttp dream lwt typed-endpoint yojson))

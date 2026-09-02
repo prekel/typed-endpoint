@@ -1,0 +1,4 @@
+(library
+ (name typed_endpoint_eio)
+ (public_name typed-endpoint-eio)
+ (libraries base cohttp-eio eio http typed-endpoint uri yojson))

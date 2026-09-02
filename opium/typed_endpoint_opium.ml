@@ -2,6 +2,7 @@ open! Base
 
 type req = Opium.Std.Request.t
 type resp = Opium.Std.Response.t
+type 'a io = 'a Lwt.t
 
 include Cohttp.Code
 
@@ -12,6 +13,8 @@ let post : meth = `POST
 let put : meth = `PUT
 let delete : meth = `DELETE
 let patch : meth = `PATCH
+let return = Lwt.return
+let bind value ~f = Lwt.bind value f
 let empty : app_builder = Fn.id
 let combine (a : app_builder) (b : app_builder) : app_builder = fun app -> app |> a |> b
 
