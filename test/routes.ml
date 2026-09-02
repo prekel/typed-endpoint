@@ -16,7 +16,9 @@ module User_id = struct
     | _ -> Error "not an int"
   ;;
 
-  let metadata = Metadata.v ~description:"User id" ~tags:[ "params" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"User id" ~tags:[ "params" ] ()
+  ;;
 end
 
 module Post_id = struct
@@ -24,7 +26,10 @@ module Post_id = struct
 
   let name = "post_id"
   let of_string s = Ok s
-  let metadata = Metadata.v ~description:"Post id" ~tags:[ "params" ] ()
+
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Post id" ~tags:[ "params" ] ()
+  ;;
 end
 
 module Q = struct
@@ -39,7 +44,9 @@ module Q = struct
       Ok s
   ;;
 
-  let metadata = Metadata.v ~description:"Search query" ~tags:[ "queries" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Search query" ~tags:[ "queries" ] ()
+  ;;
 end
 
 module Page = struct
@@ -52,7 +59,9 @@ module Page = struct
     | _ -> Error "page is not an int"
   ;;
 
-  let metadata = Metadata.v ~description:"Page number" ~tags:[ "queries" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Page number" ~tags:[ "queries" ] ()
+  ;;
 end
 
 module Int_id = struct
@@ -63,7 +72,9 @@ module Int_id = struct
     | _ -> Error "id is not an int"
   ;;
 
-  let metadata = Metadata.v ~description:"Integer id" ~tags:[ "params" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Integer id" ~tags:[ "params" ] ()
+  ;;
 end
 
 module Mode = struct
@@ -76,7 +87,9 @@ module Mode = struct
       Ok s
   ;;
 
-  let metadata = Metadata.v ~description:"Mode switcher" ~tags:[ "queries" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Mode switcher" ~tags:[ "queries" ] ()
+  ;;
 end
 
 module Cover_page = struct
@@ -87,7 +100,9 @@ module Cover_page = struct
     | _ -> Error "page is not an int"
   ;;
 
-  let metadata = Metadata.v ~description:"Page number" ~tags:[ "queries" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Page number" ~tags:[ "queries" ] ()
+  ;;
 end
 
 (* ---------------- Payloads ---------------- *)
@@ -107,7 +122,10 @@ module Create_post_rq = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Create post request" ~tags:[ "body" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Create post request" ~tags:[ "body" ] ()
+  ;;
+
   let of_yojson = of_yojson
 end
 
@@ -118,7 +136,10 @@ module Update_post_rq = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Update post request" ~tags:[ "body" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Update post request" ~tags:[ "body" ] ()
+  ;;
+
   let of_yojson = of_yojson
 end
 
@@ -130,19 +151,29 @@ module Post_rs = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Post response" ~tags:[ "responses" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Post response" ~tags:[ "responses" ] ()
+  ;;
 end
 
 module Post_list_rs = struct
   type t = { posts : Post_rs.t list } [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Posts list response" ~tags:[ "responses" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v
+      ~schema:t_jsonschema
+      ~description:"Posts list response"
+      ~tags:[ "responses" ]
+      ()
+  ;;
 end
 
 module Err_rs = struct
   type t = { error : string } [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Error response" ~tags:[ "errors" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Error response" ~tags:[ "errors" ] ()
+  ;;
 end
 
 let parse_error_message (error : Parse_error.t) = error.param ^ ": " ^ error.error
@@ -150,7 +181,9 @@ let parse_error_message (error : Parse_error.t) = error.param ^ ": " ^ error.err
 module Health_rs = struct
   type t = { status : string } [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Health response" ~tags:[ "misc" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Health response" ~tags:[ "misc" ] ()
+  ;;
 end
 
 module Json_ok = struct
@@ -160,7 +193,9 @@ module Json_ok = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Ok payload" ~tags:[ "responses" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Ok payload" ~tags:[ "responses" ] ()
+  ;;
 end
 
 module Json_created = struct
@@ -170,7 +205,13 @@ module Json_created = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Created payload" ~tags:[ "responses" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v
+      ~schema:t_jsonschema
+      ~description:"Created payload"
+      ~tags:[ "responses" ]
+      ()
+  ;;
 end
 
 module Body_rq = struct
@@ -180,7 +221,10 @@ module Body_rq = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Body request" ~tags:[ "body" ] ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Body request" ~tags:[ "body" ] ()
+  ;;
+
   let of_yojson = of_yojson
 end
 
@@ -191,8 +235,9 @@ module Err_envelope = struct
     }
   [@@deriving to_yojson, jsonschema]
 
-  let metadata =
+  let metadata : t Metadata.t =
     Metadata.v
+      ~schema:t_jsonschema
       ~description:("Envelope(" ^ Err_rs.metadata.description ^ ")")
       ~tags:("wrapped" :: Err_rs.metadata.tags)
       ()
@@ -202,7 +247,13 @@ end
 module Nested_error_response = struct
   type t = { abc : Err_rs.t } [@@deriving to_yojson, jsonschema]
 
-  let metadata = Err_rs.metadata
+  let metadata : t Metadata.t =
+    Metadata.v
+      ~schema:t_jsonschema
+      ~description:Err_rs.metadata.description
+      ~tags:Err_rs.metadata.tags
+      ()
+  ;;
 end
 
 let parse_errors =
@@ -488,12 +539,12 @@ let health =
 let groups : Group.t list =
   [ Group.v
       ~prefix:[ "v1" ]
-      ~metadata:(Metadata.v ~description:"Posts API (v1)" ~tags:[ "posts" ] ())
+      ~metadata:(Operation_metadata.v ~description:"Posts API (v1)" ~tags:[ "posts" ] ())
       [ get_user_post_text; create_post; delete_post; update_post; list_posts ]
   ; Group.v
       ~prefix:[ "v1" ]
       ~metadata:
-        (Metadata.v
+        (Operation_metadata.v
            ~description:"Coverage / demo endpoints (v1)"
            ~tags:[ "cover-all" ]
            ())

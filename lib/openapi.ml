@@ -73,8 +73,8 @@ let render_response_payload (payload : Contract.response_payload) : Yojson.Safe.
 ;;
 
 let operation_metadata
-      ~(group : Contract.Metadata.t)
-      (operation : Contract.Metadata.t option)
+      ~(group : Contract.Operation_metadata.t)
+      (operation : Contract.Operation_metadata.t option)
   =
   match operation with
   | None -> group
@@ -85,7 +85,7 @@ let operation_metadata
 ;;
 
 let render_operation
-      ~(group_metadata : Contract.Metadata.t)
+      ~(group_metadata : Contract.Operation_metadata.t)
       (endpoint : Contract.endpoint)
   : Yojson.Safe.t
   =

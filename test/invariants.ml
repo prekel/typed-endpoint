@@ -53,19 +53,25 @@ module Int_param = struct
     | _ -> Error "not an integer"
   ;;
 
-  let metadata = Metadata.v ~description:"Integer parameter" ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Integer parameter" ()
+  ;;
 end
 
 module Parse_body = struct
   type t = { source : string } [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Parse error" ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Parse error" ()
+  ;;
 end
 
 module Business_error = struct
   type t = { message : string } [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~description:"Business error" ()
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Business error" ()
+  ;;
 end
 
 let parse_policy ~status source =
@@ -75,7 +81,9 @@ let parse_policy ~status source =
     ~map:(fun _error -> Parse_body.{ source })
 ;;
 
-let group routes = Group.v ~metadata:(Metadata.v ~description:"Test routes" ()) routes
+let group routes =
+  Group.v ~metadata:(Operation_metadata.v ~description:"Test routes" ()) routes
+;;
 
 let print_compile_result groups =
   match compile groups with
@@ -158,11 +166,11 @@ let%expect_test "parse-error policies inherit from endpoint, group, and compile"
     [ group [ parsing_route "compile" ]
     ; Group.v
         ~parse_error:group_policy
-        ~metadata:(Metadata.v ~description:"Group override" ())
+        ~metadata:(Operation_metadata.v ~description:"Group override" ())
         [ parsing_route "group" ]
     ; Group.v
         ~parse_error:group_policy
-        ~metadata:(Metadata.v ~description:"Endpoint override" ())
+        ~metadata:(Operation_metadata.v ~description:"Endpoint override" ())
         [ parsing_route ~parse_error:endpoint_policy "endpoint" ]
     ]
   in

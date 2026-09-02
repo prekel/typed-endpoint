@@ -1,6 +1,15 @@
 open! Base
 
-module Metadata : sig
+module Documentation : sig
+  type t =
+    { description : string
+    ; tags : string list
+    }
+
+  val v : ?tags:string list -> description:string -> unit -> t
+end
+
+module Operation_metadata : sig
   type t =
     { description : string
     ; summary : string option
@@ -29,23 +38,23 @@ type param =
   ; kind : param_kind
   ; required : bool
   ; schema : Ppx_deriving_jsonschema_runtime.t
-  ; metadata : Metadata.t
+  ; metadata : Documentation.t
   }
 
 type request_body =
   | No_body
   | Json_body of
       { schema : Ppx_deriving_jsonschema_runtime.t
-      ; metadata : Metadata.t
+      ; metadata : Documentation.t
       }
-  | Text_body of { metadata : Metadata.t }
+  | Text_body of { metadata : Documentation.t }
 
 type response_content =
   | Text
   | Json of Ppx_deriving_jsonschema_runtime.t
 
 type response_payload =
-  { metadata : Metadata.t
+  { metadata : Documentation.t
   ; content : response_content list
   }
 
@@ -57,7 +66,7 @@ type response =
 type endpoint =
   { meth : string
   ; path : string
-  ; metadata : Metadata.t option
+  ; metadata : Operation_metadata.t option
   ; params : param list
   ; request_body : request_body
   ; responses : response list
@@ -74,7 +83,7 @@ type route =
 
 type group =
   { prefix : string list
-  ; metadata : Metadata.t
+  ; metadata : Operation_metadata.t
   ; routes : route list
   }
 
@@ -114,7 +123,7 @@ module Compiled : sig
     }
 
   type compiled_group =
-    { metadata : Metadata.t
+    { metadata : Operation_metadata.t
     ; routes : compiled_route list
     }
 

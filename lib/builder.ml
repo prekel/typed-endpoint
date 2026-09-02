@@ -6,18 +6,27 @@ module Json_schema = struct
   type t = Ppx_deriving_jsonschema_runtime.t
 end
 
-module Metadata = Contract.Metadata
+module Metadata = struct
+  type 'a t =
+    { schema : Json_schema.t
+    ; description : string
+    ; tags : string list
+    }
 
-module type Json_schemable = sig
-  type t
-
-  val t_jsonschema : Json_schema.t
+  let v ~schema ?(tags = []) ~description () = { schema; description; tags }
 end
+
+module Operation_metadata = Contract.Operation_metadata
+module Documentation = Contract.Documentation
+
+let documentation_of_metadata (type a) (metadata : a Metadata.t) : Documentation.t =
+  Documentation.v ~description:metadata.description ~tags:metadata.tags ()
+;;
 
 module type Metadatable = sig
   type t
 
-  val metadata : Metadata.t
+  val metadata : t Metadata.t
 end
 
 module Backend = struct
@@ -187,7 +196,6 @@ module Param = struct
 
     val of_string : string -> (t, string) Result.t
 
-    include Json_schemable with type t := t
     include Metadatable with type t := t
   end
 end
@@ -198,7 +206,6 @@ module Query = struct
 
     val of_string : string -> (t, string) Result.t
 
-    include Json_schemable with type t := t
     include Metadatable with type t := t
   end
 end
@@ -207,7 +214,6 @@ module Request_payload = struct
   module type S = sig
     type t
 
-    include Json_schemable with type t := t
     include Metadatable with type t := t
 
     val of_yojson : Yojson.Safe.t -> (t, string) Result.t
@@ -218,7 +224,6 @@ module Response_payload = struct
   module type S = sig
     type t
 
-    include Json_schemable with type t := t
     include Metadatable with type t := t
 
     val to_yojson : t -> Yojson.Safe.t
@@ -237,7 +242,10 @@ module Parse_error = struct
   let of_param_error param value error = v ~param ~value ~error
   let of_query_error param value error = v ~param ~value ~error
   let of_body_error param json error = v ~param ~value:(Yojson.Safe.to_string json) ~error
-  let metadata = Metadata.v ~description:"Parse error" ~tags:[ "errors" ] ()
+
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Parse error" ~tags:[ "errors" ] ()
+  ;;
 end
 
 module Make (B : Backend.S) = struct
@@ -280,7 +288,7 @@ module Make (B : Backend.S) = struct
       type _ t =
         | Empty : unit t
         | JSON : (module Request_payload.S with type t = 'a) -> 'a t
-        | PlainText : { metadata : Metadata.t } -> string t
+        | PlainText : { metadata : Documentation.t } -> string t
 
       let empty = Empty
 
@@ -289,7 +297,7 @@ module Make (B : Backend.S) = struct
       ;;
 
       let text ~description : string t =
-        PlainText { metadata = Metadata.v ~description () }
+        PlainText { metadata = Documentation.v ~description () }
       ;;
     end
 
@@ -302,24 +310,24 @@ module Make (B : Backend.S) = struct
 
       type 'a t =
         { payload : 'a payload
-        ; metadata : Metadata.t
+        ; metadata : Documentation.t
         }
 
       let json : type a. (module Response_payload.S with type t = a) -> a t =
         fun (module P : Response_payload.S with type t = a) ->
-        { payload = Json (module P); metadata = P.metadata }
+        { payload = Json (module P); metadata = documentation_of_metadata P.metadata }
       ;;
 
       let text ~description () : string t =
-        { payload = PlainText; metadata = Metadata.v ~description () }
+        { payload = PlainText; metadata = Documentation.v ~description () }
       ;;
 
       let json_raw ~description () : Yojson.Safe.t t =
-        { payload = JsonRaw; metadata = Metadata.v ~description () }
+        { payload = JsonRaw; metadata = Documentation.v ~description () }
       ;;
 
       let empty ~description () : unit t =
-        { payload = Empty; metadata = Metadata.v ~description () }
+        { payload = Empty; metadata = Documentation.v ~description () }
       ;;
     end
 
@@ -403,7 +411,7 @@ module Make (B : Backend.S) = struct
     ;;
 
     let metadata_of_opts ?summary ?tags ?deprecated ?operation_id ?description ()
-      : Metadata.t option
+      : Operation_metadata.t option
       =
       match description, summary, tags, deprecated, operation_id with
       | None, None, None, None, None -> None
@@ -411,7 +419,8 @@ module Make (B : Backend.S) = struct
         let description = Option.value description ~default:"" in
         let tags = Option.value tags ~default:[] in
         let deprecated = Option.value deprecated ~default:false in
-        Some (Metadata.v ?summary ~tags ~deprecated ?operation_id ~description ())
+        Some
+          (Operation_metadata.v ?summary ~tags ~deprecated ?operation_id ~description ())
     ;;
 
     let meth_to_string : B.meth -> string = function
@@ -807,7 +816,7 @@ module Make (B : Backend.S) = struct
       ; request : 'req Request.t
       ; responses :
           ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      ; metadata : Metadata.t option
+      ; metadata : Operation_metadata.t option
       ; parse_error : Parse_error_response.t option
       }
 
@@ -924,7 +933,10 @@ module Make (B : Backend.S) = struct
         | Request.Empty -> Contract.No_body
         | Request.PlainText { metadata } -> Text_body { metadata }
         | Request.JSON (module Rq) ->
-          Json_body { schema = Rq.t_jsonschema; metadata = Rq.metadata }
+          Json_body
+            { schema = Rq.metadata.schema
+            ; metadata = documentation_of_metadata Rq.metadata
+            }
       ;;
 
       let response_payload_spec_of_response
@@ -936,7 +948,7 @@ module Make (B : Backend.S) = struct
         | Response.PlainText -> { metadata = r.metadata; content = [ Text ] }
         | Response.JsonRaw -> { metadata = r.metadata; content = [ Json (`Bool true) ] }
         | Response.Json (module P) ->
-          { metadata = r.metadata; content = [ Json P.t_jsonschema ] }
+          { metadata = r.metadata; content = [ Json P.metadata.schema ] }
       ;;
 
       let response_spec_of_parse_error (Parse_error_response.T policy) =
@@ -955,24 +967,24 @@ module Make (B : Backend.S) = struct
           { name
           ; kind = `Path
           ; required = true
-          ; schema = P.t_jsonschema
-          ; metadata = P.metadata
+          ; schema = P.metadata.schema
+          ; metadata = documentation_of_metadata P.metadata
           }
           :: path_params rest
         | Query (name, (module Q : Query.S with type t = _), rest) ->
           { name
           ; kind = `Query
           ; required = false
-          ; schema = Q.t_jsonschema
-          ; metadata = Q.metadata
+          ; schema = Q.metadata.schema
+          ; metadata = documentation_of_metadata Q.metadata
           }
           :: path_params rest
         | QueryReq (name, (module Q : Query.S with type t = _), rest) ->
           { name
           ; kind = `Query
           ; required = true
-          ; schema = Q.t_jsonschema
-          ; metadata = Q.metadata
+          ; schema = Q.metadata.schema
+          ; metadata = documentation_of_metadata Q.metadata
           }
           :: path_params rest
       ;;
@@ -1101,7 +1113,7 @@ module Make (B : Backend.S) = struct
     module Group = struct
       type t =
         { prefix : string list
-        ; metadata : Metadata.t
+        ; metadata : Operation_metadata.t
         ; routes : Route.t list
         ; parse_error : Parse_error_response.t option
         }

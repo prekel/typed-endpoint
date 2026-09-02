@@ -1,6 +1,21 @@
 open! Base
 
 module Metadata : sig
+  type 'a t = private
+    { schema : Ppx_deriving_jsonschema_runtime.t
+    ; description : string
+    ; tags : string list
+    }
+
+  val v
+    :  schema:Ppx_deriving_jsonschema_runtime.t
+    -> ?tags:string list
+    -> description:string
+    -> unit
+    -> 'a t
+end
+
+module Operation_metadata : sig
   type t =
     { description : string
     ; summary : string option
@@ -19,16 +34,10 @@ module Metadata : sig
     -> t
 end
 
-module type Json_schemable = sig
-  type t
-
-  val t_jsonschema : Ppx_deriving_jsonschema_runtime.t
-end
-
 module type Metadatable = sig
   type t
 
-  val metadata : Metadata.t
+  val metadata : t Metadata.t
 end
 
 module Backend : sig
@@ -188,7 +197,6 @@ module Param : sig
 
     val of_string : string -> (t, string) Result.t
 
-    include Json_schemable with type t := t
     include Metadatable with type t := t
   end
 end
@@ -199,7 +207,6 @@ module Query : sig
 
     val of_string : string -> (t, string) Result.t
 
-    include Json_schemable with type t := t
     include Metadatable with type t := t
   end
 end
@@ -208,7 +215,6 @@ module Request_payload : sig
   module type S = sig
     type t
 
-    include Json_schemable with type t := t
     include Metadatable with type t := t
 
     val of_yojson : Yojson.Safe.t -> (t, string) Result.t
@@ -219,7 +225,6 @@ module Response_payload : sig
   module type S = sig
     type t
 
-    include Json_schemable with type t := t
     include Metadatable with type t := t
 
     val to_yojson : t -> Yojson.Safe.t
@@ -233,7 +238,6 @@ module Parse_error : sig
     ; error : string
     }
 
-  include Json_schemable with type t := t
   include Metadatable with type t := t
 
   val to_yojson : t -> Yojson.Safe.t
@@ -480,7 +484,7 @@ module Make
         val v
           :  ?prefix:string list
           -> ?parse_error:Parse_error_response.t
-          -> metadata:Metadata.t
+          -> metadata:Operation_metadata.t
           -> Route.t list
           -> t
       end
