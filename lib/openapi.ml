@@ -1,27 +1,28 @@
 open! Base
 
-let path_to_openapi (path : string) : string =
-  let segments =
-    String.split ~on:'/' path
-    |> List.map ~f:(fun segment ->
-      if String.is_prefix segment ~prefix:":" then
-        "{" ^ String.drop_prefix segment 1 ^ "}"
-      else
-        segment)
-  in
-  String.concat ~sep:"/" segments
+let path_to_openapi path =
+  String.split ~on:'/' path
+  |> List.map ~f:(fun segment ->
+    if String.is_prefix segment ~prefix:":" then
+      "{" ^ String.drop_prefix segment 1 ^ "}"
+    else
+      segment)
+  |> String.concat ~sep:"/"
 ;;
 
 let yo_str value = `String value
 let yo_bool value = `Bool value
 let yo_list values = `List values
 let yo_obj fields = `Assoc fields
+let schema_ref name = yo_obj [ "$ref", yo_str ("#/components/schemas/" ^ name) ]
 
-let yo_schema (schema : Ppx_deriving_jsonschema_runtime.t) : Yojson.Safe.t =
-  (schema :> Yojson.Safe.t)
+let render_schema (schema : Contract.Schema.t) =
+  match schema.name with
+  | Some name -> schema_ref name
+  | None -> (schema.value :> Yojson.Safe.t)
 ;;
 
-let render_param (param : Contract.param) : Yojson.Safe.t =
+let render_param (param : Contract.param) =
   yo_obj
     [ "name", yo_str param.name
     ; ( "in"
@@ -31,14 +32,13 @@ let render_param (param : Contract.param) : Yojson.Safe.t =
            | `Query -> "query") )
     ; "required", yo_bool param.required
     ; "description", yo_str param.metadata.description
-    ; "schema", yo_schema param.schema
+    ; "schema", render_schema param.schema
     ]
 ;;
 
-let render_request_body (request_body : Contract.request_body) : Yojson.Safe.t option =
-  match request_body with
-  | No_body -> None
-  | Text_body { metadata } ->
+let render_request_body = function
+  | Contract.No_body -> None
+  | Text_body { metadata; _ } ->
     Some
       (yo_obj
          [ "required", yo_bool true
@@ -47,21 +47,30 @@ let render_request_body (request_body : Contract.request_body) : Yojson.Safe.t o
            , yo_obj
                [ "text/plain", yo_obj [ "schema", yo_obj [ "type", yo_str "string" ] ] ] )
          ])
-  | Json_body { schema; metadata } ->
+  | Json_body { schema; metadata; _ } ->
     Some
       (yo_obj
          [ "required", yo_bool true
          ; "description", yo_str metadata.description
-         ; "content", yo_obj [ "application/json", yo_obj [ "schema", yo_schema schema ] ]
+         ; ( "content"
+           , yo_obj [ "application/json", yo_obj [ "schema", render_schema schema ] ] )
          ])
 ;;
 
-let render_response_payload (payload : Contract.response_payload) : Yojson.Safe.t =
+let render_json_schemas schemas =
+  match schemas with
+  | [] -> yo_bool true
+  | [ schema ] -> render_schema schema
+  | schemas -> yo_obj [ "oneOf", yo_list (List.map schemas ~f:render_schema) ]
+;;
+
+let render_response_payload (payload : Contract.response_payload) =
   let content =
     List.filter_map payload.content ~f:(function
       | Text ->
         Some ("text/plain", yo_obj [ "schema", yo_obj [ "type", yo_str "string" ] ])
-      | Json schema -> Some ("application/json", yo_obj [ "schema", yo_schema schema ]))
+      | Json schemas ->
+        Some ("application/json", yo_obj [ "schema", render_json_schemas schemas ]))
   in
   yo_obj
     ([ "description", yo_str payload.metadata.description ]
@@ -84,16 +93,26 @@ let operation_metadata
     }
 ;;
 
+let render_security_requirement (requirement : Contract.Security.requirement) =
+  requirement
+  |> List.sort ~compare:(fun (left, _) (right, _) ->
+    String.compare left.Contract.Security.Scheme.name right.name)
+  |> List.map ~f:(fun ((scheme : Contract.Security.Scheme.t), scopes) ->
+    scheme.name, yo_list (List.map scopes ~f:yo_str))
+  |> yo_obj
+;;
+
 let render_operation
       ~(group_metadata : Contract.Operation_metadata.t)
       (endpoint : Contract.endpoint)
-  : Yojson.Safe.t
   =
   let metadata = operation_metadata ~group:group_metadata endpoint.metadata in
   let params = yo_list (List.map endpoint.params ~f:render_param) in
   let request_body = render_request_body endpoint.request_body in
   let responses =
     endpoint.responses
+    |> List.sort ~compare:(fun (left : Contract.response) right ->
+      Int.compare left.status right.status)
     |> List.map ~f:(fun (response : Contract.response) ->
       Int.to_string response.status, render_response_payload response.payload)
     |> yo_obj
@@ -121,49 +140,149 @@ let render_operation
        ; (match metadata.operation_id with
           | None -> []
           | Some operation_id -> [ "operationId", yo_str operation_id ])
+       ; (if List.is_empty endpoint.security then
+            []
+          else
+            [ ( "security"
+              , endpoint.security |> List.map ~f:render_security_requirement |> yo_list )
+            ])
        ; base
        ])
 ;;
 
-let render ?(title = "API") ?(version = "0.1.0") (compiled : Contract.Compiled.t)
-  : Yojson.Safe.t
-  =
+let render_security_scheme (scheme : Contract.Security.Scheme.t) =
+  let description = [ "description", yo_str scheme.description ] in
+  match scheme.kind with
+  | Api_key { parameter; location } ->
+    yo_obj
+      ([ "type", yo_str "apiKey"
+       ; "name", yo_str parameter
+       ; ( "in"
+         , yo_str
+             (match location with
+              | `Header -> "header"
+              | `Query -> "query"
+              | `Cookie -> "cookie") )
+       ]
+       @ description)
+  | Http_bearer { bearer_format } ->
+    yo_obj
+      ([ "type", yo_str "http"; "scheme", yo_str "bearer" ]
+       @ (match bearer_format with
+          | None -> []
+          | Some format -> [ "bearerFormat", yo_str format ])
+       @ description)
+  | Oauth2_implicit { authorization_url; scopes } ->
+    let scopes =
+      scopes
+      |> List.sort ~compare:(fun (left, _) (right, _) -> String.compare left right)
+      |> List.map ~f:(fun (name, description) -> name, yo_str description)
+      |> yo_obj
+    in
+    yo_obj
+      ([ "type", yo_str "oauth2"
+       ; ( "flows"
+         , yo_obj
+             [ ( "implicit"
+               , yo_obj [ "authorizationUrl", yo_str authorization_url; "scopes", scopes ]
+               )
+             ] )
+       ]
+       @ description)
+;;
+
+let render_components compiled =
+  let schemas =
+    Contract.Compiled.schemas compiled
+    |> List.filter_map ~f:(fun schema ->
+      Option.map schema.Contract.Schema.name ~f:(fun name ->
+        name, (schema.value :> Yojson.Safe.t)))
+  in
+  let security_schemes =
+    Contract.Compiled.security_schemes compiled
+    |> List.map ~f:(fun (scheme : Contract.Security.Scheme.t) ->
+      scheme.name, render_security_scheme scheme)
+  in
+  match schemas, security_schemes with
+  | [], [] -> None
+  | _ ->
+    Some
+      (yo_obj
+         ((if List.is_empty schemas then
+             []
+           else
+             [ "schemas", yo_obj schemas ])
+          @
+          if List.is_empty security_schemes then
+            []
+          else
+            [ "securitySchemes", yo_obj security_schemes ]))
+;;
+
+let render_server (server : Contract.Openapi.Server.t) =
+  yo_obj
+    ([ "url", yo_str server.url ]
+     @
+     match server.description with
+     | None -> []
+     | Some description -> [ "description", yo_str description ])
+;;
+
+let render ~config (compiled : Contract.Compiled.t) =
   let groups = Contract.Compiled.groups compiled in
   let tags =
     groups
-    |> List.concat_map ~f:(fun (group : Contract.Compiled.compiled_group) ->
-      List.map group.metadata.tags ~f:(fun name ->
-        yo_obj [ "name", yo_str name; "description", yo_str group.metadata.description ]))
-    |> fun tags ->
-    let unique = Hashtbl.create (module String) in
-    List.iter tags ~f:(function
-      | `Assoc fields as tag ->
-        (match List.Assoc.find fields ~equal:String.equal "name" with
-         | Some (`String name) ->
-           if not (Hashtbl.mem unique name) then
-             Hashtbl.set unique ~key:name ~data:tag
-         | _ -> ())
-      | _ -> ());
-    Hashtbl.data unique |> yo_list
+    |> List.concat_map ~f:(fun group ->
+      List.map group.Contract.Compiled.metadata.tags ~f:(fun name ->
+        name, group.metadata.description))
+    |> List.sort_and_group ~compare:(fun (left, _) (right, _) ->
+      String.compare left right)
+    |> List.map ~f:(fun group ->
+      let name, description = List.hd_exn group in
+      yo_obj [ "name", yo_str name; "description", yo_str description ])
+    |> yo_list
   in
-  let by_path = Hashtbl.create (module String) in
-  List.iter groups ~f:(fun (group : Contract.Compiled.compiled_group) ->
-    List.iter group.routes ~f:(fun (route : Contract.Compiled.compiled_route) ->
-      Option.iter route.endpoint ~f:(fun endpoint ->
-        let path = path_to_openapi route.path in
-        let operation = render_operation ~group_metadata:group.metadata endpoint in
-        Hashtbl.update by_path path ~f:(function
-          | None -> Map.singleton (module String) route.meth operation
-          | Some methods -> Map.set methods ~key:route.meth ~data:operation))));
-  let paths =
-    Hashtbl.to_alist by_path
-    |> List.map ~f:(fun (path, methods) -> path, Map.to_alist methods |> yo_obj)
+  let path_entries =
+    List.concat_map groups ~f:(fun group ->
+      List.filter_map group.routes ~f:(fun route ->
+        Option.map route.endpoint ~f:(fun endpoint ->
+          ( path_to_openapi route.path
+          , route.meth
+          , render_operation ~group_metadata:group.metadata endpoint ))))
+    |> List.sort ~compare:(fun (left_path, left_meth, _) (right_path, right_meth, _) ->
+      match String.compare left_path right_path with
+      | 0 -> String.compare left_meth right_meth
+      | comparison -> comparison)
+    |> List.group ~break:(fun (left_path, _, _) (right_path, _, _) ->
+      not (String.equal left_path right_path))
+    |> List.map ~f:(fun entries ->
+      let path, _, _ = List.hd_exn entries in
+      let methods =
+        List.map entries ~f:(fun (_, meth, operation) -> meth, operation) |> yo_obj
+      in
+      path, methods)
     |> yo_obj
   in
+  let info =
+    yo_obj
+      ([ "title", yo_str config.Contract.Openapi.Config.title
+       ; "version", yo_str config.version
+       ]
+       @
+       match config.description with
+       | None -> []
+       | Some description -> [ "description", yo_str description ])
+  in
   yo_obj
-    [ "openapi", yo_str "3.1.0"
-    ; "info", yo_obj [ "title", yo_str title; "version", yo_str version ]
-    ; "tags", tags
-    ; "paths", paths
-    ]
+    (List.concat
+       [ [ "openapi", yo_str "3.1.0"; "info", info ]
+       ; (if List.is_empty config.servers then
+            []
+          else
+            [ "servers", yo_list (List.map config.servers ~f:render_server) ])
+       ; [ "tags", tags; "paths", path_entries ]
+       ; (match render_components compiled with
+          | None -> []
+          | Some components -> [ "components", components ])
+       ])
 ;;

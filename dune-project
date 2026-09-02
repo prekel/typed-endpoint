@@ -45,12 +45,31 @@
   (opium (= 0.18.0))
   uri
   yojson
-  (ppx_let (and (>= v0.17.1) :with-test))
+  (ppx_let (>= v0.17.1))
   (ppx_deriving_yojson :with-test)
   (ppx_deriving_jsonschema (and (>= 0.0.8) :with-test))
   (ppx_expect :with-test))
  (tags
   (http routing openapi opium)))
+
+(package
+ (name typed-endpoint-testing)
+ (synopsis "In-memory testing backend for typed-endpoint")
+ (description
+  "A framework-free in-memory backend for testing typed-endpoint applications and examples.")
+ (depends
+  (ocaml (>= 5.1))
+  (dune (>= 3.16))
+  (typed-endpoint (= :version))
+  base
+  cohttp
+  uri
+  yojson
+  (ppx_deriving_yojson :with-test)
+  (ppx_deriving_jsonschema (and (>= 0.0.8) :with-test))
+  (ppx_expect :with-test))
+ (tags
+  (http routing openapi testing)))
 
 (package
  (name typed-endpoint-dream)
@@ -65,6 +84,7 @@
   cohttp
   (dream (= 1.0.0~alpha8))
   lwt
+  (ppx_let (>= v0.17.1))
   yojson)
  (tags
   (http routing openapi dream)))

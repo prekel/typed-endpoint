@@ -1,0 +1,29 @@
+{0 Эксплуатация}
+
+{1 Ограничения body}
+
+JSON принимается для [application/json] и [application/*+json] с параметрами.
+Текст принимается как [text/plain]. Backend обязан остановить буферизацию после
+[max_body_bytes]; декларация нулевого или отрицательного лимита не компилируется.
+Multipart, form data и streaming response пока не входят в API.
+
+{1 Ошибки}
+
+[Decode_error] не включает исходное тело запроса, чтобы случайно не записать в
+ответ или лог секреты. Приложение переводит ошибку в собственный JSON DTO через
+[Decode_error_response.json]. Ошибки параметров/JSON получают 400, превышение
+лимита — 413, неподдерживаемый media type — 415.
+
+{1 OpenAPI}
+
+[Metadata.schema_name] включает components и [$ref]. Одинаковое имя с разными
+схемами, конфликтующие security schemes, неизвестные OAuth scopes, повторные
+маршруты, operationId и response status являются ошибками [compile]. Перед
+публикацией документа задайте [Openapi.Config] с title, version, description и
+servers.
+
+{1 Тестирование}
+
+[typed-endpoint-testing] исполняет [Compiled.app] напрямую и не запускает web
+framework или сокет. Основную бизнес-семантику проверяйте через него, а в
+adapter tests оставляйте преобразование request/response и router integration.

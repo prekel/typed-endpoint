@@ -1,0 +1,4 @@
+(library
+ (name typed_endpoint_testing)
+ (public_name typed-endpoint-testing)
+ (libraries base cohttp typed-endpoint uri yojson))

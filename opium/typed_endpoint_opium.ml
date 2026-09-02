@@ -3,6 +3,7 @@ open! Base
 type req = Opium.Std.Request.t
 type resp = Opium.Std.Response.t
 type 'a io = 'a Lwt.t
+type body_read_error = [ `Too_large ]
 
 include Cohttp.Code
 
@@ -35,12 +36,34 @@ let query (req : req) (name : string) : string option =
   Uri.get_query_param uri name
 ;;
 
-let body_to_string (req : req) : string Lwt.t =
-  Opium.Std.Request.body req |> Opium.Std.Body.to_string
+let header (req : req) name = Cohttp.Header.get (Opium.Std.Request.headers req) name
+
+let body_to_string ~max_bytes (req : req) =
+  let stream = Opium.Std.Request.body req |> Opium.Std.Body.to_stream in
+  let buffer = Buffer.create (Int.min max_bytes 4096) in
+  let rec read size =
+    let open Lwt.Let_syntax in
+    let%bind chunk = Lwt_stream.get stream in
+    match chunk with
+    | None -> Lwt.return (Ok (Buffer.contents buffer))
+    | Some chunk ->
+      let size = size + String.length chunk in
+      if size > max_bytes then
+        Lwt.return (Error `Too_large)
+      else (
+        Buffer.add_string buffer chunk;
+        read size)
+  in
+  read 0
 ;;
 
 let respond_string ?status (s : string) : resp Lwt.t =
   Opium.App.respond' ?code:status (`String s)
+;;
+
+let respond_html ?status (html : string) : resp Lwt.t =
+  let headers = Cohttp.Header.init_with "content-type" "text/html; charset=utf-8" in
+  Opium.Std.respond' ~headers ?code:status (`String html)
 ;;
 
 let respond_json ?status (json : Yojson.Safe.t) : resp Lwt.t =

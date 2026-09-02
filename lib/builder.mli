@@ -1,19 +1,31 @@
 open! Base
 
 module Metadata : sig
+  (** Metadata keeps a schema tied to the OCaml wire type. [schema_name], when
+      present, registers the schema in OpenAPI [components/schemas] and renders
+      references to it. Reusing a name for a different schema is a compile error. *)
   type 'a t = private
     { schema : Ppx_deriving_jsonschema_runtime.t
+    ; schema_name : string option
     ; description : string
     ; tags : string list
     }
 
   val v
     :  schema:Ppx_deriving_jsonschema_runtime.t
+    -> ?schema_name:string
     -> ?tags:string list
     -> description:string
     -> unit
     -> 'a t
 end
+
+(** OpenAPI security schemes and requirements. A list of requirements denotes
+    alternatives (OR); use {!Security.all} inside one requirement for AND. *)
+module Security = Contract.Security
+
+(** OpenAPI document configuration shared by all backends. *)
+module Openapi = Contract.Openapi
 
 module Operation_metadata : sig
   type t =
@@ -162,6 +174,7 @@ module Backend : sig
     val code_of_status : status_code -> int
 
     type app_builder
+    type body_read_error = [ `Too_large ]
 
     val get : meth
     val post : meth
@@ -173,8 +186,16 @@ module Backend : sig
     val route : meth -> string -> (req -> resp io) -> app_builder
     val param : req -> string -> string
     val query : req -> string -> string option
-    val body_to_string : req -> string io
+
+    (** Header lookup is case-insensitive in HTTP backends. *)
+    val header : req -> string -> string option
+
+    (** Reads at most [max_bytes]. Backends must stop buffering once the limit
+        is exceeded and return [`Too_large]. *)
+    val body_to_string : max_bytes:int -> req -> (string, body_read_error) Result.t io
+
     val respond_string : ?status:status_code -> string -> resp io
+    val respond_html : ?status:status_code -> string -> resp io
     val respond_json : ?status:status_code -> Yojson.Safe.t -> resp io
     val combine : app_builder -> app_builder -> app_builder
     val empty : app_builder
@@ -237,12 +258,28 @@ module Response_payload : sig
   end
 end
 
-module Parse_error : sig
+module Decode_error : sig
+  (** Failures produced before the user handler runs. They map to 400, 413, or
+      415 according to the constructor; applications control only the JSON
+      payload through {!Make.Dsl.Decode_error_response}. *)
   type t =
-    { param : string
-    ; value : string
-    ; error : string
-    }
+    | Invalid_parameter of
+        { source : [ `Path | `Query ]
+        ; name : string
+        ; value : string
+        ; error : string
+        }
+    | Missing_parameter of
+        { source : [ `Path | `Query ]
+        ; name : string
+        }
+    | Invalid_json of { error : string }
+    | Invalid_body of { error : string }
+    | Unsupported_media_type of
+        { expected : string list
+        ; actual : string option
+        }
+    | Body_too_large of { max_bytes : int }
 
   include Metadatable with type t := t
 
@@ -284,15 +321,23 @@ module Make
           B.status_code * 'code
           -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
 
-    module D : sig
+    module Dsl : sig
       type never = |
 
       module Request : sig
         type _ t
 
         val empty : unit t
-        val json : (module Request_payload.S with type t = 'a) -> 'a t
-        val text : description:string -> string t
+
+        (** One mebibyte. *)
+        val default_max_body_bytes : int
+
+        val json
+          :  ?max_body_bytes:int
+          -> (module Request_payload.S with type t = 'a)
+          -> 'a t
+
+        val text : ?max_body_bytes:int -> description:string -> unit -> string t
       end
 
       module Response : sig
@@ -328,22 +373,27 @@ module Make
 
       module Guard : sig
         (** Builds a guard whose successful typed context is passed to the handler.
-            Rejections are rendered with [response] and included in OpenAPI. *)
+            Rejections are rendered with [response] and included in OpenAPI.
+            Entries in [security] are OpenAPI alternatives (OR). Compose guards
+            with {!Context.both} to require all of them (AND). *)
         val v
-          :  status:B.client_error_status
+          :  ?security:Security.requirement list
+          -> status:B.client_error_status
           -> response:'error Response.t
           -> check:(B.req -> ('context, 'error) Result.t B.io)
+          -> unit
           -> 'context Context.t
       end
 
-      module Parse_error_response : sig
+      module Decode_error_response : sig
         type t
 
-        (** Defines a typed JSON response for path, query, and body decode failures. *)
+        (** Defines one typed JSON shape for path, query, media-type, size, and
+            body decode failures. Runtime selects the fixed 400, 413, or 415
+            status and OpenAPI declares every status reachable by the endpoint. *)
         val json
-          :  status:B.client_error_status
-          -> payload:(module Response_payload.S with type t = 'a)
-          -> map:(Parse_error.t -> 'a)
+          :  payload:(module Response_payload.S with type t = 'a)
+          -> map:(Decode_error.t -> 'a)
           -> t
       end
 
@@ -483,7 +533,7 @@ module Make
         -> ?deprecated:bool
         -> ?operation_id:string
         -> ?description:string
-        -> ?parse_error:Parse_error_response.t
+        -> ?decode_error:Decode_error_response.t
         -> request:'req Request.t
         -> path:
              ( 'h
@@ -522,7 +572,7 @@ module Make
         -> ?deprecated:bool
         -> ?operation_id:string
         -> ?description:string
-        -> ?parse_error:Parse_error_response.t
+        -> ?decode_error:Decode_error_response.t
         -> request:'req Request.t
         -> path:
              ( 'h
@@ -557,11 +607,11 @@ module Make
       module Group : sig
         type t
 
-        (** [parse_error] overrides the application policy for every fallible route
+        (** [decode_error] overrides the application policy for every fallible route
             in the group unless the endpoint has its own override. *)
         val v
           :  ?prefix:string list
-          -> ?parse_error:Parse_error_response.t
+          -> ?decode_error:Decode_error_response.t
           -> metadata:Operation_metadata.t
           -> Route.t list
           -> t
@@ -596,9 +646,22 @@ module Make
               { meth : string
               ; path : string
               }
-          | Missing_parse_error_policy of
+          | Missing_decode_error_policy of
               { meth : string
               ; path : string
+              }
+          | Invalid_body_limit of
+              { meth : string
+              ; path : string
+              ; max_body_bytes : int
+              }
+          | Invalid_schema_name of string
+          | Conflicting_schema of string
+          | Invalid_security_scheme_name of string
+          | Conflicting_security_scheme of string
+          | Invalid_security_scope of
+              { scheme : string
+              ; scope : string
               }
 
         val to_string : t -> string
@@ -611,19 +674,22 @@ module Make
         val app : t -> B.app_builder
 
         (** Renders the OpenAPI document from the compiled contract. *)
-        val openapi : ?title:string -> ?version:string -> t -> Yojson.Safe.t
+        val openapi : ?config:Openapi.Config.t -> t -> Yojson.Safe.t
       end
 
       (** Validates route declarations and produces their common contract.
-          Endpoint parse-error policies take precedence over group policies, which
-          take precedence over [parse_error]. *)
+          Endpoint decode-error policies take precedence over group policies, which
+          take precedence over [decode_error]. *)
       val compile
-        :  ?parse_error:Parse_error_response.t
+        :  ?decode_error:Decode_error_response.t
         -> Group.t list
         -> (Compiled.t, Compile_error.t list) Result.t
 
       (** Like [compile], but raises [Failure] with all validation errors. *)
-      val compile_exn : ?parse_error:Parse_error_response.t -> Group.t list -> Compiled.t
+      val compile_exn
+        :  ?decode_error:Decode_error_response.t
+        -> Group.t list
+        -> Compiled.t
     end
   end
   with module B = B

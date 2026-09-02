@@ -3,7 +3,7 @@ open! Base
 type req =
   { request : Http.Request.t
   ; uri : Uri.t
-  ; body : string
+  ; body : [ `String of string | `Stream of Cohttp_eio.Body.t ]
   ; params : (string * string) list
   }
 
@@ -14,6 +14,7 @@ type resp =
   }
 
 type 'a io = 'a
+type body_read_error = [ `Too_large ]
 
 include Cohttp.Code
 
@@ -71,8 +72,35 @@ let param (request : req) name =
 ;;
 
 let query (request : req) name = Uri.get_query_param request.uri name
-let body_to_string (request : req) = request.body
+let header request name = Http.Header.get (Http.Request.headers request.request) name
+
+let body_to_string ~max_bytes (request : req) =
+  match request.body with
+  | `String body ->
+    if String.length body > max_bytes then
+      Error `Too_large
+    else
+      Ok body
+  | `Stream body ->
+    let max_size =
+      if Int.equal max_bytes Int.max_value then
+        max_bytes
+      else
+        max_bytes + 1
+    in
+    (match Eio.Buf_read.parse ~max_size Eio.Buf_read.take_all body with
+     | Ok body -> Ok body
+     | Error _ -> Error `Too_large)
+;;
+
 let respond_string ?(status = `OK) body = { status; headers = Http.Header.init (); body }
+
+let respond_html ?(status = `OK) body =
+  { status
+  ; headers = Http.Header.init_with "content-type" "text/html; charset=utf-8"
+  ; body
+  }
+;;
 
 let respond_json ?(status = `OK) json =
   { status
@@ -81,7 +109,7 @@ let respond_json ?(status = `OK) json =
   }
 ;;
 
-let dispatch routes ~request ~body =
+let dispatch_with_body routes ~request ~body =
   let uri = Uri.of_string (Http.Request.resource request) in
   let path = Uri.path uri |> path_segments in
   let path_matches =
@@ -98,6 +126,10 @@ let dispatch routes ~request ~body =
   | None -> respond_string ~status:`Not_found "Not found"
 ;;
 
+let dispatch routes ~request ~body =
+  dispatch_with_body routes ~request ~body:(`String body)
+;;
+
 let response_writer response =
   Cohttp_eio.Server.respond_string
     ~headers:response.headers
@@ -109,8 +141,8 @@ let response_writer response =
 let server routes =
   Cohttp_eio.Server.make_response_action
     ~callback:(fun _connection request body ->
-      let body = Eio.Flow.read_all body in
-      `Response (dispatch routes ~request ~body |> response_writer))
+      `Response
+        (dispatch_with_body routes ~request ~body:(`Stream body) |> response_writer))
     ()
 ;;
 

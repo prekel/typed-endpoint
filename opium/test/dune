@@ -1,0 +1,11 @@
+(test
+ (name adapter_test)
+ (package typed-endpoint-opium)
+ (libraries
+  base
+  cohttp
+  lwt.unix
+  opium
+  typed-endpoint
+  typed-endpoint-opium
+  yojson))

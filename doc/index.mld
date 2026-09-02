@@ -1,0 +1,9 @@
+{0 typed-endpoint}
+
+Typed-endpoint связывает типизированную декларацию HTTP endpoint с двумя
+потребителями: runtime backend и OpenAPI 3.1. Декларация остаётся единственным
+источником для path/query/body, ответов, ошибок декодирования и security.
+
+Начните с {!page-quickstart}. Границы ядра и адаптеров описаны в
+{!page-architecture}, а эксплуатационные ограничения — в
+{!page-production}.

@@ -1,3 +1,3 @@
 open! Base
 
-val render : ?title:string -> ?version:string -> Contract.Compiled.t -> Yojson.Safe.t
+val render : config:Contract.Openapi.Config.t -> Contract.Compiled.t -> Yojson.Safe.t

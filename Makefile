@@ -1,7 +1,8 @@
 all: build
 
 PACKAGES = ./typed-endpoint.opam ./typed-endpoint-opium.opam \
-	./typed-endpoint-dream.opam ./typed-endpoint-eio.opam
+	./typed-endpoint-dream.opam ./typed-endpoint-eio.opam \
+	./typed-endpoint-testing.opam
 
 .PHONY: create_switch
 create_switch:
@@ -26,6 +27,26 @@ test:
 .PHONY: fmt
 fmt:
 	opam exec -- dune build --root . @fmt
+
+.PHONY: doc
+doc:
+	opam exec -- dune build --root . @doc
+
+.PHONY: package
+package: smoke
+	opam exec -- dune build --root . @install
+	opam lint $(PACKAGES)
+
+.PHONY: smoke
+smoke:
+	opam exec -- dune build -p typed-endpoint @install @runtest
+	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-testing @install @runtest
+	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-opium @install @runtest
+	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-dream @install @runtest
+	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-eio @install @runtest
+
+.PHONY: check
+check: fmt build test doc package
 
 .PHONY: clean
 clean:

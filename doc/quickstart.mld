@@ -1,0 +1,30 @@
+{0 Быстрый старт}
+
+Создайте backend и откройте его DSL:
+
+{[
+module Endpoint = Typed_endpoint.Make (Typed_endpoint_testing)
+open Endpoint
+open Dsl
+]}
+
+JSON-модуль реализует [Request_payload.S] и/или [Response_payload.S]. Метаданные
+типизированы тем же [t], поэтому случайно передать метаданные другого DTO
+нельзя. [schema_name] необязателен; он переносит схему в OpenAPI components.
+
+{[
+let metadata : t Typed_endpoint.Metadata.t =
+  Metadata.v
+    ~schema:t_jsonschema
+    ~schema_name:"Pet"
+    ~description:"A pet"
+    ()
+]}
+
+[Request.json] принимает [max_body_bytes], по умолчанию 1 МиБ. Для любого
+endpoint с декодированием задайте [Decode_error_response] на endpoint, группу
+или весь [compile]. Runtime сам выбирает 400, 413 или 415.
+
+После [compile] используйте [Compiled.app] для backend-приложения и
+[Compiled.openapi] для документа. Полный пример находится в
+[examples/petstore].

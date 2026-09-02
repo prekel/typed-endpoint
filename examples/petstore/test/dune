@@ -1,0 +1,4 @@
+(test
+ (name app_test)
+ (package typed-endpoint-testing)
+ (libraries base petstore_app typed-endpoint-testing yojson))

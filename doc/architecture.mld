@@ -1,0 +1,19 @@
+{0 Архитектура}
+
+Ядро не знает об Opium, Dream, Cohttp или Eio. Функтор [Typed_endpoint.Make]
+принимает [Backend.S], где backend предоставляет маршрутизацию, доступ к
+path/query/header, ограниченное чтение body и создание ответа.
+
+[Context] вычисляет типизированные зависимости перед декодированием request.
+[Dependency.value] подходит для application-scoped сервиса,
+[Dependency.of_request] — для request-scoped значения. [Guard] является тем же
+типизированным контекстом, но может завершить request объявленным ответом.
+
+Security requirements прикрепляются к [Guard]. Список requirements означает
+OR, [Security.all] объединяет схемы как AND. При [Context.both] requirements
+двух guards образуют AND-комбинации, совпадающие с runtime-порядком проверок.
+
+Общие HTTP middleware намеренно не входят в ядро. Логирование, tracing,
+compression, CORS и обработка необъявленных исключений лучше ставить снаружи
+[Compiled.app] средствами framework. В ядре остаётся только то, что влияет на
+типизированный контракт endpoint.

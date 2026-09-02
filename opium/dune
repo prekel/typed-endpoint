@@ -1,4 +1,6 @@
 (library
  (name typed_endpoint_opium)
  (public_name typed-endpoint-opium)
- (libraries base cohttp lwt opium typed-endpoint uri yojson))
+ (libraries base cohttp lwt opium typed-endpoint uri yojson)
+ (preprocess
+  (pps ppx_let)))

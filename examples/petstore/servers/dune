@@ -1,0 +1,14 @@
+(executable
+ (name opium_server)
+ (modules opium_server)
+ (libraries base opium petstore_app typed-endpoint-opium))
+
+(executable
+ (name dream_server)
+ (modules dream_server)
+ (libraries base dream petstore_app typed-endpoint-dream))
+
+(executable
+ (name eio_server)
+ (modules eio_server)
+ (libraries base cohttp-eio eio eio_main petstore_app typed-endpoint-eio))

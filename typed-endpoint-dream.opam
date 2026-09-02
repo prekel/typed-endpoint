@@ -17,6 +17,7 @@ depends: [
   "cohttp"
   "dream" {= "1.0.0~alpha8"}
   "lwt"
+  "ppx_let" {>= "v0.17.1"}
   "yojson"
   "odoc" {with-doc}
 ]

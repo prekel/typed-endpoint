@@ -28,6 +28,104 @@ module Operation_metadata : sig
     -> t
 end
 
+module Schema : sig
+  type t =
+    { value : Ppx_deriving_jsonschema_runtime.t
+    ; name : string option
+    }
+
+  val v : ?name:string -> Ppx_deriving_jsonschema_runtime.t -> t
+  val equal : t -> t -> bool
+end
+
+module Security : sig
+  module Scheme : sig
+    type api_key_location =
+      [ `Header
+      | `Query
+      | `Cookie
+      ]
+
+    type kind =
+      | Api_key of
+          { parameter : string
+          ; location : api_key_location
+          }
+      | Http_bearer of { bearer_format : string option }
+      | Oauth2_implicit of
+          { authorization_url : string
+          ; scopes : (string * string) list
+          }
+
+    type t =
+      { name : string
+      ; description : string
+      ; kind : kind
+      }
+
+    val api_key
+      :  name:string
+      -> parameter:string
+      -> location:api_key_location
+      -> description:string
+      -> unit
+      -> t
+
+    val http_bearer
+      :  name:string
+      -> ?bearer_format:string
+      -> description:string
+      -> unit
+      -> t
+
+    val oauth2_implicit
+      :  name:string
+      -> authorization_url:string
+      -> scopes:(string * string) list
+      -> description:string
+      -> unit
+      -> t
+
+    val equal : t -> t -> bool
+  end
+
+  type requirement = (Scheme.t * string list) list
+
+  val require : ?scopes:string list -> Scheme.t -> requirement
+  val all : requirement list -> requirement
+  val combine_alternatives : requirement list -> requirement list -> requirement list
+end
+
+module Openapi : sig
+  module Server : sig
+    type t =
+      { url : string
+      ; description : string option
+      }
+
+    val v : url:string -> ?description:string -> unit -> t
+  end
+
+  module Config : sig
+    type t =
+      { title : string
+      ; version : string
+      ; description : string option
+      ; servers : Server.t list
+      }
+
+    val v
+      :  title:string
+      -> version:string
+      -> ?description:string
+      -> ?servers:Server.t list
+      -> unit
+      -> t
+
+    val default : t
+  end
+end
+
 type param_kind =
   [ `Path
   | `Query
@@ -37,21 +135,25 @@ type param =
   { name : string
   ; kind : param_kind
   ; required : bool
-  ; schema : Ppx_deriving_jsonschema_runtime.t
+  ; schema : Schema.t
   ; metadata : Documentation.t
   }
 
 type request_body =
   | No_body
   | Json_body of
-      { schema : Ppx_deriving_jsonschema_runtime.t
+      { schema : Schema.t
       ; metadata : Documentation.t
+      ; max_body_bytes : int
       }
-  | Text_body of { metadata : Documentation.t }
+  | Text_body of
+      { metadata : Documentation.t
+      ; max_body_bytes : int
+      }
 
 type response_content =
   | Text
-  | Json of Ppx_deriving_jsonschema_runtime.t
+  | Json of Schema.t list
 
 type response_payload =
   { metadata : Documentation.t
@@ -70,10 +172,11 @@ type endpoint =
   ; params : param list
   ; request_body : request_body
   ; responses : response list
-  ; parse_error_response : response option
+  ; decode_error_responses : response list
   ; context_responses : response list
+  ; security : Security.requirement list
   ; response_families : int list list
-  ; has_parsers : bool
+  ; has_decoders : bool
   }
 
 type route =
@@ -108,9 +211,22 @@ module Compile_error : sig
         { meth : string
         ; path : string
         }
-    | Missing_parse_error_policy of
+    | Missing_decode_error_policy of
         { meth : string
         ; path : string
+        }
+    | Invalid_body_limit of
+        { meth : string
+        ; path : string
+        ; max_body_bytes : int
+        }
+    | Invalid_schema_name of string
+    | Conflicting_schema of string
+    | Invalid_security_scheme_name of string
+    | Conflicting_security_scheme of string
+    | Invalid_security_scope of
+        { scheme : string
+        ; scope : string
         }
 
   val to_string : t -> string
@@ -131,6 +247,8 @@ module Compiled : sig
   type t
 
   val groups : t -> compiled_group list
+  val schemas : t -> Schema.t list
+  val security_schemes : t -> Security.Scheme.t list
 end
 
 val prefix_to_string : string list -> string

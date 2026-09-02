@@ -2,7 +2,7 @@ open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_eio)
 open Endpoint
-open Endpoint.D
+open Endpoint.Dsl
 
 module String_param = struct
   type t = string
@@ -34,11 +34,10 @@ module Error_payload = struct
   let to_yojson error = `Assoc [ "message", `String error.message ]
 end
 
-let parse_errors =
-  Parse_error_response.json
-    ~status:`Bad_request
+let decode_errors =
+  Decode_error_response.json
     ~payload:(module Error_payload)
-    ~map:(fun error -> Error_payload.{ message = error.error })
+    ~map:(fun _error -> Error_payload.{ message = "decode error" })
 ;;
 
 let authenticated =
@@ -49,6 +48,7 @@ let authenticated =
       match Typed_endpoint_eio.Request.header request "authorization" with
       | Some "Bearer secret" -> Ok "alice"
       | _ -> Error "unauthorized")
+    ()
 ;;
 
 let route =
@@ -61,7 +61,7 @@ let route =
        / param "id" (module String_param)
        / query "q" (module String_param)
        /? nil)
-    ~request:(Request.text ~description:"Body")
+    ~request:(Request.text ~description:"Body" ())
     ~responses:(ok (Response.text ~description:"OK" ()))
   @@ fun id query (user, service) body ->
   OK
@@ -72,7 +72,7 @@ let route =
 
 let app =
   compile_exn
-    ~parse_error:parse_errors
+    ~decode_error:decode_errors
     [ Group.v
         ~prefix:[ "v1" ]
         ~metadata:(Operation_metadata.v ~description:"Eio test" ())
@@ -82,11 +82,10 @@ let app =
 ;;
 
 let dispatch ?authorization ?(meth = `POST) target body =
+  let headers = Http.Header.init_with "content-type" "text/plain" in
   let headers =
-    Option.value_map
-      authorization
-      ~default:(Http.Header.init ())
-      ~f:(Http.Header.init_with "authorization")
+    Option.value_map authorization ~default:headers ~f:(fun value ->
+      Http.Header.add headers "authorization" value)
   in
   let request = Http.Request.make ~meth ~headers target in
   Typed_endpoint_eio.dispatch app ~request ~body

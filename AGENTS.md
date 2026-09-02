@@ -10,9 +10,11 @@
 - `dream/` — адаптер для Dream 1.0.0~alpha8; Dream API не добавляй в ядро.
 - `eio/` — нативный direct-style адаптер для cohttp-eio 6.3; собственный router
   остаётся внутренней деталью пакета `typed-endpoint-eio`.
-- `test/` — regression tests, OpenAPI snapshots и демонстрационное приложение.
-- `example/realworld/` — backend-independent пример приложения, memory backend
-  для тестов и отдельные entrypoint для поддерживаемых HTTP-фреймворков.
+- `testing/` — framework-free in-memory backend. Не добавляй сюда зависимости
+  от конкретного web framework.
+- `test/` — regression tests и небольшие OpenAPI snapshots.
+- `examples/petstore/` — backend-independent пример приложения и отдельные
+  entrypoint для поддерживаемых HTTP-фреймворков.
 - Метаданные пакетов задаются в `dune-project`; сгенерированные `.opam` вручную
   не редактируются.
 
@@ -38,7 +40,7 @@
   а также между объявленными responses и вариантами результата.
 - Не используй `Obj.magic`, unchecked casts или `Raw` для обхода типовой модели
   без явно документированной необходимости.
-- Автоматические parse errors должны иметь предсказуемый статус и JSON shape;
+- Автоматические decode errors должны иметь предсказуемый статус и JSON shape;
   policy разрешается в порядке endpoint → group → compile, а изменения
   фиксируй regression test.
 - Wire shape JSON-ответа задавай явным `Response_payload.S`. Не вводи
@@ -46,6 +48,10 @@
   endpoint.
 - Новый backend реализует `Typed_endpoint.Backend.S` в отдельном пакете и не
   добавляет framework-зависимость в ядро.
+- `Backend.S.body_to_string` обязан соблюдать переданный лимит без
+  предварительного неограниченного буферизования body.
+- Общие middleware не добавляй в ядро: framework middleware остаётся снаружи,
+  а типизированные зависимости и авторизацию выражай через `Context`/`Guard`.
 - Ядро выражает эффекты через `Backend.S.io`. В Lwt-адаптерах используй
   `ppx_let` (`let%bind`, `let%map`) через `Lwt.Let_syntax`; Eio handler оставляй
   direct-style. Не используй `lwt_ppx`.

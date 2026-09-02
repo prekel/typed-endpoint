@@ -2,7 +2,7 @@ open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_dream)
 open Endpoint
-open Endpoint.D
+open Endpoint.Dsl
 
 module String_param = struct
   type t = string
@@ -34,18 +34,17 @@ module Error_payload = struct
   let to_yojson error = `Assoc [ "message", `String error.message ]
 end
 
-let parse_errors =
-  Parse_error_response.json
-    ~status:`Bad_request
+let decode_errors =
+  Decode_error_response.json
     ~payload:(module Error_payload)
-    ~map:(fun error -> Error_payload.{ message = error.error })
+    ~map:(fun _error -> Error_payload.{ message = "decode error" })
 ;;
 
 let route =
   make
     ~meth:B.post
     ~path:(s "items" / param "id" (module String_param) /? nil)
-    ~request:(Request.text ~description:"Body")
+    ~request:(Request.text ~description:"Body" ())
     ~responses:(ok (Response.text ~description:"OK" ()))
   @@ fun id request body ->
   let query = Dream.query request "q" |> Option.value ~default:"none" in
@@ -59,7 +58,7 @@ let custom =
 
 let handler =
   compile_exn
-    ~parse_error:parse_errors
+    ~decode_error:decode_errors
     [ Group.v
         ~prefix:[ "v1" ]
         ~metadata:(Operation_metadata.v ~description:"Dream test" ())
@@ -70,7 +69,13 @@ let handler =
 ;;
 
 let () =
-  let request = Dream.request ~method_:`POST ~target:"/v1/items/42?q=hello" "body" in
+  let request =
+    Dream.request
+      ~method_:`POST
+      ~target:"/v1/items/42?q=hello"
+      ~headers:[ "content-type", "text/plain" ]
+      "body"
+  in
   let response = Dream.test handler request in
   assert (Dream.status_to_int (Dream.status response) = 200);
   assert (String.equal (Lwt_main.run (Dream.body response)) "42:hello:body");

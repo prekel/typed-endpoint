@@ -1,451 +1,317 @@
 open! Base
 open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 open Typed_endpoint
-
-module Test_backend = struct
-  type req =
-    { params : (string * string) list
-    ; queries : (string * string) list
-    ; body : string
-    }
-
-  type resp =
-    { status : int
-    ; body : string
-    }
-
-  type 'a io = 'a Lwt.t
-
-  include Cohttp.Code
-
-  type handler = req -> resp Lwt.t
-  type app_builder = (meth * string * handler) list
-
-  let get = `GET
-  let post = `POST
-  let put = `PUT
-  let delete = `DELETE
-  let patch = `PATCH
-  let return = Lwt.return
-  let bind value ~f = Lwt.bind value f
-  let route meth path handler = [ meth, path, handler ]
-  let param request name = List.Assoc.find_exn request.params name ~equal:String.equal
-  let query request name = List.Assoc.find request.queries name ~equal:String.equal
-  let body_to_string (request : req) = Lwt.return request.body
-
-  let respond_string ?(status = `OK) body =
-    Lwt.return { status = code_of_status status; body }
-  ;;
-
-  let respond_json ?(status = `OK) body =
-    respond_string ~status (Yojson.Safe.to_string body)
-  ;;
-
-  let combine = List.append
-  let empty = []
-end
-
-module Endpoint = Make (Test_backend)
+module Endpoint = Make (Typed_endpoint_testing)
 open Endpoint
-open Endpoint.D
+open Dsl
 
-module Int_param = struct
-  type t = int [@@deriving jsonschema]
-
-  let of_string value =
-    try Ok (Int.of_string value) with
-    | _ -> Error "not an integer"
-  ;;
-
-  let metadata : t Metadata.t =
-    Metadata.v ~schema:t_jsonschema ~description:"Integer parameter" ()
-  ;;
-end
-
-module Parse_body = struct
-  type t = { source : string } [@@deriving yojson, jsonschema]
+module Item = struct
+  type t =
+    { id : int
+    ; name : string
+    }
+  [@@deriving yojson, jsonschema]
 
   let metadata : t Metadata.t =
-    Metadata.v ~schema:t_jsonschema ~description:"Parse error" ()
-  ;;
-end
-
-module Business_error = struct
-  type t = { message : string } [@@deriving yojson, jsonschema]
-
-  let metadata : t Metadata.t =
-    Metadata.v ~schema:t_jsonschema ~description:"Business error" ()
-  ;;
-end
-
-module Input_body = struct
-  type t = { value : string } [@@deriving yojson, jsonschema]
-
-  let metadata : t Metadata.t =
-    Metadata.v ~schema:t_jsonschema ~description:"Input body" ()
+    Metadata.v ~schema:t_jsonschema ~schema_name:"Item" ~description:"An item" ()
   ;;
 
   let of_yojson = of_yojson
 end
 
-let parse_policy ~status source =
-  Parse_error_response.json
-    ~status
-    ~payload:(module Parse_body)
-    ~map:(fun _error -> Parse_body.{ source })
+module Error_payload = struct
+  type t =
+    { kind : string
+    ; message : string
+    }
+  [@@deriving yojson, jsonschema]
+
+  let metadata : t Metadata.t =
+    Metadata.v
+      ~schema:t_jsonschema
+      ~schema_name:"RequestError"
+      ~description:"A request error"
+      ()
+  ;;
+end
+
+let error_kind : Decode_error.t -> string = function
+  | Invalid_parameter _ -> "invalid_parameter"
+  | Missing_parameter _ -> "missing_parameter"
+  | Invalid_json _ -> "invalid_json"
+  | Invalid_body _ -> "invalid_body"
+  | Unsupported_media_type _ -> "unsupported_media_type"
+  | Body_too_large _ -> "body_too_large"
 ;;
 
-let group routes =
-  Group.v ~metadata:(Operation_metadata.v ~description:"Test routes" ()) routes
+let error_message : Decode_error.t -> string = function
+  | Invalid_parameter { error; _ } | Invalid_json { error } | Invalid_body { error } ->
+    error
+  | Missing_parameter { name; _ } -> "missing " ^ name
+  | Unsupported_media_type { actual; _ } -> Option.value actual ~default:"missing"
+  | Body_too_large { max_bytes } -> Int.to_string max_bytes
 ;;
 
-let print_compile_result groups =
+let decode_error =
+  Decode_error_response.json
+    ~payload:(module Error_payload)
+    ~map:(fun error ->
+      Error_payload.{ kind = error_kind error; message = error_message error })
+;;
+
+let group ?decode_error routes =
+  Group.v ?decode_error ~metadata:(Operation_metadata.v ~description:"Test API" ()) routes
+;;
+
+let echo_route ?(max_body_bytes = 64) () =
+  make
+    ~meth:B.post
+    ~operation_id:"echoItem"
+    ~path:(s "items" /? nil)
+    ~request:(Request.json ~max_body_bytes (module Item))
+    ~responses:(ok (Response.json (module Item)))
+  @@ fun _request item -> B.return (OK item)
+;;
+
+let call app ?(headers = []) ?(body = "") meth target =
+  Typed_endpoint_testing.Request.v ~headers ~body ~meth ~target ()
+  |> Typed_endpoint_testing.dispatch app
+;;
+
+let%expect_test "request bodies enforce media type, decode errors, and size limit" =
+  let compiled = compile_exn [ group ~decode_error [ echo_route () ] ] in
+  let app = Compiled.app compiled in
+  let request content_type body =
+    call app ~headers:[ "content-type", content_type ] ~body `POST "/items"
+  in
+  let cases =
+    [ request "application/vnd.test+json; charset=utf-8" {|{"id":1,"name":"ok"}|}
+    ; request "text/plain" {|{"id":1,"name":"wrong"}|}
+    ; request "application/json" "{"
+    ; request "application/json" (String.make 65 'x')
+    ]
+  in
+  List.iter cases ~f:(fun response ->
+    Stdlib.Printf.printf
+      "%d %s\n"
+      (Typed_endpoint_testing.Response.status response)
+      (Typed_endpoint_testing.Response.body response));
+  [%expect
+    {|
+    200 {"id":1,"name":"ok"}
+    415 {"kind":"unsupported_media_type","message":"text/plain"}
+    400 {"kind":"invalid_json","message":"Line 1, bytes 0-1:\nUnexpected end of input"}
+    413 {"kind":"body_too_large","message":"64"}
+    |}]
+;;
+
+let%expect_test "named schemas are components and operations use references" =
+  let document =
+    compile_exn [ group ~decode_error [ echo_route () ] ] |> Compiled.openapi
+  in
+  let open Yojson.Safe.Util in
+  let schema = document |> member "components" |> member "schemas" |> member "Item" in
+  let request_ref =
+    document
+    |> member "paths"
+    |> member "/items"
+    |> member "post"
+    |> member "requestBody"
+    |> member "content"
+    |> member "application/json"
+    |> member "schema"
+    |> member "$ref"
+    |> to_string
+  in
+  Stdlib.Printf.printf
+    "component=%b ref=%s"
+    (not (Yojson.Safe.equal schema `Null))
+    request_ref;
+  [%expect {| component=true ref=#/components/schemas/Item |}]
+;;
+
+let%expect_test "OpenAPI declares every automatic body error status" =
+  let document =
+    compile_exn [ group ~decode_error [ echo_route () ] ] |> Compiled.openapi
+  in
+  let open Yojson.Safe.Util in
+  let responses =
+    document |> member "paths" |> member "/items" |> member "post" |> member "responses"
+  in
+  List.iter [ "400"; "413"; "415" ] ~f:(fun status ->
+    Stdlib.Printf.printf
+      "%s=%b "
+      status
+      (not (Yojson.Safe.equal (responses |> member status) `Null)));
+  [%expect {| 400=true 413=true 415=true |}]
+;;
+
+let bearer =
+  Security.Scheme.http_bearer
+    ~name:"bearerAuth"
+    ~bearer_format:"JWT"
+    ~description:"Bearer token"
+    ()
+;;
+
+let api_key =
+  Security.Scheme.api_key
+    ~name:"apiKey"
+    ~parameter:"x-api-key"
+    ~location:`Header
+    ~description:"API key"
+    ()
+;;
+
+let secured_route =
+  let guard =
+    Guard.v
+      ~security:[ Security.require bearer; Security.require api_key ]
+      ~status:`Unauthorized
+      ~response:(Response.json (module Error_payload))
+      ~check:(fun _request -> B.return (Ok ()))
+      ()
+  in
+  make_with
+    ~context:guard
+    ~meth:B.get
+    ~path:(s "secure" /? nil)
+    ~request:Request.empty
+    ~responses:(ok (Response.text ~description:"OK" ()))
+  @@ fun () () -> B.return (OK "ok")
+;;
+
+let%expect_test "guard security is rendered as OR alternatives" =
+  let document = compile_exn [ group [ secured_route ] ] |> Compiled.openapi in
+  let open Yojson.Safe.Util in
+  let security =
+    document |> member "paths" |> member "/secure" |> member "get" |> member "security"
+  in
+  let schemes = document |> member "components" |> member "securitySchemes" in
+  Stdlib.Printf.printf
+    "alternatives=%d bearer=%b api_key=%b"
+    (security |> to_list |> List.length)
+    (not (Yojson.Safe.equal (schemes |> member "bearerAuth") `Null))
+    (not (Yojson.Safe.equal (schemes |> member "apiKey") `Null));
+  [%expect {| alternatives=2 bearer=true api_key=true |}]
+;;
+
+module Conflicting_item = struct
+  type t = string [@@deriving yojson, jsonschema]
+
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~schema_name:"Item" ~description:"Wrong item" ()
+  ;;
+end
+
+let conflict_route =
+  make
+    ~meth:B.get
+    ~path:(s "conflict" /? nil)
+    ~request:Request.empty
+    ~responses:(ok (Response.json (module Conflicting_item)))
+  @@ fun _request () -> B.return (OK "conflict")
+;;
+
+let%expect_test "conflicting component schemas are rejected" =
+  (match compile [ group ~decode_error [ echo_route (); conflict_route ] ] with
+   | Ok _ -> Stdlib.print_endline "unexpected success"
+   | Error errors ->
+     List.iter errors ~f:(fun error ->
+       Stdlib.print_endline (Compile_error.to_string error)));
+  [%expect {| conflicting OpenAPI schema: Item |}]
+;;
+
+let print_compile_errors groups =
   match compile groups with
-  | Ok _ -> Stdlib.print_endline "ok"
+  | Ok _ -> Stdlib.print_endline "unexpected success"
   | Error errors ->
     List.iter errors ~f:(fun error ->
       Stdlib.print_endline (Compile_error.to_string error))
 ;;
 
-let duplicate_route =
-  make
-    ~meth:B.get
-    ~path:(s "duplicate" /? nil)
-    ~request:Request.empty
-    ~responses:(ok (Response.text ~description:"OK" ()))
-  @@ fun _request () -> Lwt.return (OK "ok")
+let%expect_test "invalid body limits are rejected" =
+  print_compile_errors [ group ~decode_error [ echo_route ~max_body_bytes:0 () ] ];
+  [%expect {| invalid body limit 0: post /items |}]
 ;;
 
-let%expect_test "duplicate routes are rejected" =
-  print_compile_result [ group [ duplicate_route; duplicate_route ] ];
-  [%expect {| duplicate route: get /duplicate |}]
-;;
-
-let operation route_path =
-  make
-    ~meth:B.get
-    ~operation_id:"duplicateOperation"
-    ~path:(s route_path /? nil)
-    ~request:Request.empty
-    ~responses:(ok (Response.text ~description:"OK" ()))
-  @@ fun _request () -> Lwt.return (OK "ok")
-;;
-
-let%expect_test "duplicate operation ids are rejected" =
-  print_compile_result [ group [ operation "one"; operation "two" ] ];
-  [%expect {| duplicate operationId: duplicateOperation |}]
-;;
-
-let missing_parse_error_policy =
-  make
-    ~meth:B.get
-    ~path:(s "users" / param "id" (module Int_param) /? nil)
-    ~request:Request.empty
-    ~responses:(ok (Response.text ~description:"OK" ()))
-  @@ fun id _request () -> Lwt.return (OK (Int.to_string id))
-;;
-
-let%expect_test "fallible input requires an explicit parse-error policy" =
-  print_compile_result [ group [ missing_parse_error_policy ] ];
-  [%expect {| missing parse-error policy: get /users/:id |}]
-;;
-
-let parsing_route ?parse_error route_path =
-  make
-    ~meth:B.get
-    ?parse_error
-    ~path:(s route_path / param "id" (module Int_param) /? nil)
-    ~request:Request.empty
-    ~responses:(ok (Response.text ~description:"OK" ()))
-  @@ fun id _request () -> Lwt.return (OK (Int.to_string id))
-;;
-
-let response_at compiled path =
-  let _, _, handler =
-    Compiled.app compiled
-    |> List.find_exn ~f:(fun (_, route_path, _) -> String.equal path route_path)
+let%expect_test "unknown OAuth scopes are rejected" =
+  let oauth =
+    Security.Scheme.oauth2_implicit
+      ~name:"oauth"
+      ~authorization_url:"https://example.test/authorize"
+      ~scopes:[ "read", "Read access" ]
+      ~description:"OAuth"
+      ()
   in
-  let request = Test_backend.{ params = [ "id", "invalid" ]; queries = []; body = "" } in
-  match Lwt.state (handler request) with
-  | Return response -> response
-  | Fail error -> Stdlib.raise error
-  | Sleep -> failwith "unexpected pending response"
-;;
-
-let%expect_test "parse-error policies inherit from endpoint, group, and compile" =
-  let compile_policy = parse_policy ~status:`Bad_request "compile" in
-  let group_policy = parse_policy ~status:`Unprocessable_entity "group" in
-  let endpoint_policy = parse_policy ~status:`Conflict "endpoint" in
-  let groups =
-    [ group [ parsing_route "compile" ]
-    ; Group.v
-        ~parse_error:group_policy
-        ~metadata:(Operation_metadata.v ~description:"Group override" ())
-        [ parsing_route "group" ]
-    ; Group.v
-        ~parse_error:group_policy
-        ~metadata:(Operation_metadata.v ~description:"Endpoint override" ())
-        [ parsing_route ~parse_error:endpoint_policy "endpoint" ]
-    ]
-  in
-  let compiled = compile_exn ~parse_error:compile_policy groups in
-  List.iter [ "/compile/:id"; "/group/:id"; "/endpoint/:id" ] ~f:(fun path ->
-    let response = response_at compiled path in
-    Stdlib.Printf.printf "%d %s\n" response.status response.body);
-  [%expect
-    {|
-    400 {"source":"compile"}
-    422 {"source":"group"}
-    409 {"source":"endpoint"}
-    |}]
-;;
-
-let response_schema compiled path_name status =
-  let open Yojson.Safe.Util in
-  Compiled.openapi compiled
-  |> member "paths"
-  |> member path_name
-  |> member "get"
-  |> member "responses"
-  |> member (Int.to_string status)
-  |> member "content"
-  |> member "application/json"
-  |> member "schema"
-;;
-
-let schema_route ~business_schema route_path =
-  make
-    ~meth:B.get
-    ~path:(s route_path / param "id" (module Int_param) /? nil)
-    ~request:Request.empty
-    ~responses:(ok (Response.text ~description:"OK" ()) |+ bad_request business_schema)
-  @@ fun _id _request () -> Lwt.return (OK "ok")
-;;
-
-let%expect_test "parse-error schemas are deduplicated or combined with oneOf" =
-  let policy = parse_policy ~status:`Bad_request "parse" in
-  let same =
-    schema_route ~business_schema:(Response.json (module Parse_body)) "same-schema"
-  in
-  let different =
-    schema_route
-      ~business_schema:(Response.json (module Business_error))
-      "different-schema"
-  in
-  let static =
-    make
-      ~meth:B.get
-      ~path:(s "static" /? nil)
-      ~request:Request.empty
-      ~responses:(ok (Response.text ~description:"OK" ()))
-    @@ fun _request () -> Lwt.return (OK "ok")
-  in
-  let compiled = compile_exn ~parse_error:policy [ group [ same; different; static ] ] in
-  let open Yojson.Safe.Util in
-  let same_one_of = response_schema compiled "/same-schema/{id}" 400 |> member "oneOf" in
-  let different_one_of =
-    response_schema compiled "/different-schema/{id}" 400
-    |> member "oneOf"
-    |> to_list
-    |> List.length
-  in
-  let static_parse_response =
-    Compiled.openapi compiled
-    |> member "paths"
-    |> member "/static"
-    |> member "get"
-    |> member "responses"
-    |> member "400"
-  in
-  Stdlib.Printf.printf
-    "same_one_of=%b different_one_of=%d static_parse_response=%b"
-    (not (Yojson.Safe.equal same_one_of `Null))
-    different_one_of
-    (not (Yojson.Safe.equal static_parse_response `Null));
-  [%expect {| same_one_of=false different_one_of=2 static_parse_response=false |}]
-;;
-
-let%expect_test "guard and dependencies build typed context before request parsing" =
   let guard =
     Guard.v
+      ~security:[ Security.require ~scopes:[ "write" ] oauth ]
       ~status:`Unauthorized
-      ~response:(Response.json (module Business_error))
-      ~check:(fun (request : Test_backend.req) ->
-        match List.Assoc.find request.queries "token" ~equal:String.equal with
-        | Some "secret" -> Lwt.return (Ok "alice")
-        | _ -> Lwt.return (Error Business_error.{ message = "unauthorized" }))
-  in
-  let dependencies =
-    Context.both
-      (Dependency.value "posts")
-      (Dependency.of_request (fun (request : Test_backend.req) ->
-         Lwt.return
-           (Option.value
-              (List.Assoc.find request.queries "trace" ~equal:String.equal)
-              ~default:"no-trace")))
-  in
-  let context =
-    Context.map (Context.both guard dependencies) ~f:(fun (user, (service, trace)) ->
-      service, user, trace)
+      ~response:(Response.json (module Error_payload))
+      ~check:(fun _request -> B.return (Ok ()))
+      ()
   in
   let route =
     make_with
-      ~context
-      ~meth:B.post
-      ~path:(s "guarded" /? nil)
-      ~request:(Request.json (module Input_body))
-      ~responses:
-        (ok (Response.text ~description:"OK" ())
-         |+ code4xx [ `Unauthorized ] (Response.json (module Parse_body)))
-    @@ fun (service, user, trace) (body : Input_body.t) ->
-    Lwt.return (OK (String.concat ~sep:":" [ service; user; trace; body.value ]))
+      ~context:guard
+      ~meth:B.get
+      ~path:(s "scope" /? nil)
+      ~request:Request.empty
+      ~responses:(ok (Response.text ~description:"OK" ()))
+    @@ fun () () -> B.return (OK "ok")
   in
-  let compiled =
-    compile_exn
-      ~parse_error:(parse_policy ~status:`Bad_request "parse")
-      [ group [ route ] ]
+  print_compile_errors [ group [ route ] ];
+  [%expect {| invalid security scope write for scheme oauth |}]
+;;
+
+let%expect_test "conflicting security scheme definitions are rejected" =
+  let first = Security.Scheme.http_bearer ~name:"auth" ~description:"Bearer" () in
+  let second =
+    Security.Scheme.api_key
+      ~name:"auth"
+      ~parameter:"x-api-key"
+      ~location:`Header
+      ~description:"API key"
+      ()
   in
-  let _, _, handler = List.hd_exn (Compiled.app compiled) in
-  let call queries body =
-    let request = Test_backend.{ params = []; queries; body } in
-    match Lwt.state (handler request) with
-    | Return response -> response
-    | Fail error -> Stdlib.raise error
-    | Sleep -> failwith "unexpected pending response"
+  let guard scheme =
+    Guard.v
+      ~security:[ Security.require scheme ]
+      ~status:`Unauthorized
+      ~response:(Response.json (module Error_payload))
+      ~check:(fun _request -> B.return (Ok ()))
+      ()
   in
-  let rejected = call [] "not-json" in
-  let accepted = call [ "token", "secret"; "trace", "trace-1" ] {|{"value":"payload"}|} in
+  let route =
+    make_with
+      ~context:(Context.both (guard first) (guard second))
+      ~meth:B.get
+      ~path:(s "scheme-conflict" /? nil)
+      ~request:Request.empty
+      ~responses:(ok (Response.text ~description:"OK" ()))
+    @@ fun ((), ()) () -> B.return (OK "ok")
+  in
+  print_compile_errors [ group [ route ] ];
+  [%expect {| conflicting security scheme: auth |}]
+;;
+
+let%expect_test "OpenAPI rendering is deterministic and configurable" =
+  let compiled = compile_exn [ group ~decode_error [ echo_route (); secured_route ] ] in
+  let config =
+    Openapi.Config.v
+      ~title:"Example"
+      ~version:"2.0.0"
+      ~servers:[ Openapi.Server.v ~url:"https://api.example.test" () ]
+      ()
+  in
+  let first = Compiled.openapi ~config compiled in
+  let second = Compiled.openapi ~config compiled in
   let open Yojson.Safe.Util in
-  let guard_schema =
-    Compiled.openapi compiled
-    |> member "paths"
-    |> member "/guarded"
-    |> member "post"
-    |> member "responses"
-    |> member "401"
-    |> member "content"
-    |> member "application/json"
-    |> member "schema"
-  in
   Stdlib.Printf.printf
-    "rejected=%d:%s accepted=%d:%s guard_schema=%b"
-    rejected.status
-    rejected.body
-    accepted.status
-    accepted.body
-    (guard_schema |> member "oneOf" |> to_list |> List.length |> Int.equal 2);
-  [%expect
-    {|
-    rejected=401:{"message":"unauthorized"} accepted=200:posts:alice:trace-1:payload guard_schema=true
-    |}]
-;;
-
-let empty_response_family =
-  make
-    ~meth:B.get
-    ~path:(s "empty-family" /? nil)
-    ~request:Request.empty
-    ~responses:(code4xx [] (Response.text ~description:"Error" ()))
-  @@ fun _request () -> Lwt.return (Code_4xx (`Conflict, "error"))
-;;
-
-let%expect_test "empty response families are rejected" =
-  print_compile_result [ group [ empty_response_family ] ];
-  [%expect {| empty response status family: get /empty-family |}]
-;;
-
-let invalid_no_content_response =
-  make
-    ~meth:B.get
-    ~path:(s "invalid-no-content" /? nil)
-    ~request:Request.empty
-    ~responses:(code2xx [ `No_content ] (Response.text ~description:"Invalid" ()))
-  @@ fun _request () -> Lwt.return (Code_2xx (`No_content, "body"))
-;;
-
-let%expect_test "204 responses cannot carry a payload" =
-  print_compile_result [ group [ invalid_no_content_response ] ];
-  [%expect {| 204 response must use an empty payload: get /invalid-no-content |}]
-;;
-
-let duplicate_response_status =
-  make
-    ~meth:B.get
-    ~path:(s "duplicate-status" /? nil)
-    ~request:Request.empty
-    ~responses:(code [ `Code 418; `Code 418 ] (Response.text ~description:"Error" ()))
-  @@ fun _request () -> Lwt.return (Code (`Code 418, "error"))
-;;
-
-let%expect_test "duplicate response statuses are rejected" =
-  print_compile_result [ group [ duplicate_response_status ] ];
-  [%expect {| duplicate response status 418: get /duplicate-status |}]
-;;
-
-let undeclared_runtime_status =
-  make
-    ~meth:B.get
-    ~path:(s "runtime-status" /? nil)
-    ~request:Request.empty
-    ~responses:(code4xx [ `Conflict ] (Response.text ~description:"Error" ()))
-  @@ fun _request () -> Lwt.return (Code_4xx (`Gone, "gone"))
-;;
-
-let%expect_test "runtime rejects a status outside its declared family" =
-  let compiled = compile_exn [ group [ undeclared_runtime_status ] ] in
-  let _, _, handler = List.hd_exn (Compiled.app compiled) in
-  let request = Test_backend.{ params = []; queries = []; body = "" } in
-  (match
-     try `Promise (handler request) with
-     | Runtime_error error -> `Runtime_error error
-   with
-   | `Runtime_error error -> Stdlib.print_endline (Runtime_error.to_string error)
-   | `Promise promise ->
-     (match Lwt.state promise with
-      | Lwt.Fail (Runtime_error error) ->
-        Stdlib.print_endline (Runtime_error.to_string error)
-      | Lwt.Fail error -> Stdlib.raise error
-      | Lwt.Return _ -> Stdlib.print_endline "unexpected response"
-      | Lwt.Sleep -> Stdlib.print_endline "unexpected pending response"));
-  [%expect
-    {|
-    handler returned undeclared status 410 for get /runtime-status; declared: [409]
-    |}]
-;;
-
-let json_raw =
-  make
-    ~meth:B.get
-    ~path:(s "json-raw" /? nil)
-    ~request:Request.empty
-    ~responses:(ok (Response.json_raw ~description:"Arbitrary JSON" ()))
-  @@ fun _request () -> Lwt.return (OK (`Assoc [ "ok", `Bool true ]))
-;;
-
-let unsafe =
-  Unsafe.route ~meth:B.get ~path:"/unsafe" ~handler:(fun _request ->
-    B.respond_string "unsafe")
-;;
-
-let%expect_test "unsafe routes stay out of OpenAPI and json_raw stays JSON" =
-  let compiled = compile_exn [ group [ unsafe; json_raw ] ] in
-  let document = Compiled.openapi compiled in
-  let open Yojson.Safe.Util in
-  let paths = document |> member "paths" in
-  let unsafe_is_present = not (Yojson.Safe.equal (paths |> member "/unsafe") `Null) in
-  let raw_schema =
-    paths
-    |> member "/json-raw"
-    |> member "get"
-    |> member "responses"
-    |> member "200"
-    |> member "content"
-    |> member "application/json"
-    |> member "schema"
-  in
-  Stdlib.Printf.printf
-    "unsafe=%b schema=%s"
-    unsafe_is_present
-    (Yojson.Safe.to_string raw_schema);
-  [%expect {| unsafe=false schema=true |}]
+    "equal=%b title=%s server=%s"
+    (Yojson.Safe.equal first second)
+    (first |> member "info" |> member "title" |> to_string)
+    (first |> member "servers" |> index 0 |> member "url" |> to_string);
+  [%expect {| equal=true title=Example server=https://api.example.test |}]
 ;;
