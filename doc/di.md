@@ -1,11 +1,12 @@
 # Dependency injection
 
-Ядро `typed-endpoint` не вводит контейнер зависимостей и не передаёт неявный
-контекст в handler. Это сохраняет декларацию endpoint независимой от
-web-framework и делает её пригодной для runtime и OpenAPI одновременно.
+Ядро `typed-endpoint` не вводит контейнер или service locator. Зависимости
+передаются handler явно через типизированный `Context.t`, поэтому endpoint
+остаётся независимым от web-framework и пригодным для runtime и OpenAPI
+одновременно.
 
-Когда приложению нужны зависимости, рекомендуемый вариант — создать их один
-раз при запуске и замкнуть в handler через явную неизменяемую запись окружения:
+Неизменяемое окружение создаётся один раз при запуске и превращается в context
+через `Dependency.value`:
 
 ```ocaml
 type env =
@@ -13,21 +14,38 @@ type env =
   ; clock : Clock.t
   }
 
-let get_post (env : env) =
-  make (* declaration omitted *)
-  @@ fun user_id post_id _request () ->
+let context = Dependency.value env
+
+let get_post =
+  make_with ~context (* declaration omitted *)
+  @@ fun user_id post_id env () ->
   Posts_service.get env.posts ~user_id ~post_id
 ;;
 ```
 
+Request-scoped зависимость задаётся через `Dependency.of_request`. Несколько
+источников объединяются слева направо через `Context.both`, а итоговую форму
+можно привести к предметной записи через `Context.map`:
+
+```ocaml
+let context =
+  Context.both
+    (Dependency.value env)
+    (Dependency.of_request Request_id.from_request)
+  |> Context.map ~f:(fun (env, request_id) -> { env; request_id })
+```
+
 Такой подход имеет несколько полезных свойств:
 
-- зависимости видны в точке сборки приложения;
+- зависимости видны в точке декларации endpoint;
 - unit-тест может передать маленькую fake-реализацию;
 - endpoint остаётся чистой декларацией HTTP-контракта;
 - Opium и другие backends не получают зависимости ядра.
 
-Если число сервисов станет большим, запись `env` можно разбить на несколько
-предметных записей. Контейнер или service locator в публичном API не следует
-добавлять без конкретного случая: они скрывают зависимости и осложняют тесты.
+Обычный `make` сохраняет прежнее поведение и передаёт handler исходный
+`B.req`. Если нужны одновременно request и зависимости, используйте
+`Context.both Context.request (Dependency.value env)`.
 
+Если число сервисов становится большим, запись `env` следует разбивать на
+предметные записи. Глобальное mutable state и динамический поиск сервисов не
+используются.

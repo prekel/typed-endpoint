@@ -300,6 +300,36 @@ module Make
         val empty : description:string -> unit -> unit t
       end
 
+      module Context : sig
+        type 'a t
+
+        (** The backend request as handler context. This is used by [make]. *)
+        val request : B.req t
+
+        val map : 'a t -> f:('a -> 'b) -> 'b t
+
+        (** Resolves contexts from left to right and stops at the first rejection. *)
+        val both : 'a t -> 'b t -> ('a * 'b) t
+      end
+
+      module Dependency : sig
+        (** Injects an immutable application dependency into every request. *)
+        val value : 'a -> 'a Context.t
+
+        (** Resolves a request-scoped dependency before request decoding. *)
+        val of_request : (B.req -> 'a Lwt.t) -> 'a Context.t
+      end
+
+      module Guard : sig
+        (** Builds a guard whose successful typed context is passed to the handler.
+            Rejections are rendered with [response] and included in OpenAPI. *)
+        val v
+          :  status:B.client_error_status
+          -> response:'error Response.t
+          -> check:(B.req -> ('context, 'error) Result.t Lwt.t)
+          -> 'context Context.t
+      end
+
       module Parse_error_response : sig
         type t
 
@@ -436,6 +466,48 @@ module Make
       module Route : sig
         type t
       end
+
+      (** Resolves [context] before path, query, and body decoding. A context
+          rejection short-circuits the endpoint with its declared response. *)
+      val make_with
+        :  context:'context Context.t
+        -> meth:B.meth
+        -> ?summary:string
+        -> ?tags:string list
+        -> ?deprecated:bool
+        -> ?operation_id:string
+        -> ?description:string
+        -> ?parse_error:Parse_error_response.t
+        -> request:'req Request.t
+        -> path:
+             ( 'h
+               , 'context
+                 -> 'req
+                 -> ( 'ok
+                      , 'created
+                      , 'code2xx
+                      , 'nf
+                      , 'bad
+                      , 'code4xx
+                      , 'ise
+                      , 'code5xx
+                      , 'code )
+                      resp
+                      Lwt.t )
+               path
+        -> responses:
+             ( 'ok
+               , 'created
+               , 'code2xx
+               , 'nf
+               , 'bad
+               , 'code4xx
+               , 'ise
+               , 'code5xx
+               , 'code )
+               responses
+        -> 'h
+        -> Route.t
 
       val make
         :  meth:B.meth

@@ -331,6 +331,79 @@ module Make (B : Backend.S) = struct
       ;;
     end
 
+    module Context = struct
+      type rejection =
+        | Rejected :
+            { status : B.client_error_status
+            ; response : 'error Response.t
+            ; error : 'error
+            }
+            -> rejection
+
+      type declared_response =
+        | Declared_response :
+            { status : B.client_error_status
+            ; response : 'error Response.t
+            }
+            -> declared_response
+
+      type 'a t =
+        { resolve : B.req -> ('a, rejection) Result.t Lwt.t
+        ; responses : declared_response list
+        }
+
+      let request = { resolve = (fun request -> Lwt.return (Ok request)); responses = [] }
+
+      let map context ~f =
+        { context with
+          resolve =
+            (fun request ->
+              let%map result = context.resolve request in
+              Result.map result ~f)
+        }
+      ;;
+
+      let both left right =
+        let resolve request =
+          let%bind left_result = left.resolve request in
+          match left_result with
+          | Error rejection -> Lwt.return (Error rejection)
+          | Ok left_value ->
+            let%map right_result = right.resolve request in
+            Result.map right_result ~f:(fun right_value -> left_value, right_value)
+        in
+        { resolve; responses = left.responses @ right.responses }
+      ;;
+    end
+
+    module Dependency = struct
+      let value dependency =
+        { Context.resolve = (fun _request -> Lwt.return (Ok dependency)); responses = [] }
+      ;;
+
+      let of_request resolve =
+        { Context.resolve =
+            (fun request ->
+              let%map dependency = resolve request in
+              Ok dependency)
+        ; responses = []
+        }
+      ;;
+    end
+
+    module Guard = struct
+      let v ~status ~response ~check =
+        let resolve request =
+          let%map result = check request in
+          Result.map_error result ~f:(fun error ->
+            Context.Rejected { status; response; error })
+        in
+        { Context.resolve
+        ; responses = [ Context.Declared_response { status; response } ]
+        }
+      ;;
+    end
+
     module Parse_error_response = struct
       type t =
         | T :
@@ -785,6 +858,7 @@ module Make (B : Backend.S) = struct
     ;;
 
     type ('h
+         , 'context
          , 'req
          , 'ok
          , 'created
@@ -799,7 +873,7 @@ module Make (B : Backend.S) = struct
       { meth : B.meth
       ; pattern :
           ( 'h
-            , B.req
+            , 'context
               -> 'req
               -> ( 'ok
                    , 'created
@@ -813,6 +887,7 @@ module Make (B : Backend.S) = struct
                    resp
                    Lwt.t )
             path
+      ; context : 'context Context.t
       ; request : 'req Request.t
       ; responses :
           ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
@@ -825,7 +900,7 @@ module Make (B : Backend.S) = struct
       -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
 
     let mk
-          (type h req ok created code2xx nf bad code4xx ise code5xx code)
+          (type h context req ok created code2xx nf bad code4xx ise code5xx code)
           (meth : B.meth)
           ?summary
           ?tags
@@ -833,10 +908,11 @@ module Make (B : Backend.S) = struct
           ?operation_id
           ?description
           ?parse_error
+          ~(context : context Context.t)
           ~(request : req Request.t)
           ~(path :
              ( h
-               , B.req
+               , context
                  -> req
                  -> (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) resp
                       Lwt.t )
@@ -844,10 +920,23 @@ module Make (B : Backend.S) = struct
           ~(responses :
              (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) responses)
           ()
-      : (h, req, ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) builder
+      : ( h
+          , context
+          , req
+          , ok
+          , created
+          , code2xx
+          , nf
+          , bad
+          , code4xx
+          , ise
+          , code5xx
+          , code )
+          builder
       =
       { meth
       ; pattern = path
+      ; context
       ; request
       ; responses = responses RNil
       ; metadata =
@@ -857,8 +946,20 @@ module Make (B : Backend.S) = struct
     ;;
 
     let render_resp
-      : type h req ok created code2xx nf bad code4xx ise code5xx code.
-        (h, req, ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) builder
+      : type h context req ok created code2xx nf bad code4xx ise code5xx code.
+        ( h
+          , context
+          , req
+          , ok
+          , created
+          , code2xx
+          , nf
+          , bad
+          , code4xx
+          , ise
+          , code5xx
+          , code )
+          builder
         -> (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) resp
         -> B.resp Lwt.t
       =
@@ -926,6 +1027,13 @@ module Make (B : Backend.S) = struct
         respond_ok_with_status ~status:st spec v
     ;;
 
+    let render_context_rejection (Context.Rejected { status; response; error })
+      : B.resp Lwt.t
+      =
+      let status = ((status :> B.status) :> B.status_code) in
+      respond_ok_with_status ~status response error
+    ;;
+
     module Openapi_adapter = struct
       let request_body_spec_of_request : type req. req Request.t -> Contract.request_body =
         fun r ->
@@ -956,6 +1064,14 @@ module Make (B : Backend.S) = struct
             B.code_of_status ((policy.status :> B.status) :> B.status_code)
         ; payload = response_payload_spec_of_response policy.response
         }
+      ;;
+
+      let response_specs_of_context context =
+        List.map context.Context.responses ~f:(fun (Context.Declared_response declared) ->
+          { Contract.status =
+              B.code_of_status ((declared.status :> B.status) :> B.status_code)
+          ; payload = response_payload_spec_of_response declared.response
+          })
       ;;
 
       let rec path_params : type h f. (h, f) path -> Contract.param list =
@@ -1215,7 +1331,8 @@ module Make (B : Backend.S) = struct
         |> failwith
     ;;
 
-    let make
+    let make_with
+          ~context
           ~meth
           ?summary
           ?tags
@@ -1238,6 +1355,7 @@ module Make (B : Backend.S) = struct
           ?operation_id
           ?description
           ?parse_error
+          ~context
           ~request
           ~path
           ~responses
@@ -1253,15 +1371,19 @@ module Make (B : Backend.S) = struct
             ("missing parse-error policy for " ^ meth_to_string b.meth ^ " " ^ path_str)
       in
       let wrapped inherited (req0 : B.req) : B.resp Lwt.t =
-        match apply_path b.pattern f req0 with
-        | Error error -> render_parse_error inherited error
-        | Ok f' ->
-          let%bind parsed = parse_request b.request req0 in
-          (match parsed with
+        let%bind context_result = b.context.resolve req0 in
+        match context_result with
+        | Error rejection -> render_context_rejection rejection
+        | Ok context ->
+          (match apply_path b.pattern f req0 with
            | Error error -> render_parse_error inherited error
-           | Ok body ->
-             let%bind r = f' req0 body in
-             render_resp b r)
+           | Ok f' ->
+             let%bind parsed = parse_request b.request req0 in
+             (match parsed with
+              | Error error -> render_parse_error inherited error
+              | Ok body ->
+                let%bind r = f' context body in
+                render_resp b r))
       in
       let has_parsers =
         Openapi_adapter.path_has_parsers b.pattern
@@ -1283,6 +1405,7 @@ module Make (B : Backend.S) = struct
           ; request_body = Openapi_adapter.request_body_spec_of_request b.request
           ; responses = Openapi_adapter.collect_responses b.responses
           ; parse_error_response
+          ; context_responses = Openapi_adapter.response_specs_of_context b.context
           ; response_families = Openapi_adapter.response_families b.responses
           ; has_parsers
           }
@@ -1293,6 +1416,34 @@ module Make (B : Backend.S) = struct
         }
       in
       { Route.meth = b.meth; path = path_str; handler = wrapped; contract }
+    ;;
+
+    let make
+          ~meth
+          ?summary
+          ?tags
+          ?deprecated
+          ?operation_id
+          ?description
+          ?parse_error
+          ~request
+          ~path
+          ~responses
+          f
+      =
+      make_with
+        ~context:Context.request
+        ~meth
+        ?summary
+        ?tags
+        ?deprecated
+        ?operation_id
+        ?description
+        ?parse_error
+        ~request
+        ~path
+        ~responses
+        f
     ;;
   end
 end

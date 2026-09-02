@@ -74,6 +74,16 @@ module Business_error = struct
   ;;
 end
 
+module Input_body = struct
+  type t = { value : string } [@@deriving yojson, jsonschema]
+
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Input body" ()
+  ;;
+
+  let of_yojson = of_yojson
+end
+
 let parse_policy ~status source =
   Parse_error_response.json
     ~status
@@ -249,6 +259,81 @@ let%expect_test "parse-error schemas are deduplicated or combined with oneOf" =
     different_one_of
     (not (Yojson.Safe.equal static_parse_response `Null));
   [%expect {| same_one_of=false different_one_of=2 static_parse_response=false |}]
+;;
+
+let%expect_test "guard and dependencies build typed context before request parsing" =
+  let guard =
+    Guard.v
+      ~status:`Unauthorized
+      ~response:(Response.json (module Business_error))
+      ~check:(fun (request : Test_backend.req) ->
+        match List.Assoc.find request.queries "token" ~equal:String.equal with
+        | Some "secret" -> Lwt.return (Ok "alice")
+        | _ -> Lwt.return (Error Business_error.{ message = "unauthorized" }))
+  in
+  let dependencies =
+    Context.both
+      (Dependency.value "posts")
+      (Dependency.of_request (fun (request : Test_backend.req) ->
+         Lwt.return
+           (Option.value
+              (List.Assoc.find request.queries "trace" ~equal:String.equal)
+              ~default:"no-trace")))
+  in
+  let context =
+    Context.map (Context.both guard dependencies) ~f:(fun (user, (service, trace)) ->
+      service, user, trace)
+  in
+  let route =
+    make_with
+      ~context
+      ~meth:B.post
+      ~path:(s "guarded" /? nil)
+      ~request:(Request.json (module Input_body))
+      ~responses:
+        (ok (Response.text ~description:"OK" ())
+         |+ code4xx [ `Unauthorized ] (Response.json (module Parse_body)))
+    @@ fun (service, user, trace) (body : Input_body.t) ->
+    Lwt.return (OK (String.concat ~sep:":" [ service; user; trace; body.value ]))
+  in
+  let compiled =
+    compile_exn
+      ~parse_error:(parse_policy ~status:`Bad_request "parse")
+      [ group [ route ] ]
+  in
+  let _, _, handler = List.hd_exn (Compiled.app compiled) in
+  let call queries body =
+    let request = Test_backend.{ params = []; queries; body } in
+    match Lwt.state (handler request) with
+    | Return response -> response
+    | Fail error -> Stdlib.raise error
+    | Sleep -> failwith "unexpected pending response"
+  in
+  let rejected = call [] "not-json" in
+  let accepted = call [ "token", "secret"; "trace", "trace-1" ] {|{"value":"payload"}|} in
+  let open Yojson.Safe.Util in
+  let guard_schema =
+    Compiled.openapi compiled
+    |> member "paths"
+    |> member "/guarded"
+    |> member "post"
+    |> member "responses"
+    |> member "401"
+    |> member "content"
+    |> member "application/json"
+    |> member "schema"
+  in
+  Stdlib.Printf.printf
+    "rejected=%d:%s accepted=%d:%s guard_schema=%b"
+    rejected.status
+    rejected.body
+    accepted.status
+    accepted.body
+    (guard_schema |> member "oneOf" |> to_list |> List.length |> Int.equal 2);
+  [%expect
+    {|
+    rejected=401:{"message":"unauthorized"} accepted=200:posts:alice:trace-1:payload guard_schema=true
+    |}]
 ;;
 
 let empty_response_family =

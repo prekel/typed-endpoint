@@ -1,20 +1,38 @@
-# Guard и будущая авторизация
+# Guard и авторизация
 
-Сейчас `typed-endpoint` не реализует middleware или Guard. Проверки
-аутентификации и авторизации должны выполняться в адаптере приложения либо в
-явно переданной зависимости handler.
+`Guard.v` выполняет framework-agnostic проверку запроса и возвращает typed
+context либо контролируемый HTTP-ответ. Успешный context передаётся handler
+через `make_with`:
 
-Если появится общий Guard API, он должен быть framework-agnostic и работать
-до декодирования body и вызова handler. Предпочтительная модель:
+```ocaml
+let authenticated =
+  Guard.v
+    ~status:`Unauthorized
+    ~response:(Response.json (module Error_response))
+    ~check:(fun request ->
+      Auth.authenticate request
+      |> Lwt.map (Result.map_error ~f:Error_response.unauthorized))
 
-1. backend извлекает request-scoped данные (например, заголовок авторизации);
-2. Guard возвращает typed context или контролируемый HTTP-ответ;
-3. успешный context передаётся handler явно в его аргументах;
-4. описанная response-семантика Guard документируется в OpenAPI отдельно от
-   бизнес-ответов endpoint.
+let get_profile =
+  make_with ~context:authenticated (* declaration omitted *)
+  @@ fun user () -> Profile.get user
+```
 
-Не стоит хранить context в глобальном mutable state, использовать
-`Obj.magic` для расширения аргументов handler или добавлять Opium-зависимость в
-ядро. До появления нескольких повторяющихся сценариев достаточно явной
-проверки в handler и записи `env` из [DI](di.md).
+Guard запускается до path/query/body decoding и до handler. При отказе handler
+и декодеры не вызываются. Объявленный response автоматически добавляется в
+OpenAPI; если его статус совпадает с бизнес-ответом или parse error, JSON Schema
+дедуплицируются либо объединяются через `oneOf`.
 
+Guard, DI и исходный request компонуются через `Context.both`. Context
+разрешаются слева направо; первый отказ останавливает цепочку:
+
+```ocaml
+let context =
+  Context.both
+    authenticated
+    (Context.both (Dependency.value env) Context.request)
+```
+
+Один guard можно переиспользовать в нескольких endpoint. Context не хранится в
+глобальном mutable state, тип handler не расширяется через unchecked casts, а
+ядро не получает зависимость от Opium.

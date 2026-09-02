@@ -66,6 +66,7 @@ type endpoint =
   ; request_body : request_body
   ; responses : response list
   ; parse_error_response : response option
+  ; context_responses : response list
   ; response_families : int list list
   ; has_parsers : bool
   }
@@ -210,33 +211,33 @@ let merge_payloads primary secondary =
   }
 ;;
 
-let add_parse_error_response (endpoint : endpoint) =
-  if not endpoint.has_parsers then
-    { endpoint with parse_error_response = None }
-  else (
-    match
-      endpoint.parse_error_response
-    with
-    | None -> endpoint
-    | Some parse_response ->
-      let found = ref false in
-      let responses =
-        List.map endpoint.responses ~f:(fun response ->
-          if Int.equal response.status parse_response.status then (
-            found := true;
-            { response with
-              payload = merge_payloads response.payload parse_response.payload
-            })
-          else
-            response)
-      in
-      let responses =
-        if !found then
-          responses
-        else
-          responses @ [ parse_response ]
-      in
-      { endpoint with responses; parse_error_response = None })
+let add_response responses additional =
+  if
+    List.exists responses ~f:(fun response -> Int.equal response.status additional.status)
+  then
+    List.map responses ~f:(fun response ->
+      if Int.equal response.status additional.status then
+        { response with payload = merge_payloads response.payload additional.payload }
+      else
+        response)
+  else
+    responses @ [ additional ]
+;;
+
+let add_implicit_responses (endpoint : endpoint) =
+  let parse_error_responses =
+    if endpoint.has_parsers then
+      Option.to_list endpoint.parse_error_response
+    else
+      []
+  in
+  let responses =
+    List.fold
+      (parse_error_responses @ endpoint.context_responses)
+      ~init:endpoint.responses
+      ~f:add_response
+  in
+  { endpoint with responses; parse_error_response = None; context_responses = [] }
 ;;
 
 let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t =
@@ -284,7 +285,7 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                    { meth = route.meth; path; status })));
           { Compiled.meth = route.meth
           ; path
-          ; endpoint = Option.map route.endpoint ~f:add_parse_error_response
+          ; endpoint = Option.map route.endpoint ~f:add_implicit_responses
           })
       in
       { Compiled.metadata = group.metadata; routes })

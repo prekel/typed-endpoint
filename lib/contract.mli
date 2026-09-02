@@ -71,6 +71,7 @@ type endpoint =
   ; request_body : request_body
   ; responses : response list
   ; parse_error_response : response option
+  ; context_responses : response list
   ; response_families : int list list
   ; has_parsers : bool
   }
