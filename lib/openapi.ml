@@ -47,6 +47,20 @@ let render_request_body = function
            , yo_obj
                [ "text/plain", yo_obj [ "schema", yo_obj [ "type", yo_str "string" ] ] ] )
          ])
+  | Binary_body { metadata; _ } ->
+    Some
+      (yo_obj
+         [ "required", yo_bool true
+         ; "description", yo_str metadata.description
+         ; ( "content"
+           , yo_obj
+               [ ( "application/octet-stream"
+                 , yo_obj
+                     [ ( "schema"
+                       , yo_obj [ "type", yo_str "string"; "format", yo_str "binary" ] )
+                     ] )
+               ] )
+         ])
   | Json_body { schema; metadata; _ } ->
     Some
       (yo_obj

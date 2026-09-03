@@ -38,24 +38,33 @@ let route =
     ~path:(s "health" /? nil)
     ~request:Request.empty
     ~responses:(ok (Response.text ~description:"Health status" ()))
-  @@ fun _request () -> B.return (OK "ok")
+  @@ fun () -> B.return (OK "ok")
 
 let compiled =
   compile_exn
-    [ Group.v
-        ~metadata:(Operation_metadata.v ~description:"Service" ())
-        [ route ]
-    ]
+    [ Group.make ~description:"Service" [ route ] ]
 ```
 
 `Compiled.app compiled` возвращает значение конкретного backend, а
 `Compiled.openapi compiled` — тот же контракт в OpenAPI.
 
+Обычный `make` передаёт handler только path/query-параметры и body. Для
+типизированных зависимостей и авторизации служит `make_with ~context`; сырой
+request доступен явно через `Context.request`. Ошибки декодирования по умолчанию
+получают безопасный JSON `{ "code": ..., "message": ... }`, который можно
+заменить на уровне endpoint, группы или всей компиляции.
+
+Если один guard/набор зависимостей используется несколькими маршрутами,
+endpoint объявляется через `make_in_group`, а контекст один раз прикрепляется
+через `Group.make_with_context`. Его тип остаётся связан с handler каждого
+маршрута.
+
 ## Petstore
 
-В [examples/petstore](examples/petstore/README.md) находится совместимое
-подмножество Swagger Petstore v3: POST/PUT/GET/DELETE для `/pet`, поиск по
-статусу, OAuth/API-key guards, DI сервиса, Swagger UI на `/docs`,
+В [examples/petstore](examples/petstore/README.md) находится расширенный пример
+с полным route surface Swagger Petstore v3: разделы `pet`, `store` и `user`,
+бинарная загрузка изображений, отдельное пагинированное расширение,
+OAuth/API-key guards, DI доменных сервисов, Swagger UI на `/docs`,
 `/openapi.json` и runtime-only `/health`. Один DSL запускается через testing,
 Opium, Dream и Eio.
 

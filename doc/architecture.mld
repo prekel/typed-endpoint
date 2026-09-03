@@ -8,6 +8,20 @@ path/query/header, ограниченное чтение body и создани�
 [Dependency.value] подходит для application-scoped сервиса,
 [Dependency.of_request] — для request-scoped значения. [Guard] является тем же
 типизированным контекстом, но может завершить request объявленным ответом.
+[Context] реализует [Base.Applicative.S]: [map2], [map3] и [all] собирают
+независимые зависимости без вложенных пар, а [all_unit] компонует guards.
+Через [Context.Let_syntax] ту же композицию можно записать с [let%map] и [and].
+[bind] намеренно отсутствует: набор responses и security requirements должен
+быть известен до выполнения request. Обычный [make] использует пустой контекст;
+[make_with] делает зависимости и доступ к сырому request явными в сигнатуре
+handler.
+
+Одинаковый контекст нескольких endpoint можно объявить один раз через
+[Group.make_with_context]. Такие endpoint создаются [make_in_group], поэтому
+тип результата контекста проверяется для каждого handler до сборки группы.
+Guard выполняется только у совпавшего маршрута, а его ответы и security
+requirements добавляются к каждой операции группы. Разные политики доступа
+следует оформлять отдельными группами.
 
 Security requirements прикрепляются к [Guard]. Список requirements означает
 OR, [Security.all] объединяет схемы как AND. При [Context.both] requirements

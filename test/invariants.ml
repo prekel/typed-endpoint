@@ -59,9 +59,7 @@ let decode_error =
       Error_payload.{ kind = error_kind error; message = error_message error })
 ;;
 
-let group ?decode_error routes =
-  Group.v ?decode_error ~metadata:(Operation_metadata.v ~description:"Test API" ()) routes
-;;
+let group ?decode_error routes = Group.make ?decode_error ~description:"Test API" routes
 
 let echo_route ?(max_body_bytes = 64) () =
   make
@@ -70,7 +68,17 @@ let echo_route ?(max_body_bytes = 64) () =
     ~path:(s "items" /? nil)
     ~request:(Request.json ~max_body_bytes (module Item))
     ~responses:(ok (Response.json (module Item)))
-  @@ fun _request item -> B.return (OK item)
+  @@ fun item -> B.return (OK item)
+;;
+
+let binary_route =
+  make
+    ~meth:B.post
+    ~operation_id:"uploadBinary"
+    ~path:(s "binary" /? nil)
+    ~request:(Request.binary ~max_body_bytes:4 ~description:"Opaque bytes" ())
+    ~responses:(ok (Response.text ~description:"Byte length" ()))
+  @@ fun bytes -> B.return (OK (Int.to_string (String.length bytes)))
 ;;
 
 let call app ?(headers = []) ?(body = "") meth target =
@@ -103,6 +111,42 @@ let%expect_test "request bodies enforce media type, decode errors, and size limi
     400 {"kind":"invalid_json","message":"Line 1, bytes 0-1:\nUnexpected end of input"}
     413 {"kind":"body_too_large","message":"64"}
     |}]
+;;
+
+let%expect_test "binary bodies enforce media type and render their OpenAPI schema" =
+  let compiled = compile_exn [ group ~decode_error [ binary_route ] ] in
+  let app = Compiled.app compiled in
+  let invoke content_type body =
+    call app ~headers:[ "content-type", content_type ] ~body `POST "/binary"
+  in
+  let open Yojson.Safe.Util in
+  let schema =
+    Compiled.openapi compiled
+    |> member "paths"
+    |> member "/binary"
+    |> member "post"
+    |> member "requestBody"
+    |> member "content"
+    |> member "application/octet-stream"
+    |> member "schema"
+  in
+  List.iter
+    [ invoke "application/octet-stream" "data"
+    ; invoke "text/plain" "data"
+    ; invoke "application/octet-stream" "large"
+    ]
+    ~f:(fun response ->
+      Stdlib.Printf.printf
+        "%d:%s "
+        (Typed_endpoint_testing.Response.status response)
+        (Typed_endpoint_testing.Response.body response));
+  Stdlib.Printf.printf
+    "schema=%s/%s"
+    (schema |> member "type" |> to_string)
+    (schema |> member "format" |> to_string);
+  [%expect
+    {|
+    200:4 415:{"kind":"unsupported_media_type","message":"text/plain"} 413:{"kind":"body_too_large","message":"4"} schema=string/binary |}]
 ;;
 
 let%expect_test "named schemas are components and operations use references" =
@@ -146,6 +190,134 @@ let%expect_test "OpenAPI declares every automatic body error status" =
   [%expect {| 400=true 413=true 415=true |}]
 ;;
 
+let%expect_test "a safe decode-error policy is available by default" =
+  let compiled = compile_exn [ group [ echo_route () ] ] in
+  let app = Compiled.app compiled in
+  let unsupported =
+    call app ~headers:[ "content-type", "text/plain" ] ~body:"not json" `POST "/items"
+  in
+  let invalid_json =
+    call app ~headers:[ "content-type", "application/json" ] ~body:"{" `POST "/items"
+  in
+  let invalid_body =
+    call
+      app
+      ~headers:[ "content-type", "application/json" ]
+      ~body:{|{"id":"secret","name":"hidden"}|}
+      `POST
+      "/items"
+  in
+  let open Yojson.Safe.Util in
+  let document = Compiled.openapi compiled in
+  let schema_ref =
+    document
+    |> member "paths"
+    |> member "/items"
+    |> member "post"
+    |> member "responses"
+    |> member "415"
+    |> member "content"
+    |> member "application/json"
+    |> member "schema"
+    |> member "$ref"
+    |> to_string
+  in
+  List.iter [ unsupported; invalid_json; invalid_body ] ~f:(fun response ->
+    Stdlib.Printf.printf
+      "%d %s\n"
+      (Typed_endpoint_testing.Response.status response)
+      (Typed_endpoint_testing.Response.body response));
+  Stdlib.print_string schema_ref;
+  [%expect
+    {|
+    415 {"code":"unsupported_media_type","message":"request content type is not supported"}
+    400 {"code":"invalid_json","message":"request body is not valid JSON"}
+    400 {"code":"invalid_body","message":"request body does not match the declared schema"}
+    #/components/schemas/TypedEndpointDecodeError
+    |}]
+;;
+
+let primitive_route =
+  make
+    ~meth:B.get
+    ~path:
+      (s "primitive"
+       / param "id" (Parameter.int ~description:"Integer identifier" ())
+       / query_req "enabled" (Parameter.bool ~description:"Whether it is enabled" ())
+       /? nil)
+    ~request:Request.empty
+    ~responses:(ok (Response.text ~description:"Decoded values" ()))
+  @@ fun id enabled () -> B.return (OK (Int.to_string id ^ ":" ^ Bool.to_string enabled))
+;;
+
+let%expect_test "built-in parameter codecs drive runtime parsing and OpenAPI" =
+  let module Float_parameter = (val Parameter.float ~description:"Finite number" ()) in
+  let compiled = compile_exn [ group [ primitive_route ] ] in
+  let app = Compiled.app compiled in
+  let ok = call app `GET "/primitive/42?enabled=true" in
+  let invalid = call app `GET "/primitive/nope?enabled=yes" in
+  let open Yojson.Safe.Util in
+  let parameters =
+    Compiled.openapi compiled
+    |> member "paths"
+    |> member "/primitive/{id}"
+    |> member "get"
+    |> member "parameters"
+    |> to_list
+  in
+  List.iter [ ok; invalid ] ~f:(fun response ->
+    Stdlib.Printf.printf
+      "%d %s\n"
+      (Typed_endpoint_testing.Response.status response)
+      (Typed_endpoint_testing.Response.body response));
+  parameters
+  |> List.map ~f:(fun parameter ->
+    (parameter |> member "name" |> to_string)
+    ^ ":"
+    ^ (parameter |> member "schema" |> member "type" |> to_string))
+  |> String.concat ~sep:" "
+  |> Stdlib.print_string;
+  Stdlib.Printf.printf
+    "\nfloat:finite=%b,nan=%b,infinity=%b"
+    (Result.is_ok (Float_parameter.of_string "1.5"))
+    (Result.is_ok (Float_parameter.of_string "nan"))
+    (Result.is_ok (Float_parameter.of_string "infinity"));
+  [%expect
+    {|
+    200 42:true
+    400 {"code":"invalid_parameter","message":"invalid path parameter id"}
+    id:integer enabled:boolean
+    float:finite=true,nan=false,infinity=false |}]
+;;
+
+let dependency_route =
+  let context =
+    let open Context.Let_syntax in
+    let%map values = Context.all [ Dependency.value 20; Dependency.value 21 ]
+    and final_value = Context.return 1 in
+    List.fold values ~init:final_value ~f:( + )
+  in
+  make_with
+    ~context
+    ~meth:B.get
+    ~path:(s "dependency" /? nil)
+    ~request:Request.empty
+    ~responses:(ok (Response.text ~description:"Injected value" ()))
+  @@ fun value () -> B.return (OK (Int.to_string value))
+;;
+
+let%expect_test "Context applicative composes dependency injection" =
+  let response =
+    compile_exn [ group [ dependency_route ] ] |> Compiled.app |> fun app ->
+    call app `GET "/dependency"
+  in
+  Stdlib.Printf.printf
+    "%d %s"
+    (Typed_endpoint_testing.Response.status response)
+    (Typed_endpoint_testing.Response.body response);
+  [%expect {| 200 42 |}]
+;;
+
 let bearer =
   Security.Scheme.http_bearer
     ~name:"bearerAuth"
@@ -161,6 +333,72 @@ let api_key =
     ~location:`Header
     ~description:"API key"
     ()
+;;
+
+let group_context =
+  let guard =
+    Guard.v
+      ~security:[ Security.require bearer ]
+      ~status:`Unauthorized
+      ~response:(Response.json (module Error_payload))
+      ~check:(fun request ->
+        match B.header request "authorization" with
+        | Some "Bearer group-token" -> B.return (Ok ())
+        | _ ->
+          B.return
+            (Error Error_payload.{ kind = "unauthorized"; message = "invalid token" }))
+      ()
+  in
+  let open Context.Applicative_infix in
+  guard *> Dependency.value "shared"
+;;
+
+let grouped_route segment =
+  make_in_group
+    ~meth:B.get
+    ~path:(s segment /? nil)
+    ~request:Request.empty
+    ~responses:(ok (Response.text ~description:"Injected group dependency" ()))
+  @@ fun dependency () -> B.return (OK (dependency ^ ":" ^ segment))
+;;
+
+let%expect_test "a group context is typed, shared, and documented per route" =
+  let compiled =
+    compile_exn
+      [ Group.make_with_context
+          ~context:group_context
+          ~description:"Contextual routes"
+          [ grouped_route "group-a"; grouped_route "group-b" ]
+      ]
+  in
+  let app = Compiled.app compiled in
+  let rejected = call app `GET "/group-a" in
+  let accepted =
+    call app ~headers:[ "authorization", "Bearer group-token" ] `GET "/group-b"
+  in
+  let open Yojson.Safe.Util in
+  let document = Compiled.openapi compiled in
+  let operation segment =
+    document |> member "paths" |> member ("/" ^ segment) |> member "get"
+  in
+  Stdlib.Printf.printf
+    "%d %s\n%d %s\n"
+    (Typed_endpoint_testing.Response.status rejected)
+    (Typed_endpoint_testing.Response.body rejected)
+    (Typed_endpoint_testing.Response.status accepted)
+    (Typed_endpoint_testing.Response.body accepted);
+  List.iter [ "group-a"; "group-b" ] ~f:(fun segment ->
+    let operation = operation segment in
+    Stdlib.Printf.printf
+      "%s:security=%d,unauthorized=%b "
+      segment
+      (operation |> member "security" |> to_list |> List.length)
+      (not (Yojson.Safe.equal (operation |> member "responses" |> member "401") `Null)));
+  [%expect
+    {|
+    401 {"kind":"unauthorized","message":"invalid token"}
+    200 shared:group-b
+    group-a:security=1,unauthorized=true group-b:security=1,unauthorized=true |}]
 ;;
 
 let secured_route =
@@ -210,7 +448,7 @@ let conflict_route =
     ~path:(s "conflict" /? nil)
     ~request:Request.empty
     ~responses:(ok (Response.json (module Conflicting_item)))
-  @@ fun _request () -> B.return (OK "conflict")
+  @@ fun () -> B.return (OK "conflict")
 ;;
 
 let%expect_test "conflicting component schemas are rejected" =

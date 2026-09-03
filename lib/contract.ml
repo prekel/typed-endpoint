@@ -161,6 +161,10 @@ type request_body =
       { metadata : Documentation.t
       ; max_body_bytes : int
       }
+  | Binary_body of
+      { metadata : Documentation.t
+      ; max_body_bytes : int
+      }
 
 type response_content =
   | Text
@@ -187,7 +191,6 @@ type endpoint =
   ; context_responses : response list
   ; security : Security.requirement list
   ; response_families : int list list
-  ; has_decoders : bool
   }
 
 type route =
@@ -222,10 +225,6 @@ module Compile_error = struct
         { meth : string
         ; path : string
         }
-    | Missing_decode_error_policy of
-        { meth : string
-        ; path : string
-        }
     | Invalid_body_limit of
         { meth : string
         ; path : string
@@ -249,8 +248,6 @@ module Compile_error = struct
       "empty response status family: " ^ meth ^ " " ^ path
     | Invalid_no_content_response { meth; path } ->
       "204 response must use an empty payload: " ^ meth ^ " " ^ path
-    | Missing_decode_error_policy { meth; path } ->
-      "missing decode-error policy: " ^ meth ^ " " ^ path
     | Invalid_body_limit { meth; path; max_body_bytes } ->
       "invalid body limit " ^ Int.to_string max_body_bytes ^ ": " ^ meth ^ " " ^ path
     | Invalid_schema_name name -> "invalid OpenAPI schema name: " ^ name
@@ -380,7 +377,7 @@ let schemas_of_endpoint (endpoint : endpoint) =
   let params = List.map endpoint.params ~f:(fun param -> param.schema) in
   let request =
     match endpoint.request_body with
-    | No_body | Text_body _ -> []
+    | No_body | Text_body _ | Binary_body _ -> []
     | Json_body { schema; _ } -> [ schema ]
   in
   let responses =
@@ -394,8 +391,9 @@ let schemas_of_endpoint (endpoint : endpoint) =
 
 let body_limit = function
   | No_body -> None
-  | Json_body { max_body_bytes; _ } | Text_body { max_body_bytes; _ } ->
-    Some max_body_bytes
+  | Json_body { max_body_bytes; _ }
+  | Text_body { max_body_bytes; _ }
+  | Binary_body { max_body_bytes; _ } -> Some max_body_bytes
 ;;
 
 let validate_security_scope scheme scope =
@@ -457,10 +455,6 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                     add_error (Compile_error.Duplicate_operation_id operation_id)
                   else
                     Hash_set.add operation_ids operation_id));
-              if endpoint.has_decoders && List.is_empty endpoint.decode_error_responses
-              then
-                add_error
-                  (Compile_error.Missing_decode_error_policy { meth = route.meth; path });
               Option.iter (body_limit endpoint.request_body) ~f:(fun max_body_bytes ->
                 if max_body_bytes <= 0 then
                   add_error

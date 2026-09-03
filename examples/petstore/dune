@@ -1,6 +1,6 @@
 (library
  (name petstore_app)
- (modules dto pet_service routes)
+ (modules domain dto pet_service order_service user_service services routes)
  (libraries base ppx_deriving_jsonschema.runtime typed-endpoint yojson)
  (preprocess
   (pps ppx_deriving_yojson ppx_deriving_jsonschema)))

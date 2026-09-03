@@ -2,3 +2,13 @@
  (name app_test)
  (package typed-endpoint-testing)
  (libraries base petstore_app typed-endpoint-testing yojson))
+
+(test
+ (name pet_service_test)
+ (package typed-endpoint-testing)
+ (libraries base petstore_app))
+
+(test
+ (name order_user_service_test)
+ (package typed-endpoint-testing)
+ (libraries base petstore_app))

@@ -41,7 +41,8 @@ let decode_errors =
 ;;
 
 let route =
-  make
+  make_with
+    ~context:Context.request
     ~meth:B.post
     ~path:(s "items" / param "id" (module String_param) /? nil)
     ~request:(Request.text ~description:"Body" ())

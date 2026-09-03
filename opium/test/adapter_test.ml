@@ -33,7 +33,7 @@ let route =
     ~path:(s "echo" /? nil)
     ~request:(Request.text ~description:"Body" ())
     ~responses:(ok (Response.text ~description:"Echo" ()))
-  @@ fun _request body -> B.return (OK body)
+  @@ fun body -> B.return (OK body)
 ;;
 
 let app =

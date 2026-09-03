@@ -8,7 +8,8 @@ open Endpoint
 open Dsl
 ]}
 
-JSON-модуль реализует [Request_payload.S] и/или [Response_payload.S]. Метаданные
+JSON-модуль реализует [Request_payload.S] и/или [Response_payload.S], а DTO для
+обоих направлений — общую сигнатуру [Json_payload.S]. Метаданные
 типизированы тем же [t], поэтому случайно передать метаданные другого DTO
 нельзя. [schema_name] необязателен; он переносит схему в OpenAPI components.
 
@@ -21,9 +22,23 @@ let metadata : t Typed_endpoint.Metadata.t =
     ()
 ]}
 
-[Request.json] принимает [max_body_bytes], по умолчанию 1 МиБ. Для любого
-endpoint с декодированием задайте [Decode_error_response] на endpoint, группу
-или весь [compile]. Runtime сам выбирает 400, 413 или 415.
+[Request.json] принимает [max_body_bytes], по умолчанию 1 МиБ. Runtime сам
+выбирает 400, 413 или 415 и применяет безопасный [Decode_error_response.default].
+Формат ошибки можно заменить через [Decode_error_response.json] на endpoint,
+группу или весь [compile].
+
+Для типовых path/query-параметров используйте готовые [Parameter.string],
+[Parameter.int], [Parameter.int64], [Parameter.float] и [Parameter.bool].
+[Parameter.v] создаёт локальный codec без отдельного именованного модуля.
+
+Обычный [make] передаёт handler декодированные path/query-аргументы, затем
+body. Backend request не добавляется неявно. Если нужен request или зависимости,
+используйте [make_with] с [Context.request], [Dependency] и [Guard]. Несколько
+контекстов удобно сводить операторами из [Context.Applicative_infix]: например,
+[guard *> Dependency.value service] выполняет guard и передаёт handler сервис.
+[Context.all] собирает однородный список контекстов. Если приложение использует
+[ppx_let], тот же код можно писать через [Context.Let_syntax] и
+[let%map ... and ...].
 
 После [compile] используйте [Compiled.app] для backend-приложения и
 [Compiled.openapi] для документа. Полный пример находится в

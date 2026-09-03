@@ -205,7 +205,7 @@ end
 
 exception Runtime_error of Runtime_error.t
 
-module Param = struct
+module Parameter = struct
   module type S = sig
     type t
 
@@ -213,17 +213,94 @@ module Param = struct
 
     include Metadatable with type t := t
   end
+
+  let v
+        (type a)
+        ~schema
+        ?schema_name
+        ?tags
+        ~description
+        ~(of_string : string -> (a, string) Result.t)
+        ()
+    : (module S with type t = a)
+    =
+    (module struct
+      type t = a
+
+      let of_string = of_string
+      let metadata : t Metadata.t = Metadata.v ~schema ?schema_name ?tags ~description ()
+    end)
+  ;;
+
+  let string ?schema_name ?tags ~description () =
+    v
+      ~schema:(`Assoc [ "type", `String "string" ])
+      ?schema_name
+      ?tags
+      ~description
+      ~of_string:(fun value -> Ok value)
+      ()
+  ;;
+
+  let int ?schema_name ?tags ~description () =
+    v
+      ~schema:(`Assoc [ "type", `String "integer" ])
+      ?schema_name
+      ?tags
+      ~description
+      ~of_string:(fun value ->
+        match Int.of_string_opt value with
+        | Some value -> Ok value
+        | None -> Error "expected an integer")
+      ()
+  ;;
+
+  let int64 ?schema_name ?tags ~description () =
+    v
+      ~schema:(`Assoc [ "type", `String "integer"; "format", `String "int64" ])
+      ?schema_name
+      ?tags
+      ~description
+      ~of_string:(fun value ->
+        try Ok (Int64.of_string value) with
+        | _ -> Error "expected a 64-bit integer")
+      ()
+  ;;
+
+  let float ?schema_name ?tags ~description () =
+    v
+      ~schema:(`Assoc [ "type", `String "number"; "format", `String "double" ])
+      ?schema_name
+      ?tags
+      ~description
+      ~of_string:(fun value ->
+        try
+          let value = Float.of_string value in
+          if Stdlib.Float.is_finite value then
+            Ok value
+          else
+            Error "expected a finite number"
+        with
+        | _ -> Error "expected a number")
+      ()
+  ;;
+
+  let bool ?schema_name ?tags ~description () =
+    v
+      ~schema:(`Assoc [ "type", `String "boolean" ])
+      ?schema_name
+      ?tags
+      ~description
+      ~of_string:(function
+        | "true" -> Ok true
+        | "false" -> Ok false
+        | _ -> Error "expected true or false")
+      ()
+  ;;
 end
 
-module Query = struct
-  module type S = sig
-    type t
-
-    val of_string : string -> (t, string) Result.t
-
-    include Metadatable with type t := t
-  end
-end
+module Param = Parameter
+module Query = Parameter
 
 module Request_payload = struct
   module type S = sig
@@ -241,6 +318,17 @@ module Response_payload = struct
 
     include Metadatable with type t := t
 
+    val to_yojson : t -> Yojson.Safe.t
+  end
+end
+
+module Json_payload = struct
+  module type S = sig
+    type t
+
+    include Metadatable with type t := t
+
+    val of_yojson : Yojson.Safe.t -> (t, string) Result.t
     val to_yojson : t -> Yojson.Safe.t
   end
 end
@@ -273,6 +361,52 @@ module Decode_error = struct
       ~description:"Request decoding error"
       ~tags:[ "errors" ]
       ()
+  ;;
+end
+
+module Default_decode_error_payload = struct
+  type t =
+    { code : string
+    ; message : string
+    }
+  [@@deriving to_yojson, jsonschema]
+
+  let metadata : t Metadata.t =
+    Metadata.v
+      ~schema:t_jsonschema
+      ~schema_name:"TypedEndpointDecodeError"
+      ~description:"A request rejected before the endpoint handler runs"
+      ()
+  ;;
+
+  let source = function
+    | `Path -> "path"
+    | `Query -> "query"
+  ;;
+
+  let of_decode_error : Decode_error.t -> t = function
+    | Invalid_parameter { source = parameter_source; name; _ } ->
+      { code = "invalid_parameter"
+      ; message = "invalid " ^ source parameter_source ^ " parameter " ^ name
+      }
+    | Missing_parameter { source = parameter_source; name } ->
+      { code = "missing_parameter"
+      ; message = "missing " ^ source parameter_source ^ " parameter " ^ name
+      }
+    | Invalid_json _ ->
+      { code = "invalid_json"; message = "request body is not valid JSON" }
+    | Invalid_body _ ->
+      { code = "invalid_body"
+      ; message = "request body does not match the declared schema"
+      }
+    | Unsupported_media_type _ ->
+      { code = "unsupported_media_type"
+      ; message = "request content type is not supported"
+      }
+    | Body_too_large { max_bytes } ->
+      { code = "body_too_large"
+      ; message = "request body exceeds " ^ Int.to_string max_bytes ^ " bytes"
+      }
   ;;
 end
 
@@ -330,6 +464,11 @@ module Make (B : Backend.S) = struct
             ; max_body_bytes : int
             }
             -> string t
+        | Binary :
+            { metadata : Documentation.t
+            ; max_body_bytes : int
+            }
+            -> string t
 
       let empty = Empty
 
@@ -344,6 +483,10 @@ module Make (B : Backend.S) = struct
 
       let text ?(max_body_bytes = default_max_body_bytes) ~description () : string t =
         PlainText { metadata = Documentation.v ~description (); max_body_bytes }
+      ;;
+
+      let binary ?(max_body_bytes = default_max_body_bytes) ~description () : string t =
+        Binary { metadata = Documentation.v ~description (); max_body_bytes }
       ;;
     end
 
@@ -406,6 +549,12 @@ module Make (B : Backend.S) = struct
         }
       ;;
 
+      let return value =
+        { resolve = (fun _request -> B.return (Ok value)); responses = []; security = [] }
+      ;;
+
+      let empty = return ()
+
       let map context ~f =
         { context with
           resolve =
@@ -429,15 +578,40 @@ module Make (B : Backend.S) = struct
         ; security = Security.combine_alternatives left.security right.security
         }
       ;;
+
+      let map2 left right ~f =
+        map (both left right) ~f:(fun (left, right) -> f left right)
+      ;;
+
+      module Applicative = Base.Applicative.Make_using_map2 (struct
+          type nonrec 'a t = 'a t
+
+          let return = return
+          let map2 = map2
+          let map = `Custom map
+        end)
+
+      include Applicative
+
+      module Let_syntax = struct
+        let return = return
+        let ( >>| ) = ( >>| )
+        let ( <*> ) = ( <*> )
+        let ( *> ) = ( *> )
+        let ( <* ) = ( <* )
+
+        module Let_syntax = struct
+          let return = return
+          let map = map
+          let both = both
+
+          module Open_on_rhs = struct end
+        end
+      end
     end
 
     module Dependency = struct
-      let value dependency =
-        { Context.resolve = (fun _request -> B.return (Ok dependency))
-        ; responses = []
-        ; security = []
-        }
-      ;;
+      let value = Context.return
 
       let of_request resolve =
         { Context.resolve =
@@ -473,6 +647,12 @@ module Make (B : Backend.S) = struct
             -> t
 
       let json ~payload ~map = T { response = Response.json payload; map }
+
+      let default =
+        json
+          ~payload:(module Default_decode_error_payload)
+          ~map:Default_decode_error_payload.of_decode_error
+      ;;
     end
 
     type (_, _) path =
@@ -649,6 +829,23 @@ module Make (B : Backend.S) = struct
             (Error
                (Decode_error.Unsupported_media_type
                   { expected = [ "text/plain" ]; actual }))
+        else
+          let+ body = B.body_to_string ~max_bytes:max_body_bytes req0 in
+          Result.map_error body ~f:(fun `Too_large ->
+            Decode_error.Body_too_large { max_bytes = max_body_bytes })
+      | Request.Binary { max_body_bytes; _ } ->
+        let actual = media_type req0 in
+        if
+          not
+            (Option.value_map
+               actual
+               ~default:false
+               ~f:(String.equal "application/octet-stream"))
+        then
+          B.return
+            (Error
+               (Decode_error.Unsupported_media_type
+                  { expected = [ "application/octet-stream" ]; actual }))
         else
           let+ body = B.body_to_string ~max_bytes:max_body_bytes req0 in
           Result.map_error body ~f:(fun `Too_large ->
@@ -968,6 +1165,7 @@ module Make (B : Backend.S) = struct
     ;;
 
     type ('h
+         , 'terminal
          , 'context
          , 'req
          , 'ok
@@ -981,22 +1179,13 @@ module Make (B : Backend.S) = struct
          , 'code)
          builder =
       { meth : B.meth
-      ; pattern :
-          ( 'h
-            , 'context
-              -> 'req
-              -> ( 'ok
-                   , 'created
-                   , 'code2xx
-                   , 'nf
-                   , 'bad
-                   , 'code4xx
-                   , 'ise
-                   , 'code5xx
-                   , 'code )
-                   resp
-                   B.io )
-            path
+      ; pattern : ('h, 'terminal) path
+      ; invoke :
+          'terminal
+          -> 'context
+          -> 'req
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
+               B.io
       ; context : 'context Context.t
       ; request : 'req Request.t
       ; responses :
@@ -1010,7 +1199,7 @@ module Make (B : Backend.S) = struct
       -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
 
     let mk
-          (type h context req ok created code2xx nf bad code4xx ise code5xx code)
+          (type h terminal context req ok created code2xx nf bad code4xx ise code5xx code)
           (meth : B.meth)
           ?summary
           ?tags
@@ -1018,19 +1207,19 @@ module Make (B : Backend.S) = struct
           ?operation_id
           ?description
           ?decode_error
+          ~(invoke :
+             terminal
+             -> context
+             -> req
+             -> (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) resp B.io)
           ~(context : context Context.t)
           ~(request : req Request.t)
-          ~(path :
-             ( h
-               , context
-                 -> req
-                 -> (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) resp B.io
-               )
-               path)
+          ~(path : (h, terminal) path)
           ~(responses :
              (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) responses)
           ()
       : ( h
+          , terminal
           , context
           , req
           , ok
@@ -1046,6 +1235,7 @@ module Make (B : Backend.S) = struct
       =
       { meth
       ; pattern = path
+      ; invoke
       ; context
       ; request
       ; responses = responses RNil
@@ -1056,8 +1246,9 @@ module Make (B : Backend.S) = struct
     ;;
 
     let render_resp
-      : type h context req ok created code2xx nf bad code4xx ise code5xx code.
+      : type h terminal context req ok created code2xx nf bad code4xx ise code5xx code.
         ( h
+          , terminal
           , context
           , req
           , ok
@@ -1151,6 +1342,8 @@ module Make (B : Backend.S) = struct
         | Request.Empty -> Contract.No_body
         | Request.PlainText { metadata; max_body_bytes } ->
           Text_body { metadata; max_body_bytes }
+        | Request.Binary { metadata; max_body_bytes } ->
+          Binary_body { metadata; max_body_bytes }
         | Request.JSON { payload = (module Rq); max_body_bytes } ->
           Json_body
             { schema = schema_of_metadata Rq.metadata
@@ -1320,6 +1513,7 @@ module Make (B : Backend.S) = struct
         = function
         | Request.Empty -> []
         | Request.PlainText _ -> [ `Request_entity_too_large; `Unsupported_media_type ]
+        | Request.Binary _ -> [ `Request_entity_too_large; `Unsupported_media_type ]
         | Request.JSON _ ->
           [ `Bad_request; `Request_entity_too_large; `Unsupported_media_type ]
       ;;
@@ -1343,8 +1537,8 @@ module Make (B : Backend.S) = struct
       type t =
         { meth : B.meth
         ; path : string
-        ; handler : Decode_error_response.t option -> B.req -> B.resp B.io
-        ; contract : Decode_error_response.t option -> Contract.route
+        ; handler : Decode_error_response.t -> B.req -> B.resp B.io
+        ; contract : Decode_error_response.t -> Contract.route
         }
     end
 
@@ -1368,15 +1562,50 @@ module Make (B : Backend.S) = struct
         ; decode_error : Decode_error_response.t option
         }
 
+      type 'context route = Contextual_route of ('context Context.t -> Route.t)
+
       let v ?(prefix = []) ?decode_error ~metadata routes =
         { prefix; metadata; routes; decode_error }
       ;;
+
+      let make ?prefix ?decode_error ?summary ?tags ?deprecated ~description routes =
+        v
+          ?prefix
+          ?decode_error
+          ~metadata:(Operation_metadata.v ?summary ?tags ?deprecated ~description ())
+          routes
+      ;;
+
+      let v_with_context ?prefix ?decode_error ~metadata ~context routes =
+        let routes =
+          List.map routes ~f:(fun (Contextual_route attach) -> attach context)
+        in
+        v ?prefix ?decode_error ~metadata routes
+      ;;
+
+      let make_with_context
+            ?prefix
+            ?decode_error
+            ?summary
+            ?tags
+            ?deprecated
+            ~description
+            ~context
+            routes
+        =
+        v_with_context
+          ?prefix
+          ?decode_error
+          ~metadata:(Operation_metadata.v ?summary ?tags ?deprecated ~description ())
+          ~context
+          routes
+      ;;
     end
 
-    let build_app ?decode_error (groups : Group.t list) : B.app_builder =
+    let build_app ~decode_error (groups : Group.t list) : B.app_builder =
       let compile_route
             ~(prefix : string)
-            ~(decode_error : Decode_error_response.t option)
+            ~(decode_error : Decode_error_response.t)
             (r : Route.t)
         : B.app_builder
         =
@@ -1390,7 +1619,7 @@ module Make (B : Backend.S) = struct
       in
       List.fold groups ~init:B.empty ~f:(fun acc g ->
         let prefix = Contract.prefix_to_string g.prefix in
-        let decode_error = Option.first_some g.decode_error decode_error in
+        let decode_error = Option.value g.decode_error ~default:decode_error in
         let gb =
           List.fold g.routes ~init:B.empty ~f:(fun acc2 r ->
             B.combine acc2 (compile_route ~prefix ~decode_error r))
@@ -1431,10 +1660,6 @@ module Make (B : Backend.S) = struct
             { meth : string
             ; path : string
             }
-        | Missing_decode_error_policy of
-            { meth : string
-            ; path : string
-            }
         | Invalid_body_limit of
             { meth : string
             ; path : string
@@ -1452,12 +1677,12 @@ module Make (B : Backend.S) = struct
       let to_string = Contract.Compile_error.to_string
     end
 
-    let compile ?decode_error (groups : Group.t list)
+    let compile ?(decode_error = Decode_error_response.default) (groups : Group.t list)
       : (Compiled.t, Compile_error.t list) Result.t
       =
       let contract_groups =
         List.map groups ~f:(fun group ->
-          let decode_error = Option.first_some group.decode_error decode_error in
+          let decode_error = Option.value group.decode_error ~default:decode_error in
           { Contract.prefix = group.prefix
           ; metadata = group.metadata
           ; routes = List.map group.routes ~f:(fun route -> route.contract decode_error)
@@ -1465,7 +1690,7 @@ module Make (B : Backend.S) = struct
       in
       Contract.compile contract_groups
       |> Result.map ~f:(fun contract ->
-        { Compiled.contract; app = build_app ?decode_error groups })
+        { Compiled.contract; app = build_app ~decode_error groups })
     ;;
 
     let compile_exn ?decode_error groups =
@@ -1478,8 +1703,9 @@ module Make (B : Backend.S) = struct
         |> failwith
     ;;
 
-    let make_with
+    let make_route
           ~context
+          ~invoke
           ~meth
           ?summary
           ?tags
@@ -1502,6 +1728,7 @@ module Make (B : Backend.S) = struct
           ?operation_id
           ?description
           ?decode_error
+          ~invoke
           ~context
           ~request
           ~path
@@ -1509,13 +1736,11 @@ module Make (B : Backend.S) = struct
           ()
       in
       let path_str = path_to_string b.pattern in
-      let resolve_decode_error inherited = Option.first_some b.decode_error inherited in
+      let resolve_decode_error inherited =
+        Option.value b.decode_error ~default:inherited
+      in
       let render_decode_error inherited error =
-        match resolve_decode_error inherited with
-        | Some policy -> render_decode_error_response policy error
-        | None ->
-          failwith
-            ("missing decode-error policy for " ^ meth_to_string b.meth ^ " " ^ path_str)
+        render_decode_error_response (resolve_decode_error inherited) error
       in
       let wrapped inherited (req0 : B.req) : B.resp B.io =
         let* context_result = b.context.resolve req0 in
@@ -1529,19 +1754,15 @@ module Make (B : Backend.S) = struct
              (match parsed with
               | Error error -> render_decode_error inherited error
               | Ok body ->
-                let* r = f' context body in
+                let* r = b.invoke f' context body in
                 render_resp b r))
       in
       let decode_statuses = Openapi_adapter.decode_statuses b.pattern b.request in
-      let has_decoders = not (List.is_empty decode_statuses) in
       let contract inherited =
         let decode_error_responses =
-          match resolve_decode_error inherited with
-          | Some policy ->
-            Openapi_adapter.response_specs_of_decode_error
-              policy
-              ~statuses:decode_statuses
-          | None -> []
+          Openapi_adapter.response_specs_of_decode_error
+            (resolve_decode_error inherited)
+            ~statuses:decode_statuses
         in
         let endpoint : Contract.endpoint =
           { meth = meth_to_string b.meth
@@ -1554,7 +1775,6 @@ module Make (B : Backend.S) = struct
           ; context_responses = Openapi_adapter.response_specs_of_context b.context
           ; security = b.context.security
           ; response_families = Openapi_adapter.response_families b.responses
-          ; has_decoders
           }
         in
         { Contract.meth = meth_to_string b.meth
@@ -1563,6 +1783,36 @@ module Make (B : Backend.S) = struct
         }
       in
       { Route.meth = b.meth; path = path_str; handler = wrapped; contract }
+    ;;
+
+    let make_with
+          ~context
+          ~meth
+          ?summary
+          ?tags
+          ?deprecated
+          ?operation_id
+          ?description
+          ?decode_error
+          ~request
+          ~path
+          ~responses
+          f
+      =
+      make_route
+        ~context
+        ~invoke:(fun handler context body -> handler context body)
+        ~meth
+        ?summary
+        ?tags
+        ?deprecated
+        ?operation_id
+        ?description
+        ?decode_error
+        ~request
+        ~path
+        ~responses
+        f
     ;;
 
     let make
@@ -1578,8 +1828,9 @@ module Make (B : Backend.S) = struct
           ~responses
           f
       =
-      make_with
-        ~context:Context.request
+      make_route
+        ~context:Context.empty
+        ~invoke:(fun handler () body -> handler body)
         ~meth
         ?summary
         ?tags
@@ -1591,6 +1842,36 @@ module Make (B : Backend.S) = struct
         ~path
         ~responses
         f
+    ;;
+
+    let make_in_group
+          ~meth
+          ?summary
+          ?tags
+          ?deprecated
+          ?operation_id
+          ?description
+          ?decode_error
+          ~request
+          ~path
+          ~responses
+          f
+      =
+      Group.Contextual_route
+        (fun context ->
+          make_with
+            ~context
+            ~meth
+            ?summary
+            ?tags
+            ?deprecated
+            ?operation_id
+            ?description
+            ?decode_error
+            ~request
+            ~path
+            ~responses
+            f)
     ;;
   end
 end
