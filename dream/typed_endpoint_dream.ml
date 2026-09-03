@@ -5,6 +5,18 @@ type resp = Dream.response
 type 'a io = 'a Lwt.t
 type body_read_error = [ `Too_large ]
 
+module Io = struct
+  type 'a t = 'a io
+
+  include Base.Monad.Make (struct
+      type nonrec 'a t = 'a io
+
+      let return = Lwt.return
+      let bind value ~f = Lwt.bind value f
+      let map = `Custom (fun value ~f -> Lwt.map f value)
+    end)
+end
+
 include Cohttp.Code
 
 type route =
@@ -20,8 +32,6 @@ let post : meth = `POST
 let put : meth = `PUT
 let delete : meth = `DELETE
 let patch : meth = `PATCH
-let return = Lwt.return
-let bind value ~f = Lwt.bind value f
 let empty = []
 let combine = List.append
 let route meth path handler = [ { meth; path; handler } ]
@@ -33,14 +43,14 @@ let body_to_string ~max_bytes request =
   let stream = Dream.body_stream request in
   let buffer = Buffer.create (Int.min max_bytes 4096) in
   let rec read size =
-    let open Lwt.Let_syntax in
+    let open Io.Let_syntax in
     let%bind chunk = Dream.read stream in
     match chunk with
-    | None -> Lwt.return (Ok (Buffer.contents buffer))
+    | None -> return (Ok (Buffer.contents buffer))
     | Some chunk ->
       let size = size + String.length chunk in
       if size > max_bytes then
-        Lwt.return (Error `Too_large)
+        return (Error `Too_large)
       else (
         Buffer.add_string buffer chunk;
         read size)

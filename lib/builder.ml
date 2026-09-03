@@ -44,6 +44,8 @@ module Backend = struct
     type resp
     type 'a io
 
+    module Io : Base.Monad.S with type 'a t = 'a io
+
     type meth =
       [ `GET
       | `POST
@@ -164,8 +166,6 @@ module Backend = struct
     val put : meth
     val delete : meth
     val patch : meth
-    val return : 'a -> 'a io
-    val bind : 'a io -> f:('a -> 'b io) -> 'b io
     val route : meth -> string -> (req -> resp io) -> app_builder
     val param : req -> string -> string
     val query : req -> string -> string option
@@ -412,9 +412,8 @@ end
 
 module Make (B : Backend.S) = struct
   module B = B
-
-  let ( let* ) value f = B.bind value ~f
-  let ( let+ ) value f = B.bind value ~f:(fun value -> B.return (f value))
+  module Io = B.Io
+  open Io.Let_syntax
 
   type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp =
     | OK :
@@ -543,14 +542,14 @@ module Make (B : Backend.S) = struct
         }
 
       let request =
-        { resolve = (fun request -> B.return (Ok request))
-        ; responses = []
-        ; security = []
-        }
+        { resolve = (fun request -> return (Ok request)); responses = []; security = [] }
       ;;
 
       let return value =
-        { resolve = (fun _request -> B.return (Ok value)); responses = []; security = [] }
+        { resolve = (fun _request -> Io.return (Ok value))
+        ; responses = []
+        ; security = []
+        }
       ;;
 
       let empty = return ()
@@ -559,18 +558,18 @@ module Make (B : Backend.S) = struct
         { context with
           resolve =
             (fun request ->
-              let+ result = context.resolve request in
+              let%map result = context.resolve request in
               Result.map result ~f)
         }
       ;;
 
       let both left right =
         let resolve request =
-          let* left_result = left.resolve request in
+          let%bind left_result = left.resolve request in
           match left_result with
-          | Error rejection -> B.return (Error rejection)
+          | Error rejection -> Io.return (Error rejection)
           | Ok left_value ->
-            let+ right_result = right.resolve request in
+            let%map right_result = right.resolve request in
             Result.map right_result ~f:(fun right_value -> left_value, right_value)
         in
         { resolve
@@ -616,7 +615,7 @@ module Make (B : Backend.S) = struct
       let of_request resolve =
         { Context.resolve =
             (fun request ->
-              let+ dependency = resolve request in
+              let%map dependency = resolve request in
               Ok dependency)
         ; responses = []
         ; security = []
@@ -627,7 +626,7 @@ module Make (B : Backend.S) = struct
     module Guard = struct
       let v ?(security = []) ~status ~response ~check () =
         let resolve request =
-          let+ result = check request in
+          let%map result = check request in
           Result.map_error result ~f:(fun error ->
             Context.Rejected { status; response; error })
         in
@@ -820,19 +819,19 @@ module Make (B : Backend.S) = struct
       =
       fun spec req0 ->
       match spec with
-      | Request.Empty -> B.return (Ok ())
+      | Request.Empty -> return (Ok ())
       | Request.PlainText { max_body_bytes; _ } ->
         let actual = media_type req0 in
         if not (Option.value_map actual ~default:false ~f:(String.equal "text/plain"))
         then
-          B.return
+          return
             (Error
                (Decode_error.Unsupported_media_type
                   { expected = [ "text/plain" ]; actual }))
-        else
-          let+ body = B.body_to_string ~max_bytes:max_body_bytes req0 in
+        else (
+          let%map body = B.body_to_string ~max_bytes:max_body_bytes req0 in
           Result.map_error body ~f:(fun `Too_large ->
-            Decode_error.Body_too_large { max_bytes = max_body_bytes })
+            Decode_error.Body_too_large { max_bytes = max_body_bytes }))
       | Request.Binary { max_body_bytes; _ } ->
         let actual = media_type req0 in
         if
@@ -842,37 +841,37 @@ module Make (B : Backend.S) = struct
                ~default:false
                ~f:(String.equal "application/octet-stream"))
         then
-          B.return
+          return
             (Error
                (Decode_error.Unsupported_media_type
                   { expected = [ "application/octet-stream" ]; actual }))
-        else
-          let+ body = B.body_to_string ~max_bytes:max_body_bytes req0 in
+        else (
+          let%map body = B.body_to_string ~max_bytes:max_body_bytes req0 in
           Result.map_error body ~f:(fun `Too_large ->
-            Decode_error.Body_too_large { max_bytes = max_body_bytes })
+            Decode_error.Body_too_large { max_bytes = max_body_bytes }))
       | Request.JSON { payload = (module Rq); max_body_bytes } ->
         let actual = media_type req0 in
         if not (Option.value_map actual ~default:false ~f:is_json_media_type) then
-          B.return
+          return
             (Error
                (Decode_error.Unsupported_media_type
                   { expected = [ "application/json"; "application/*+json" ]; actual }))
-        else
-          let* body = B.body_to_string ~max_bytes:max_body_bytes req0 in
-          (match body with
-           | Error `Too_large ->
-             B.return (Error (Decode_error.Body_too_large { max_bytes = max_body_bytes }))
-           | Ok body ->
-             let json =
-               try Ok (Yojson.Safe.from_string body) with
-               | Yojson.Json_error error -> Error error
-             in
-             (match json with
-              | Error error -> B.return (Error (Decode_error.Invalid_json { error }))
-              | Ok json ->
-                (match Rq.of_yojson json with
-                 | Ok value -> B.return (Ok value)
-                 | Error error -> B.return (Error (Decode_error.Invalid_body { error })))))
+        else (
+          let%bind body = B.body_to_string ~max_bytes:max_body_bytes req0 in
+          match body with
+          | Error `Too_large ->
+            return (Error (Decode_error.Body_too_large { max_bytes = max_body_bytes }))
+          | Ok body ->
+            let json =
+              try Ok (Yojson.Safe.from_string body) with
+              | Yojson.Json_error error -> Error error
+            in
+            (match json with
+             | Error error -> return (Error (Decode_error.Invalid_json { error }))
+             | Ok json ->
+               (match Rq.of_yojson json with
+                | Ok value -> return (Ok value)
+                | Error error -> return (Error (Decode_error.Invalid_body { error })))))
     ;;
 
     let respond_ok_with_status
@@ -1743,18 +1742,18 @@ module Make (B : Backend.S) = struct
         render_decode_error_response (resolve_decode_error inherited) error
       in
       let wrapped inherited (req0 : B.req) : B.resp B.io =
-        let* context_result = b.context.resolve req0 in
+        let%bind context_result = b.context.resolve req0 in
         match context_result with
         | Error rejection -> render_context_rejection rejection
         | Ok context ->
           (match apply_path b.pattern f req0 with
            | Error error -> render_decode_error inherited error
            | Ok f' ->
-             let* parsed = parse_request b.request req0 in
+             let%bind parsed = parse_request b.request req0 in
              (match parsed with
               | Error error -> render_decode_error inherited error
               | Ok body ->
-                let* r = b.invoke f' context body in
+                let%bind r = b.invoke f' context body in
                 render_resp b r))
       in
       let decode_statuses = Openapi_adapter.decode_statuses b.pattern b.request in

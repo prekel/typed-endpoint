@@ -4,4 +4,4 @@
  (private_modules builder contract openapi runtime)
  (libraries base ppx_deriving_jsonschema.runtime yojson)
  (preprocess
-  (pps ppx_deriving_yojson ppx_deriving_jsonschema)))
+  (pps ppx_let ppx_deriving_yojson ppx_deriving_jsonschema)))

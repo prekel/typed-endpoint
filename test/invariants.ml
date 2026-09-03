@@ -2,6 +2,8 @@ open! Base
 open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_testing)
+module Io = Endpoint.Io
+open Io.Let_syntax
 open Endpoint
 open Dsl
 
@@ -68,7 +70,7 @@ let echo_route ?(max_body_bytes = 64) () =
     ~path:(s "items" /? nil)
     ~request:(Request.json ~max_body_bytes (module Item))
     ~responses:(ok (Response.json (module Item)))
-  @@ fun item -> B.return (OK item)
+  @@ fun item -> return (OK item)
 ;;
 
 let binary_route =
@@ -78,12 +80,23 @@ let binary_route =
     ~path:(s "binary" /? nil)
     ~request:(Request.binary ~max_body_bytes:4 ~description:"Opaque bytes" ())
     ~responses:(ok (Response.text ~description:"Byte length" ()))
-  @@ fun bytes -> B.return (OK (Int.to_string (String.length bytes)))
+  @@ fun bytes -> return (OK (Int.to_string (String.length bytes)))
 ;;
 
 let call app ?(headers = []) ?(body = "") meth target =
   Typed_endpoint_testing.Request.v ~headers ~body ~meth ~target ()
   |> Typed_endpoint_testing.dispatch app
+;;
+
+let%expect_test "backend IO exposes Base monad syntax" =
+  let open Io.Let_syntax in
+  let computation =
+    let%bind left = return 20 in
+    let%map right = return 22 in
+    left + right
+  in
+  Stdlib.Printf.printf "%d" computation;
+  [%expect {| 42 |}]
 ;;
 
 let%expect_test "request bodies enforce media type, decode errors, and size limit" =
@@ -247,7 +260,7 @@ let primitive_route =
        /? nil)
     ~request:Request.empty
     ~responses:(ok (Response.text ~description:"Decoded values" ()))
-  @@ fun id enabled () -> B.return (OK (Int.to_string id ^ ":" ^ Bool.to_string enabled))
+  @@ fun id enabled () -> return (OK (Int.to_string id ^ ":" ^ Bool.to_string enabled))
 ;;
 
 let%expect_test "built-in parameter codecs drive runtime parsing and OpenAPI" =
@@ -303,7 +316,7 @@ let dependency_route =
     ~path:(s "dependency" /? nil)
     ~request:Request.empty
     ~responses:(ok (Response.text ~description:"Injected value" ()))
-  @@ fun value () -> B.return (OK (Int.to_string value))
+  @@ fun value () -> return (OK (Int.to_string value))
 ;;
 
 let%expect_test "Context applicative composes dependency injection" =
@@ -343,9 +356,9 @@ let group_context =
       ~response:(Response.json (module Error_payload))
       ~check:(fun request ->
         match B.header request "authorization" with
-        | Some "Bearer group-token" -> B.return (Ok ())
+        | Some "Bearer group-token" -> return (Ok ())
         | _ ->
-          B.return
+          return
             (Error Error_payload.{ kind = "unauthorized"; message = "invalid token" }))
       ()
   in
@@ -359,7 +372,7 @@ let grouped_route segment =
     ~path:(s segment /? nil)
     ~request:Request.empty
     ~responses:(ok (Response.text ~description:"Injected group dependency" ()))
-  @@ fun dependency () -> B.return (OK (dependency ^ ":" ^ segment))
+  @@ fun dependency () -> return (OK (dependency ^ ":" ^ segment))
 ;;
 
 let%expect_test "a group context is typed, shared, and documented per route" =
@@ -407,7 +420,7 @@ let secured_route =
       ~security:[ Security.require bearer; Security.require api_key ]
       ~status:`Unauthorized
       ~response:(Response.json (module Error_payload))
-      ~check:(fun _request -> B.return (Ok ()))
+      ~check:(fun _request -> return (Ok ()))
       ()
   in
   make_with
@@ -416,7 +429,7 @@ let secured_route =
     ~path:(s "secure" /? nil)
     ~request:Request.empty
     ~responses:(ok (Response.text ~description:"OK" ()))
-  @@ fun () () -> B.return (OK "ok")
+  @@ fun () () -> return (OK "ok")
 ;;
 
 let%expect_test "guard security is rendered as OR alternatives" =
@@ -448,7 +461,7 @@ let conflict_route =
     ~path:(s "conflict" /? nil)
     ~request:Request.empty
     ~responses:(ok (Response.json (module Conflicting_item)))
-  @@ fun () -> B.return (OK "conflict")
+  @@ fun () -> return (OK "conflict")
 ;;
 
 let%expect_test "conflicting component schemas are rejected" =
@@ -487,7 +500,7 @@ let%expect_test "unknown OAuth scopes are rejected" =
       ~security:[ Security.require ~scopes:[ "write" ] oauth ]
       ~status:`Unauthorized
       ~response:(Response.json (module Error_payload))
-      ~check:(fun _request -> B.return (Ok ()))
+      ~check:(fun _request -> return (Ok ()))
       ()
   in
   let route =
@@ -497,7 +510,7 @@ let%expect_test "unknown OAuth scopes are rejected" =
       ~path:(s "scope" /? nil)
       ~request:Request.empty
       ~responses:(ok (Response.text ~description:"OK" ()))
-    @@ fun () () -> B.return (OK "ok")
+    @@ fun () () -> return (OK "ok")
   in
   print_compile_errors [ group [ route ] ];
   [%expect {| invalid security scope write for scheme oauth |}]
@@ -518,7 +531,7 @@ let%expect_test "conflicting security scheme definitions are rejected" =
       ~security:[ Security.require scheme ]
       ~status:`Unauthorized
       ~response:(Response.json (module Error_payload))
-      ~check:(fun _request -> B.return (Ok ()))
+      ~check:(fun _request -> return (Ok ()))
       ()
   in
   let route =
@@ -528,7 +541,7 @@ let%expect_test "conflicting security scheme definitions are rejected" =
       ~path:(s "scheme-conflict" /? nil)
       ~request:Request.empty
       ~responses:(ok (Response.text ~description:"OK" ()))
-    @@ fun ((), ()) () -> B.return (OK "ok")
+    @@ fun ((), ()) () -> return (OK "ok")
   in
   print_compile_errors [ group [ route ] ];
   [%expect {| conflicting security scheme: auth |}]

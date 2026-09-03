@@ -57,6 +57,8 @@ let swagger_ui_html =
 
 module Make (B : Backend.S) = struct
   module Endpoint = Typed_endpoint.Make (B)
+  module Io = B.Io
+  open Io.Let_syntax
   open Endpoint
   open Dsl
 
@@ -272,7 +274,7 @@ module Make (B : Backend.S) = struct
           access.api_key
           && Option.value_map key ~default:false ~f:(String.equal auth.api_key)
         in
-        B.return
+        return
           (if bearer_valid || key_valid then
              Ok ()
            else
@@ -309,7 +311,7 @@ module Make (B : Backend.S) = struct
               [ `Bad_request; `Conflict; `Unprocessable_entity ]
               (Response.json (module Dto.Api_response)))
     @@ fun services pet ->
-    B.return
+    return
       (match Dto.Pet.to_domain pet with
        | Error message -> Code_4xx (`Bad_request, Dto.Api_response.bad_request message)
        | Ok (id, attributes) ->
@@ -333,7 +335,7 @@ module Make (B : Backend.S) = struct
          |+ JSON.not_found (module Dto.Api_response)
          |+ code4xx [ `Unprocessable_entity ] (Response.json (module Dto.Api_response)))
     @@ fun services pet ->
-    B.return
+    return
       (match Dto.Pet.to_domain pet with
        | Error message -> Bad_request (Dto.Api_response.bad_request message)
        | Ok (None, _) -> Bad_request (Dto.Api_response.bad_request "id is required")
@@ -354,7 +356,7 @@ module Make (B : Backend.S) = struct
       ~responses:(JSON.ok (module Dto.Pet_list))
     @@ fun status services () ->
     Pet_service.list_by_status (Services.pets services) ~status |> Dto.Pet_list.of_domain
-    |> fun pets -> B.return (OK pets)
+    |> fun pets -> return (OK pets)
   ;;
 
   let find_by_tags =
@@ -368,7 +370,7 @@ module Make (B : Backend.S) = struct
       ~responses:(JSON.ok (module Dto.Pet_list))
     @@ fun tags services () ->
     Pet_service.list_by_tags (Services.pets services) ~tags |> Dto.Pet_list.of_domain
-    |> fun pets -> B.return (OK pets)
+    |> fun pets -> return (OK pets)
   ;;
 
   let search_pets =
@@ -391,7 +393,7 @@ module Make (B : Backend.S) = struct
     @@ fun status page limit services () ->
     let page = Option.value page ~default:Domain.Page_request.default_page in
     let limit = Option.value limit ~default:Domain.Page_request.default_limit in
-    B.return
+    return
       (match Domain.Page_request.create ~page ~limit with
        | Error message -> Bad_request (Dto.Api_response.bad_request message)
        | Ok pagination ->
@@ -410,7 +412,7 @@ module Make (B : Backend.S) = struct
       ~request:Request.empty
       ~responses:(JSON.ok (module Dto.Pet) |+ JSON.not_found (module Dto.Api_response))
     @@ fun id services () ->
-    B.return
+    return
       (match Pet_service.find (Services.pets services) id with
        | Some pet -> OK (Dto.Pet.of_domain pet)
        | None -> Not_found (Dto.Api_response.not_found id))
@@ -434,7 +436,7 @@ module Make (B : Backend.S) = struct
          |+ JSON.bad_request (module Dto.Api_response)
          |+ JSON.not_found (module Dto.Api_response))
     @@ fun id name status services () ->
-    B.return
+    return
       (match Pet_service.patch (Services.pets services) ~id ?name ?status () with
        | Ok pet -> OK (Dto.Pet.of_domain pet)
        | Error (`Not_found id) -> Not_found (Dto.Api_response.not_found id))
@@ -452,7 +454,7 @@ module Make (B : Backend.S) = struct
         (ok (Response.empty ~description:"Pet deleted" ())
          |+ JSON.not_found (module Dto.Api_response))
     @@ fun id services () ->
-    B.return
+    return
       (match Pet_service.delete (Services.pets services) id with
        | Ok () -> OK ()
        | Error (`Not_found id) -> Not_found (Dto.Api_response.not_found id))
@@ -478,7 +480,7 @@ module Make (B : Backend.S) = struct
          |+ JSON.bad_request (module Dto.Api_response)
          |+ JSON.not_found (module Dto.Api_response))
     @@ fun id metadata services bytes ->
-    B.return
+    return
       (match Pet_service.upload_image (Services.pets services) ~id ~metadata ~bytes with
        | Ok bytes -> OK (Dto.Api_response.upload_success ~id ~bytes ~metadata)
        | Error `Empty_file ->
@@ -497,7 +499,7 @@ module Make (B : Backend.S) = struct
       ~responses:(JSON.ok (module Dto.Inventory))
     @@ fun services () ->
     Pet_service.inventory (Services.pets services) |> Dto.Inventory.of_domain
-    |> fun inventory -> B.return (OK inventory)
+    |> fun inventory -> return (OK inventory)
   ;;
 
   let place_order =
@@ -513,7 +515,7 @@ module Make (B : Backend.S) = struct
          |+ JSON.bad_request (module Dto.Api_response)
          |+ code4xx [ `Unprocessable_entity ] (Response.json (module Dto.Api_response)))
     @@ fun services order ->
-    B.return
+    return
       (match Dto.Order.to_domain order with
        | Error message -> Bad_request (Dto.Api_response.bad_request message)
        | Ok (_id, { pet_id = Some pet_id; _ })
@@ -539,7 +541,7 @@ module Make (B : Backend.S) = struct
       ~request:Request.empty
       ~responses:(JSON.ok (module Dto.Order) |+ JSON.not_found (module Dto.Api_response))
     @@ fun id services () ->
-    B.return
+    return
       (match Order_service.find (Services.orders services) id with
        | Some order -> OK (Dto.Order.of_domain order)
        | None -> Not_found (Dto.Api_response.order_not_found id))
@@ -557,7 +559,7 @@ module Make (B : Backend.S) = struct
         (ok (Response.empty ~description:"Order deleted" ())
          |+ JSON.not_found (module Dto.Api_response))
     @@ fun id services () ->
-    B.return
+    return
       (match Order_service.delete (Services.orders services) id with
        | Ok () -> OK ()
        | Error (`Not_found id) -> Not_found (Dto.Api_response.order_not_found id))
@@ -576,7 +578,7 @@ module Make (B : Backend.S) = struct
          |+ JSON.bad_request (module Dto.Api_response)
          |+ code4xx [ `Conflict ] (Response.json (module Dto.Api_response)))
     @@ fun services user ->
-    B.return
+    return
       (match Dto.User.to_domain user with
        | Error message -> Bad_request (Dto.Api_response.bad_request message)
        | Ok user ->
@@ -599,7 +601,7 @@ module Make (B : Backend.S) = struct
          |+ JSON.bad_request (module Dto.Api_response)
          |+ code4xx [ `Conflict ] (Response.json (module Dto.Api_response)))
     @@ fun services users ->
-    B.return
+    return
       (match Dto.User_list.to_domain users with
        | Error message -> Bad_request (Dto.Api_response.bad_request message)
        | Ok [] ->
@@ -627,7 +629,7 @@ module Make (B : Backend.S) = struct
       ~responses:
         (JSON.ok (module Dto.Login_token) |+ JSON.bad_request (module Dto.Api_response))
     @@ fun username password services () ->
-    B.return
+    return
       (match username, password with
        | Some username, Some password
          when User_service.authenticate (Services.users services) ~username ~password ->
@@ -644,7 +646,7 @@ module Make (B : Backend.S) = struct
       ~path:(s "user" / s "logout" /? nil)
       ~request:Request.empty
       ~responses:(ok (Response.empty ~description:"Successful operation" ()))
-    @@ fun _services () -> B.return (OK ())
+    @@ fun _services () -> return (OK ())
   ;;
 
   let get_user =
@@ -657,7 +659,7 @@ module Make (B : Backend.S) = struct
       ~request:Request.empty
       ~responses:(JSON.ok (module Dto.User) |+ JSON.not_found (module Dto.Api_response))
     @@ fun username services () ->
-    B.return
+    return
       (match User_service.find (Services.users services) username with
        | Some user -> OK (Dto.User.of_domain user)
        | None -> Not_found (Dto.Api_response.user_not_found username))
@@ -676,7 +678,7 @@ module Make (B : Backend.S) = struct
          |+ JSON.bad_request (module Dto.Api_response)
          |+ JSON.not_found (module Dto.Api_response))
     @@ fun username services user ->
-    B.return
+    return
       (match Dto.User.to_domain ~username user with
        | Error message -> Bad_request (Dto.Api_response.bad_request message)
        | Ok user ->
@@ -698,7 +700,7 @@ module Make (B : Backend.S) = struct
         (ok (Response.empty ~description:"User deleted" ())
          |+ JSON.not_found (module Dto.Api_response))
     @@ fun username services () ->
-    B.return
+    return
       (match User_service.delete (Services.users services) username with
        | Ok () -> OK ()
        | Error (`Not_found username) ->

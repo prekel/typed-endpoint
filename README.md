@@ -29,6 +29,9 @@ OpenAPI 3.1.
 open Typed_endpoint
 
 module Endpoint = Make (Typed_endpoint_testing)
+module Io = Endpoint.Io
+
+open Io.Let_syntax
 open Endpoint
 open Dsl
 
@@ -38,7 +41,7 @@ let route =
     ~path:(s "health" /? nil)
     ~request:Request.empty
     ~responses:(ok (Response.text ~description:"Health status" ()))
-  @@ fun () -> B.return (OK "ok")
+  @@ fun () -> return (OK "ok")
 
 let compiled =
   compile_exn

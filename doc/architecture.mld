@@ -2,7 +2,11 @@
 
 Ядро не знает об Opium, Dream, Cohttp или Eio. Функтор [Typed_endpoint.Make]
 принимает [Backend.S], где backend предоставляет маршрутизацию, доступ к
-path/query/header, ограниченное чтение body и создание ответа.
+path/query/header, ограниченное чтение body и создание ответа. Эффект backend
+доступен как [Backend.S.Io], реализующий [Base.Monad.S]. Поэтому один handler
+использует [Io.Let_syntax] и [let%bind]/[let%map] как с Lwt, так и с identity
+эффектом testing и Eio backend. Производные [both] и [all] последовательны;
+параллелизм и управление ресурсами остаются возможностями конкретного runtime.
 
 [Context] вычисляет типизированные зависимости перед декодированием request.
 [Dependency.value] подходит для application-scoped сервиса,

@@ -16,6 +16,18 @@ type resp =
 type 'a io = 'a
 type body_read_error = [ `Too_large ]
 
+module Io = struct
+  type 'a t = 'a io
+
+  include Base.Monad.Make (struct
+      type nonrec 'a t = 'a io
+
+      let return value = value
+      let bind value ~f = f value
+      let map = `Custom (fun value ~f -> f value)
+    end)
+end
+
 include Cohttp.Code
 
 type segment =
@@ -35,8 +47,6 @@ let post : meth = `POST
 let put : meth = `PUT
 let delete : meth = `DELETE
 let patch : meth = `PATCH
-let return value = value
-let bind value ~f = f value
 let empty = []
 let combine = List.append
 

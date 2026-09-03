@@ -52,9 +52,11 @@
   предварительного неограниченного буферизования body.
 - Общие middleware не добавляй в ядро: framework middleware остаётся снаружи,
   а типизированные зависимости и авторизацию выражай через `Context`/`Guard`.
-- Ядро выражает эффекты через `Backend.S.io`. В Lwt-адаптерах используй
-  `ppx_let` (`let%bind`, `let%map`) через `Lwt.Let_syntax`; Eio handler оставляй
-  direct-style. Не используй `lwt_ppx`.
+- Ядро выражает эффекты через `Backend.S.io`. В Lwt-адаптерах реализуй
+  `Backend.S.Io` как `Base.Monad.S` и используй его `Let_syntax`; Eio handler
+  оставляй direct-style. Не используй `lwt_ppx`.
+- Если тип вычисления предоставляет `Let_syntax`, используй `ppx_let`
+  (`let%bind`, `let%map` и `and`) вместо вложенных вызовов `bind`/`map`.
 - Не добавляй другие PPX, если задачу можно ясно решить обычным OCaml.
 
 ## Тесты и проверки

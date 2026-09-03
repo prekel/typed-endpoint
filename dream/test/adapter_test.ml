@@ -1,6 +1,8 @@
 open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_dream)
+module Io = Endpoint.Io
+open Io.Let_syntax
 open Endpoint
 open Endpoint.Dsl
 
@@ -49,7 +51,7 @@ let route =
     ~responses:(ok (Response.text ~description:"OK" ()))
   @@ fun id request body ->
   let query = Dream.query request "q" |> Option.value ~default:"none" in
-  Lwt.return (OK (String.concat ~sep:":" [ id; query; body ]))
+  return (OK (String.concat ~sep:":" [ id; query; body ]))
 ;;
 
 let custom =

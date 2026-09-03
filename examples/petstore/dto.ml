@@ -110,12 +110,12 @@ module Pet = struct
   let derived_of_yojson = of_yojson
 
   let of_yojson json =
-    derived_of_yojson json
-    |> Result.bind ~f:(fun pet ->
-      match pet.status with
-      | None -> Ok pet
-      | Some status when valid_status status -> Ok pet
-      | Some _ -> Error "status must be available, pending, or sold")
+    let open Result.Let_syntax in
+    let%bind pet = derived_of_yojson json in
+    match pet.status with
+    | None -> Ok pet
+    | Some status when valid_status status -> Ok pet
+    | Some _ -> Error "status must be available, pending, or sold"
   ;;
 
   let schema =
@@ -136,23 +136,25 @@ module Pet = struct
   ;;
 
   let to_domain pet =
+    let open Result.Let_syntax in
     match pet.id with
     | Some id when id < 1 -> Error "id must be a positive integer"
     | id ->
-      let status =
+      let%map status =
         match pet.status with
         | None -> Ok None
-        | Some status -> Result.map (Status.of_string status) ~f:Option.some
+        | Some status ->
+          let%map status = Status.of_string status in
+          Some status
       in
-      Result.map status ~f:(fun status ->
-        ( id
-        , Domain.Pet.
-            { name = pet.name
-            ; category = Option.map pet.category ~f:Category.to_domain
-            ; photo_urls = pet.photo_urls
-            ; tags = Option.map pet.tags ~f:(List.map ~f:Tag.to_domain)
-            ; status
-            } ))
+      ( id
+      , Domain.Pet.
+          { name = pet.name
+          ; category = Option.map pet.category ~f:Category.to_domain
+          ; photo_urls = pet.photo_urls
+          ; tags = Option.map pet.tags ~f:(List.map ~f:Tag.to_domain)
+          ; status
+          } )
   ;;
 
   let of_domain ({ id; attributes } : Domain.Pet.t) =
@@ -347,23 +349,25 @@ module Order = struct
   ;;
 
   let to_domain order =
-    Result.bind (positive "id" order.id) ~f:(fun id ->
-      Result.bind (positive "petId" order.pet_id) ~f:(fun pet_id ->
-        Result.bind (positive "quantity" order.quantity) ~f:(fun quantity ->
-          let status =
-            match order.status with
-            | None -> Ok None
-            | Some status -> Result.map (Order_status.of_string status) ~f:Option.some
-          in
-          Result.map status ~f:(fun status ->
-            ( id
-            , Domain.Order.
-                { pet_id
-                ; quantity
-                ; ship_date = order.ship_date
-                ; status
-                ; complete = order.complete
-                } )))))
+    let open Result.Let_syntax in
+    let%bind id = positive "id" order.id in
+    let%bind pet_id = positive "petId" order.pet_id in
+    let%bind quantity = positive "quantity" order.quantity in
+    let%map status =
+      match order.status with
+      | None -> Ok None
+      | Some status ->
+        let%map status = Order_status.of_string status in
+        Some status
+    in
+    ( id
+    , Domain.Order.
+        { pet_id
+        ; quantity
+        ; ship_date = order.ship_date
+        ; status
+        ; complete = order.complete
+        } )
   ;;
 
   let of_domain ({ id; attributes } : Domain.Order.t) =

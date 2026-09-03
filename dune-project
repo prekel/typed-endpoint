@@ -23,6 +23,7 @@
   (dune (>= 3.16))
   base
   yojson
+  (ppx_let (and (>= v0.17.1) :build))
   (ppx_deriving_yojson :build)
   (ppx_deriving_jsonschema (>= 0.0.8))
   (ocamlformat (and (= 0.29.0) :with-dev-setup))
@@ -65,6 +66,7 @@
   cohttp
   uri
   yojson
+  (ppx_let (and (>= v0.17.1) :with-test))
   (ppx_deriving_yojson :with-test)
   (ppx_deriving_jsonschema (and (>= 0.0.8) :with-test))
   (ppx_expect :with-test))

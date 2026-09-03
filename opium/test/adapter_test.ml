@@ -1,6 +1,8 @@
 open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_opium)
+module Io = Endpoint.Io
+open Io.Let_syntax
 open Endpoint
 open Dsl
 
@@ -33,7 +35,7 @@ let route =
     ~path:(s "echo" /? nil)
     ~request:(Request.text ~description:"Body" ())
     ~responses:(ok (Response.text ~description:"Echo" ()))
-  @@ fun body -> B.return (OK body)
+  @@ fun body -> return (OK body)
 ;;
 
 let app =

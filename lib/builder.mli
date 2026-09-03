@@ -189,6 +189,11 @@ module Backend : sig
         Eio uses the identity type. *)
     type 'a io
 
+    (** Lawful sequencing operations for [io]. Besides [return], [bind], and
+        [map], this exposes [Let_syntax] for backend-independent [let%bind] and
+        [let%map]. Derived collection combinators execute sequentially. *)
+    module Io : Base.Monad.S with type 'a t = 'a io
+
     (** Methods understood by the runtime router. [`Other] preserves extension
         methods for unsafe runtime-only routes. *)
     type meth =
@@ -318,11 +323,6 @@ module Backend : sig
     val put : meth
     val delete : meth
     val patch : meth
-
-    (** Effect primitives used by the framework-neutral core. *)
-    val return : 'a -> 'a io
-
-    val bind : 'a io -> f:('a -> 'b io) -> 'b io
 
     (** Registers one already-rendered backend path and handler. *)
     val route : meth -> string -> (req -> resp io) -> app_builder
@@ -510,6 +510,10 @@ end
 module Make
     (B : Backend.S) : sig
     module B : Backend.S
+
+    (** Backend effect operations re-exported for handlers and injected
+        services. Open [Io.Let_syntax] to use [ppx_let]. *)
+    module Io : Base.Monad.S with type 'a t = 'a B.io
 
     (** Typed handler result. Each constructor is available only when its
         matching response was declared; dynamic family constructors are also

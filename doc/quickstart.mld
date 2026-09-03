@@ -4,6 +4,9 @@
 
 {[
 module Endpoint = Typed_endpoint.Make (Typed_endpoint_testing)
+module Io = Endpoint.Io
+
+open Io.Let_syntax
 open Endpoint
 open Dsl
 ]}
@@ -39,6 +42,11 @@ body. Backend request не добавляется неявно. Если нуж�
 [Context.all] собирает однородный список контекстов. Если приложение использует
 [ppx_let], тот же код можно писать через [Context.Let_syntax] и
 [let%map ... and ...].
+
+Асинхронные handlers используют тот же [ppx_let] через [Io.Let_syntax]. Тип
+[Io.t] совпадает с backend [io]: это [Lwt.t] для Dream и Opium и identity для
+testing и Eio. Благодаря этому handler не вызывает backend-specific [bind] и
+[return] напрямую.
 
 После [compile] используйте [Compiled.app] для backend-приложения и
 [Compiled.openapi] для документа. Полный пример находится в
