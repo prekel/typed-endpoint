@@ -3,7 +3,7 @@ module App = Petstore_app.Routes.Make (Typed_endpoint_opium)
 module Dsl = App.Endpoint.Dsl
 
 let () =
-  let services = Petstore_app.Services.create () in
+  let services = App.Services.create () in
   let compiled = App.compile ~auth:(Petstore_app.Routes.auth_from_env ()) services in
   Opium.App.empty
   |> Dsl.Compiled.app compiled

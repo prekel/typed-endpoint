@@ -1,6 +1,31 @@
+(include_subdirs unqualified)
+
 (library
  (name petstore_app)
- (modules domain dto pet_service order_service user_service services routes)
+ (modules
+  domain
+  persistence_error
+  dto
+  pet_repository
+  order_repository
+  user_repository
+  pet_repository_memory
+  order_repository_memory
+  user_repository_memory
+  pet_service
+  order_service
+  user_service
+  services
+  memory_services
+  auth
+  api_docs
+  http_parameter
+  controller_context
+  pet_controller
+  store_controller
+  user_controller
+  routes)
+ (private_modules api_docs)
  (libraries base ppx_deriving_jsonschema.runtime typed-endpoint yojson)
  (preprocess
   (pps ppx_let ppx_deriving_yojson ppx_deriving_jsonschema)))

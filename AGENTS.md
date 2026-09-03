@@ -13,8 +13,16 @@
 - `testing/` — framework-free in-memory backend. Не добавляй сюда зависимости
   от конкретного web framework.
 - `test/` — regression tests и небольшие OpenAPI snapshots.
-- `examples/petstore/` — backend-independent пример приложения и отдельные
-  entrypoint для поддерживаемых HTTP-фреймворков.
+- `examples/petstore/` — backend-independent пример приложения, разделённый на
+  `domain/`, `application/`, `infrastructure/` и `http/`; отдельные entrypoint
+  поддерживаемых HTTP-фреймворков находятся в `servers/`.
+- В Petstore сохраняй направление зависимостей: controller → application
+  service → repository port. Сервисы работают с `Domain`, контроллеры отвечают
+  за DTO и HTTP-статусы, а конкретные репозитории выбираются только в
+  composition root.
+- Асинхронный repository adapter должен разделять с backend один тип эффекта;
+  передавай его через `Base.Monad.S`. Не скрывай зависимости сервисов или
+  контроллеров в глобальных mutable-реестрах.
 - Метаданные пакетов задаются в `dune-project`; сгенерированные `.opam` вручную
   не редактируются.
 

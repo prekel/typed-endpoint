@@ -1,3 +1,5 @@
+(include_subdirs no)
+
 (executable
  (name opium_server)
  (modules opium_server)

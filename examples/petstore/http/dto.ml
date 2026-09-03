@@ -521,6 +521,13 @@ module Api_response = struct
 
   let bad_request message = { code = 400; type_ = "bad_request"; message }
 
+  let persistence_error error =
+    { code = 503
+    ; type_ = "service_unavailable"
+    ; message = Persistence_error.public_message error
+    }
+  ;;
+
   let order_not_found id =
     { code = 404
     ; type_ = "not_found"

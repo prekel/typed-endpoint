@@ -207,6 +207,10 @@ module Api_response : sig
   (** Builds the public 400 representation for an invalid command. *)
   val bad_request : string -> t
 
+  (** Builds a sanitized 503 representation. Internal failure details are not
+      exposed to the HTTP client. *)
+  val persistence_error : Persistence_error.t -> t
+
   (** Builds the public missing-order representation. *)
   val order_not_found : int -> t
 

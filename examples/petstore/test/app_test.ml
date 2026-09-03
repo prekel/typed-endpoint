@@ -2,8 +2,38 @@ open! Base
 module App = Petstore_app.Routes.Make (Typed_endpoint_testing)
 module Dsl = App.Endpoint.Dsl
 
+module Pet_repository_base =
+  Petstore_app.Pet_repository_memory.Make (Typed_endpoint_testing.Io)
+
+module Failing_pet_repository = struct
+  include Pet_repository_base
+
+  let inventory _ : (_, Petstore_app.Persistence_error.t) Result.t = Error `Unavailable
+end
+
+module Failing_pets =
+  Petstore_app.Pet_service.Make (Typed_endpoint_testing.Io) (Failing_pet_repository)
+
+module Failing_order_repository =
+  Petstore_app.Order_repository_memory.Make (Typed_endpoint_testing.Io)
+
+module Failing_orders =
+  Petstore_app.Order_service.Make (Typed_endpoint_testing.Io) (Failing_order_repository)
+    (Failing_pets)
+
+module Failing_user_repository =
+  Petstore_app.User_repository_memory.Make (Typed_endpoint_testing.Io)
+
+module Failing_users =
+  Petstore_app.User_service.Make (Typed_endpoint_testing.Io) (Failing_user_repository)
+
+module Failing_app =
+  Petstore_app.Routes.Make_with_services (Typed_endpoint_testing) (Failing_pets)
+    (Failing_orders)
+    (Failing_users)
+
 let auth = Petstore_app.Routes.{ bearer_token = "test-token"; api_key = "test-key" }
-let services = Petstore_app.Services.create ()
+let services = App.Services.create ()
 let compiled = App.compile ~auth services
 let routes = Dsl.Compiled.app compiled
 
@@ -315,12 +345,53 @@ let test_openapi () =
   assert (
     String.is_substring
       (Typed_endpoint_testing.Response.body docs)
-      ~substring:"SwaggerUIBundle")
+      ~substring:"Five renderers");
+  List.iter
+    [ "/docs/swagger", "SwaggerUIBundle"
+    ; "/docs/scalar", "Scalar.createApiReference"
+    ; "/docs/rapidoc", "<rapi-doc"
+    ; "/docs/redoc", "<redoc"
+    ; "/docs/elements", "<elements-api"
+    ]
+    ~f:(fun (path, marker) ->
+      let response = request `GET path in
+      assert_status 200 response;
+      assert (
+        String.is_substring
+          (Typed_endpoint_testing.Response.body response)
+          ~substring:marker))
+;;
+
+let test_injected_repository_failure () =
+  let pets = Failing_pets.create ~repository:(Failing_pet_repository.create ()) in
+  let orders =
+    Failing_orders.create ~repository:(Failing_order_repository.create ()) ~pets
+  in
+  let users = Failing_users.create ~repository:(Failing_user_repository.create ()) in
+  let services = Petstore_app.Services.v ~pets ~orders ~users in
+  let routes =
+    Failing_app.compile ~auth services |> Failing_app.Endpoint.Dsl.Compiled.app
+  in
+  let response =
+    Typed_endpoint_testing.Request.v
+      ~headers:api_key_headers
+      ~meth:`GET
+      ~target:"/store/inventory"
+      ()
+    |> Typed_endpoint_testing.dispatch routes
+  in
+  assert_status 503 response;
+  let response = response_json response in
+  assert (
+    String.equal
+      Yojson.Safe.Util.(response |> member "type" |> to_string)
+      "service_unavailable")
 ;;
 
 let () =
   let pet_id = test_pet_api () in
   test_store_api pet_id;
   test_user_api ();
-  test_openapi ()
+  test_openapi ();
+  test_injected_repository_failure ()
 ;;
