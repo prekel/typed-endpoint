@@ -2,7 +2,7 @@ open! Base
 
 module type S = sig
   type 'a io
-  type t
+  type connection
 
   type error =
     [ `Not_found of int
@@ -15,11 +15,15 @@ module type S = sig
     ]
 
   val place
-    :  t
+    :  conn:connection
     -> ?id:int
     -> Domain.Order.attributes
     -> (Domain.Order.t, place_error) Result.t io
 
-  val find : t -> int -> (Domain.Order.t option, Persistence_error.t) Result.t io
-  val delete : t -> int -> (unit, error) Result.t io
+  val find
+    :  conn:connection
+    -> int
+    -> (Domain.Order.t option, Persistence_error.t) Result.t io
+
+  val delete : conn:connection -> int -> (unit, error) Result.t io
 end

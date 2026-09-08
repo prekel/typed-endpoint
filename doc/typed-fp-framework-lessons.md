@@ -123,73 +123,86 @@ type-map или runtime service locator в OCaml для этого не нуже
 
 ```text
 compile time
-  repository module
-       │
-       ▼
-  service functor
-       │
-       ▼
-  controller functor
-       │
-       ▼
-  routes functor
+  Database module + repository modules
+                  │
+                  ▼
+       stateless service modules
+                  │
+                  ▼
+      stateless controller modules
+                  │
+                  ▼
+             Routes.Make
 
 runtime
-  config → database pool → repository value → service value → compiled app
+  config → database pool/state → App.compile → compiled app
 ```
 
-Это static DI с явными runtime instances, а не runtime DI container.
+Это static DI с одним явным runtime resource, а не runtime DI container.
 
 ### Production composition root с Caqti
 
-Repository port сохраняет абстрактные `io` и `t`:
+Database port отвечает за выдачу connection и транзакционную границу:
+
+```ocaml
+module type Database = sig
+  type 'a io
+  type t
+  type connection
+
+  val with_connection :
+    t ->
+    on_error:(Persistence_error.t -> 'error) ->
+    f:(conn:connection -> ('a, 'error) result io) ->
+    ('a, 'error) result io
+
+  val transaction :
+    t ->
+    on_error:(Persistence_error.t -> 'error) ->
+    f:(conn:connection -> ('a, 'error) result io) ->
+    ('a, 'error) result io
+end
+```
+
+Repository port не хранит pool и принимает scoped connection явно:
 
 ```ocaml
 module type Pet_repository = sig
-  type 'a io
-  type t
-
-  val find : t -> Pet_id.t -> (Pet.t option, Persistence_error.t) Result.t io
-  val save : t -> Pet.t -> (unit, Persistence_error.t) Result.t io
-end
-```
-
-Production adapter хранит пул в своём `t`. Конкретный тип Caqti остаётся
-внутри infrastructure-модуля:
-
-```ocaml
-module Caqti_pet_repository :
-  Pet_repository with type 'a io = 'a Lwt.t =
-struct
   type 'a io = 'a Lwt.t
-  type t = Db_pool.t
+  type connection
 
-  let find pool id = Db_pool.use pool (fun connection -> ...)
-  let save pool pet = Db_pool.use pool (fun connection -> ...)
+  val find :
+    conn:connection ->
+    Pet_id.t ->
+    (Pet.t option, Persistence_error.t) result io
+
+  val save :
+    conn:connection -> Pet.t -> (unit, Persistence_error.t) result io
 end
 ```
+
+Production `Database_caqti` хранит pool в `t`, а concrete connection скрывает
+в `connection`. Repository adapters содержат только запросы и преобразование
+строк. Поэтому один service use case может вызвать несколько repositories с
+одним `~conn` и атомарно завершить общую транзакцию.
 
 `Routes.Make` один раз собирает статический граф конкретного executable:
 
 ```ocaml
 module Application =
-  Petstore_app.Routes.Make (Backend) (Caqti_pet_repository)
+  Petstore_app.Routes.Make (Backend) (Database_caqti) (Caqti_pet_repository)
     (Caqti_order_repository)
     (Caqti_user_repository)
 ```
 
-Во время запуска создаются только ресурсы репозиториев. Сервисы и контроллеры
-строятся внутри уже проверенного функтора:
+Во время запуска создаётся только database pool. Сервисы и контроллеры
+являются stateless-модулями внутри уже проверенного функтора:
 
 ```ocaml
 let run database_uri =
   Db_pool.with_pool database_uri @@ fun pool ->
   let compiled =
-    Application.compile
-      ~auth
-      ~pet_repository:pool
-      ~order_repository:pool
-      ~user_repository:pool
+    Application.compile ~auth ~database:pool
   in
   Server.run (Application.Endpoint.Dsl.Compiled.app compiled)
 ;;
@@ -208,59 +221,46 @@ let run database_uri =
 repository modules:
 
 ```ocaml
-module Pet_repository = Pet_repository_memory.Make (Identity)
-module Order_repository = Order_repository_memory.Make (Identity)
-module User_repository = User_repository_memory.Make (Identity)
+module Database = Database_memory.Make (Identity)
 
 module Application =
-  Routes.Make (Testing_backend) (Pet_repository) (Order_repository)
-    (User_repository)
+  Routes.Make (Testing_backend) (Database) (Database.Pet_repository)
+    (Database.Order_repository) (Database.User_repository)
 
 let compiled =
-  Application.compile
-    ~auth
-    ~pet_repository:(Pet_repository.create ())
-    ~order_repository:(Order_repository.create ())
-    ~user_repository:(User_repository.create ())
+  Application.compile ~auth ~database:(Database.create ())
 ```
 
 HTTP-контракт, controller и service logic при этом не меняются.
 
 ### Unit tests
 
-Для unit test удобно инстанцировать service functor с маленьким repository
-module. Сам экземпляр `t` может быть record функций или заранее подготовленных
-ответов:
+Для unit test удобно инстанцировать service functor с маленькими `Database` и
+repository modules. Зависимости видны в параметрах функтора, а сценарий — в
+явном `database` value:
 
 ```ocaml
 module Stub_repository = struct
   type 'a io = 'a
+  type connection = Fixtures.connection
 
-  type t =
-    { find : Pet_id.t -> (Pet.t option, Persistence_error.t) Result.t
-    }
-
-  let find t id = t.find id
-  let save _ _ = Ok ()
+  let find ~conn:_ _ = Ok (Some Fixtures.pet)
+  let save ~conn:_ _ = Ok ()
 end
 
-module Pets = Pet_service.Make (Identity) (Stub_repository)
+module Pets = Pet_service.Make (Identity) (Test_database) (Stub_repository)
 
-let repository =
-  { Stub_repository.find = (fun _ -> Ok (Some Fixtures.pet)) }
-in
-let service = Pets.create ~repository in
-...
+let result = Pets.find ~database:Fixtures.database Fixtures.pet_id
 ```
 
-Функтор гарантирует соответствие порту на этапе компиляции, а значение record
-позволяет каждому тесту задавать собственный сценарий без глобального mock
-registry.
+Функтор гарантирует соответствие порту на этапе компиляции. Для разных ответов
+можно создать разные stub modules или хранить fixture state в изолированном
+`Test_database.t`; глобальный mock registry не требуется.
 
 ### Почему не стоит помещать экземпляры в модули
 
-Можно сделать функтор, принимающий модуль с `val repository : t`, и полностью
-убрать аргументы `create`. Но это лишь прячет runtime value внутри модуля и
+Можно сделать функтор, принимающий модуль с `val database : t`, и убрать
+`~database` из `App.compile`. Но это лишь прячет runtime value внутри модуля и
 создаёт проблемы:
 
 - нельзя поднять два независимых приложения в одном процессе;
@@ -295,33 +295,25 @@ executables: `petclinic-opium-caqti`, `petclinic-dream-caqti` и
 | Механизм | Назначение |
 |---|---|
 | Функтор | Выбор implementation module и проверка совместимости эффектов |
-| Обычный record/value | Конкретный pool, repository, service или controller instance |
+| Обычный value | Конкретный database pool или in-memory state |
 | Composition root | Создание ресурсов и сборка полного графа |
 | `Context` | Request-scoped данные и явная доставка готовых зависимостей handler |
 | `Guard` | Типизированная аутентификация и авторизация |
 | HTTP middleware | Logging, request ID, CORS, compression, timeout и tracing |
 
-Текущий Petstore следует этой модели напрямую. `Routes.Make` принимает три
-repository modules и статически получает из них service и controller modules.
-`App.compile` принимает три именованных repository values; отдельного
-`Services.t`, service locator или глобального registry нет. Для in-memory
-варианта это три независимых state values, а production adapter может передать
-один общий pool через три repository interfaces.
+Текущий Petstore следует этой модели напрямую. `Routes.Make` принимает
+`Database.S` и три stateless repository modules, а затем статически получает
+из них service и controller modules. `App.compile` принимает один
+`~database`; отдельных `Pet_service.t`, `Order_service.t`, `User_service.t`,
+service locator или глобального registry нет. Application service выбирает
+`with_connection` для чтения и `transaction` для записи. В
+`Order_service.place` оба repository получают один transaction-scoped `~conn`.
 
 ## Приоритет практик для проекта
 
-1. Вынести повторяющиеся проверки backend в единый conformance suite.
-2. Передавать адаптерам `operation_id` и route template для логов и метрик.
-3. Добавить mapping path/query/body в именованный input record.
-4. Разделить чистое описание `Endpoint.t` и связанный с handler
-   `Server_endpoint.t`.
-5. Сделать codecs двунаправленными и добавить typed client interpreter.
-6. Добавить явную lifecycle abstraction для database pool и других ресурсов в
-   composition root, но не в HTTP-ядро.
-7. Рассмотреть удобный sum-type API ответов поверх текущего строгого response
-   builder.
-8. При практической необходимости добавить `hoist` между application effect и
-   backend effect.
+Согласованные следующие шаги, а также явно отклонённые варианты записаны в
+[roadmap](roadmap.md). В частности, обязательный input record и `map_input` не
+планируются: текущие curried handler arguments остаются основным API.
 
 ## Что переносить не следует
 
@@ -331,7 +323,7 @@ repository modules и статически получает из них service 
 - Глобальный контейнер зависимостей или type-map в стиле runtime DI.
 - Обязательный schema-first code generation.
 - Универсальные transport middleware в framework-agnostic ядре.
-- Глобальные module-level экземпляры database pool, repository или service.
+- Глобальные module-level экземпляры database pool или другого runtime-ресурса.
 
 Итоговая цель — не «убрать runtime-зависимости», а сделать runtime-граф
 полностью явным и статически проверяемым: функторы связывают реализации, а

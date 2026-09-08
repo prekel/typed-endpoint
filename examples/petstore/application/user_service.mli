@@ -1,17 +1,17 @@
 open! Base
 
-(** Application service for user accounts. It depends on a repository port,
-    not on a concrete database or HTTP representation. *)
+(** Stateless application service for user accounts. It works with domain
+    users and defines transaction boundaries independently of HTTP. *)
 module type S = sig
-  (** Effect shared with the injected repository. *)
+  (** Effect shared by the database and repository. *)
   type 'a io
 
-  (** User service instance. *)
-  type t
+  (** Runtime database resource supplied at the application boundary. *)
+  type database
 
   (** Adds one user without replacing an occupied username. *)
   val add
-    :  t
+    :  database:database
     -> Domain.User.t
     -> ( Domain.User.t
          , [ `Already_exists of string | `Persistence of Persistence_error.t ] )
@@ -20,7 +20,7 @@ module type S = sig
 
   (** Adds a complete batch atomically. *)
   val add_many
-    :  t
+    :  database:database
     -> Domain.User.t list
     -> ( Domain.User.t list
          , [ `Already_exists of string | `Persistence of Persistence_error.t ] )
@@ -28,11 +28,14 @@ module type S = sig
          io
 
   (** Finds one user; absence is not a persistence error. *)
-  val find : t -> string -> (Domain.User.t option, Persistence_error.t) Result.t io
+  val find
+    :  database:database
+    -> string
+    -> (Domain.User.t option, Persistence_error.t) Result.t io
 
   (** Replaces the user selected by the authoritative username. *)
   val update
-    :  t
+    :  database:database
     -> username:string
     -> Domain.User.t
     -> ( Domain.User.t
@@ -42,24 +45,25 @@ module type S = sig
 
   (** Deletes one existing user. *)
   val delete
-    :  t
+    :  database:database
     -> string
     -> (unit, [ `Not_found of string | `Persistence of Persistence_error.t ]) Result.t io
 
   (** Checks the demo credential through the repository. *)
   val authenticate
-    :  t
+    :  database:database
     -> username:string
     -> password:string
     -> (bool, Persistence_error.t) Result.t io
 end
 
-(** Injects a repository implementation into the user application service. *)
+(** Injects the database algebra and repository implementation at compile
+    time. The resulting module is stateless. *)
 module Make
     (Io : Base.Monad.S)
-    (Repository : User_repository.S with type 'a io = 'a Io.t) : sig
-  include S with type 'a io = 'a Io.t
-
-  (** Creates a user service using the supplied repository instance. *)
-  val create : repository:Repository.t -> t
-end
+    (Database : Database.S with type 'a io = 'a Io.t)
+    (_ :
+       User_repository.S
+       with type 'a io = 'a Io.t
+        and type connection = Database.connection) :
+  S with type 'a io = 'a Io.t and type database = Database.t

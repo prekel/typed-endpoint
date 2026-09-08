@@ -5,13 +5,12 @@
  (modules
   domain
   persistence_error
+  database
   dto
   pet_repository
   order_repository
   user_repository
-  pet_repository_memory
-  order_repository_memory
-  user_repository_memory
+  database_memory
   pet_service
   order_service
   user_service

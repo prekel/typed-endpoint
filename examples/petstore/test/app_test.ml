@@ -1,34 +1,29 @@
 open! Base
 module Backend = Typed_endpoint_testing
-module Pet_repository = Petstore_app.Pet_repository_memory.Make (Backend.Io)
-module Order_repository = Petstore_app.Order_repository_memory.Make (Backend.Io)
-module User_repository = Petstore_app.User_repository_memory.Make (Backend.Io)
+module Database = Petstore_app.Database_memory.Make (Backend.Io)
 
 module App =
-  Petstore_app.Routes.Make (Backend) (Pet_repository) (Order_repository) (User_repository)
+  Petstore_app.Routes.Make (Backend) (Database) (Database.Pet_repository)
+    (Database.Order_repository)
+    (Database.User_repository)
 
 module Dsl = App.Endpoint.Dsl
 
 module Failing_pet_repository = struct
-  include Pet_repository
+  include Database.Pet_repository
 
-  let inventory _ : (_, Petstore_app.Persistence_error.t) Result.t = Error `Unavailable
+  let inventory ~conn:_ : (_, Petstore_app.Persistence_error.t) Result.t =
+    Error `Unavailable
+  ;;
 end
 
 module Failing_app =
-  Petstore_app.Routes.Make (Backend) (Failing_pet_repository) (Order_repository)
-    (User_repository)
+  Petstore_app.Routes.Make (Backend) (Database) (Failing_pet_repository)
+    (Database.Order_repository)
+    (Database.User_repository)
 
 let auth = Petstore_app.Routes.{ bearer_token = "test-token"; api_key = "test-key" }
-
-let compiled =
-  App.compile
-    ~auth
-    ~pet_repository:(Pet_repository.create ())
-    ~order_repository:(Order_repository.create ())
-    ~user_repository:(User_repository.create ())
-;;
-
+let compiled = App.compile ~auth ~database:(Database.create ())
 let routes = Dsl.Compiled.app compiled
 let request = Typed_endpoint_testing.Client.call routes
 let bearer_headers = [ "authorization", "Bearer test-token" ]
@@ -353,11 +348,7 @@ let test_openapi () =
 
 let test_static_repository_substitution () =
   let routes =
-    Failing_app.compile
-      ~auth
-      ~pet_repository:(Failing_pet_repository.create ())
-      ~order_repository:(Order_repository.create ())
-      ~user_repository:(User_repository.create ())
+    Failing_app.compile ~auth ~database:(Database.create ())
     |> Failing_app.Endpoint.Dsl.Compiled.app
   in
   let response =

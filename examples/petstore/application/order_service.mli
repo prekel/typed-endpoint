@@ -1,18 +1,18 @@
 open! Base
 
-(** Application service for store orders. Besides its repository, it receives
-    the pet service explicitly so the referenced-pet invariant stays in the
-    application layer rather than an HTTP controller. *)
+(** Stateless application service for store orders. It defines the transaction
+    boundary that covers both pet validation and order creation. *)
 module type S = sig
-  (** Effect shared with the injected repositories and services. *)
+  (** Effect shared by the database and repositories. *)
   type 'a io
 
-  (** Order service instance. *)
-  type t
+  (** Runtime database resource supplied at the application boundary. *)
+  type database
 
-  (** Places an order only when its optional referenced pet exists. *)
+  (** Places an order only when its optional referenced pet exists. The check
+      and write use the same transaction-scoped connection. *)
   val place
-    :  t
+    :  database:database
     -> ?id:int
     -> Domain.Order.attributes
     -> ( Domain.Order.t
@@ -24,24 +24,29 @@ module type S = sig
          io
 
   (** Finds one order; absence is not a persistence error. *)
-  val find : t -> int -> (Domain.Order.t option, Persistence_error.t) Result.t io
+  val find
+    :  database:database
+    -> int
+    -> (Domain.Order.t option, Persistence_error.t) Result.t io
 
-  (** Deletes one existing order. *)
+  (** Deletes one existing order in one transaction. *)
   val delete
-    :  t
+    :  database:database
     -> int
     -> (unit, [ `Not_found of int | `Persistence of Persistence_error.t ]) Result.t io
 end
 
-(** Injects both repository and application-service dependencies. A database
-    adapter such as a PG/Lwt repository can be supplied without changing this
-    service or its controllers. *)
+(** Injects the database and both repository ports at compile time. The
+    resulting module contains use-case functions but no service instance. *)
 module Make
     (Io : Base.Monad.S)
-    (Repository : Order_repository.S with type 'a io = 'a Io.t)
-    (Pets : Pet_service.S with type 'a io = 'a Io.t) : sig
-  include S with type 'a io = 'a Io.t
-
-  (** Creates an order service with all dependencies supplied explicitly. *)
-  val create : repository:Repository.t -> pets:Pets.t -> t
-end
+    (Database : Database.S with type 'a io = 'a Io.t)
+    (_ :
+       Pet_repository.S
+       with type 'a io = 'a Io.t
+        and type connection = Database.connection)
+    (_ :
+       Order_repository.S
+       with type 'a io = 'a Io.t
+        and type connection = Database.connection) :
+  S with type 'a io = 'a Io.t and type database = Database.t

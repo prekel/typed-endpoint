@@ -1,17 +1,17 @@
 open! Base
 
-(** Application service for the pet aggregate. It exposes domain values and an
-    abstract effect, and is independent of HTTP DTOs and storage technology. *)
+(** Stateless application service for the pet aggregate. It owns transaction
+    boundaries and exposes only domain values, never HTTP DTOs. *)
 module type S = sig
-  (** Effect shared with the injected repository. *)
+  (** Effect shared by the database and repository. *)
   type 'a io
 
-  (** Pet service instance. *)
-  type t
+  (** Runtime database resource supplied at the application boundary. *)
+  type database
 
-  (** Adds a pet and lets the repository allocate an ID when absent. *)
+  (** Adds a pet in one transaction and allocates an ID when absent. *)
   val add
-    :  t
+    :  database:database
     -> ?id:int
     -> Domain.Pet.attributes
     -> ( Domain.Pet.t
@@ -19,9 +19,9 @@ module type S = sig
          Result.t
          io
 
-  (** Replaces an existing pet. *)
+  (** Replaces an existing pet in one transaction. *)
   val update
-    :  t
+    :  database:database
     -> id:int
     -> Domain.Pet.attributes
     -> ( Domain.Pet.t
@@ -31,7 +31,7 @@ module type S = sig
 
   (** Atomically changes the supplied subset of attributes. *)
   val patch
-    :  t
+    :  database:database
     -> id:int
     -> ?name:string
     -> ?status:Domain.Status.t
@@ -43,32 +43,37 @@ module type S = sig
 
   (** Returns all pets in an official lifecycle state. *)
   val list_by_status
-    :  t
+    :  database:database
     -> status:Domain.Status.t
     -> (Domain.Pet.t list, Persistence_error.t) Result.t io
 
   (** Returns pets carrying at least one requested tag. *)
   val list_by_tags
-    :  t
+    :  database:database
     -> tags:string list
     -> (Domain.Pet.t list, Persistence_error.t) Result.t io
 
   (** Returns a bounded, stable page selected by status. *)
   val find_by_status
-    :  t
+    :  database:database
     -> status:Domain.Status.t
     -> pagination:Domain.Page_request.t
     -> (Domain.Pet.t Domain.Page.t, Persistence_error.t) Result.t io
 
   (** Finds one pet; absence is not a persistence error. *)
-  val find : t -> int -> (Domain.Pet.t option, Persistence_error.t) Result.t io
+  val find
+    :  database:database
+    -> int
+    -> (Domain.Pet.t option, Persistence_error.t) Result.t io
 
   (** Counts pets in each official lifecycle state. *)
-  val inventory : t -> ((Domain.Status.t * int) list, Persistence_error.t) Result.t io
+  val inventory
+    :  database:database
+    -> ((Domain.Status.t * int) list, Persistence_error.t) Result.t io
 
-  (** Attaches one opaque image to an existing pet. *)
+  (** Attaches one opaque image to an existing pet in one transaction. *)
   val upload_image
-    :  t
+    :  database:database
     -> id:int
     -> metadata:string option
     -> bytes:string
@@ -77,19 +82,20 @@ module type S = sig
          Result.t
          io
 
-  (** Deletes one existing pet. *)
+  (** Deletes one existing pet in one transaction. *)
   val delete
-    :  t
+    :  database:database
     -> int
     -> (unit, [ `Not_found of int | `Persistence of Persistence_error.t ]) Result.t io
 end
 
-(** Injects a repository implementation into the pet application service. *)
+(** Injects the database algebra and repository implementation at compile
+    time. The resulting module is stateless. *)
 module Make
     (Io : Base.Monad.S)
-    (Repository : Pet_repository.S with type 'a io = 'a Io.t) : sig
-  include S with type 'a io = 'a Io.t
-
-  (** Creates a pet service using the supplied repository instance. *)
-  val create : repository:Repository.t -> t
-end
+    (Database : Database.S with type 'a io = 'a Io.t)
+    (_ :
+       Pet_repository.S
+       with type 'a io = 'a Io.t
+        and type connection = Database.connection) :
+  S with type 'a io = 'a Io.t and type database = Database.t

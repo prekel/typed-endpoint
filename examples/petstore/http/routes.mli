@@ -21,29 +21,34 @@ val openapi_config : Openapi.Config.t
     different backends. *)
 module Make
     (B : Backend.S)
-    (Pet_repository : Pet_repository.S with type 'a io = 'a B.io)
-    (Order_repository : Order_repository.S with type 'a io = 'a B.io)
-    (User_repository : User_repository.S with type 'a io = 'a B.io) : sig
+    (Database : Database.S with type 'a io = 'a B.io)
+    (_ :
+       Pet_repository.S
+       with type 'a io = 'a B.io
+        and type connection = Database.connection)
+    (_ :
+       Order_repository.S
+       with type 'a io = 'a B.io
+        and type connection = Database.connection)
+    (_ :
+       User_repository.S
+       with type 'a io = 'a B.io
+        and type connection = Database.connection) : sig
   (** Endpoint instance used to compile the assembled controllers. *)
   module Endpoint : module type of Typed_endpoint.Make (B)
 
   (** Pet service selected and built by this graph. *)
-  module Pets : Pet_service.S with type 'a io = 'a B.io
+  module Pets : Pet_service.S with type 'a io = 'a B.io and type database = Database.t
 
-  (** Order service wired statically to {!Pets}. *)
-  module Orders : Order_service.S with type 'a io = 'a B.io
+  (** Order service wired statically to the pet and order repositories. *)
+  module Orders : Order_service.S with type 'a io = 'a B.io and type database = Database.t
 
   (** User service selected and built by this graph. *)
-  module Users : User_service.S with type 'a io = 'a B.io
+  module Users : User_service.S with type 'a io = 'a B.io and type database = Database.t
 
-  (** Creates service and controller instances from the supplied repository
-      resources, collects their route groups, and adds runtime-only health,
-      OpenAPI, and documentation UI endpoints. Every argument is named so the
-      process-level dependency graph stays visible at the executable boundary. *)
-  val compile
-    :  auth:auth
-    -> pet_repository:Pet_repository.t
-    -> order_repository:Order_repository.t
-    -> user_repository:User_repository.t
-    -> Endpoint.Dsl.Compiled.t
+  (** Collects stateless controller groups and adds runtime-only health,
+      OpenAPI, and documentation UI endpoints. [database] is the sole runtime
+      application resource; repository and service selection remains visible
+      in the functor application. *)
+  val compile : auth:auth -> database:Database.t -> Endpoint.Dsl.Compiled.t
 end

@@ -9,10 +9,6 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   open Endpoint
   open Dsl
 
-  type t = { pets : Pets.t }
-
-  let create ~pets = { pets }
-
   let unavailable error =
     Code_5xx (`Service_unavailable, Dto.Api_response.persistence_error error)
   ;;
@@ -31,12 +27,12 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
               [ `Bad_request; `Conflict; `Unprocessable_entity ]
               (Response.json (module Dto.Api_response))
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun controller pet ->
+    @@ fun database pet ->
     match Dto.Pet.to_domain pet with
     | Error message ->
       Io.return (Code_4xx (`Bad_request, Dto.Api_response.bad_request message))
     | Ok (id, attributes) ->
-      let%map result = Pets.add controller.pets ?id attributes in
+      let%map result = Pets.add ~database ?id attributes in
       (match result with
        | Ok pet -> OK (Dto.Pet.of_domain pet)
        | Error (`Already_exists id) -> Code_4xx (`Conflict, Dto.Api_response.conflict id)
@@ -57,13 +53,13 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
          |+ JSON.not_found (module Dto.Api_response)
          |+ code4xx [ `Unprocessable_entity ] (Response.json (module Dto.Api_response))
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun controller pet ->
+    @@ fun database pet ->
     match Dto.Pet.to_domain pet with
     | Error message -> Io.return (Bad_request (Dto.Api_response.bad_request message))
     | Ok (None, _) ->
       Io.return (Bad_request (Dto.Api_response.bad_request "id is required"))
     | Ok (Some id, attributes) ->
-      let%map result = Pets.update controller.pets ~id attributes in
+      let%map result = Pets.update ~database ~id attributes in
       (match result with
        | Ok pet -> OK (Dto.Pet.of_domain pet)
        | Error (`Not_found id) -> Not_found (Dto.Api_response.not_found id)
@@ -81,8 +77,8 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
       ~responses:
         (JSON.ok (module Dto.Pet_list)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun status controller () ->
-    let%map result = Pets.list_by_status controller.pets ~status in
+    @@ fun status database () ->
+    let%map result = Pets.list_by_status ~database ~status in
     match result with
     | Ok pets -> OK (Dto.Pet_list.of_domain pets)
     | Error error -> unavailable error
@@ -99,8 +95,8 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
       ~responses:
         (JSON.ok (module Dto.Pet_list)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun tags controller () ->
-    let%map result = Pets.list_by_tags controller.pets ~tags in
+    @@ fun tags database () ->
+    let%map result = Pets.list_by_tags ~database ~tags in
     match result with
     | Ok pets -> OK (Dto.Pet_list.of_domain pets)
     | Error error -> unavailable error
@@ -125,13 +121,13 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
         (JSON.ok (module Dto.Pet_page)
          |+ JSON.bad_request (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun status page limit controller () ->
+    @@ fun status page limit database () ->
     let page = Option.value page ~default:Domain.Page_request.default_page in
     let limit = Option.value limit ~default:Domain.Page_request.default_limit in
     match Domain.Page_request.create ~page ~limit with
     | Error message -> Io.return (Bad_request (Dto.Api_response.bad_request message))
     | Ok pagination ->
-      let%map result = Pets.find_by_status controller.pets ~status ~pagination in
+      let%map result = Pets.find_by_status ~database ~status ~pagination in
       (match result with
        | Ok page -> OK (Dto.Pet_page.of_domain page)
        | Error error -> unavailable error)
@@ -149,8 +145,8 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
         (JSON.ok (module Dto.Pet)
          |+ JSON.not_found (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun id controller () ->
-    let%map result = Pets.find controller.pets id in
+    @@ fun id database () ->
+    let%map result = Pets.find ~database id in
     match result with
     | Ok (Some pet) -> OK (Dto.Pet.of_domain pet)
     | Ok None -> Not_found (Dto.Api_response.not_found id)
@@ -175,8 +171,8 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
          |+ JSON.bad_request (module Dto.Api_response)
          |+ JSON.not_found (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun id name status controller () ->
-    let%map result = Pets.patch controller.pets ~id ?name ?status () in
+    @@ fun id name status database () ->
+    let%map result = Pets.patch ~database ~id ?name ?status () in
     match result with
     | Ok pet -> OK (Dto.Pet.of_domain pet)
     | Error (`Not_found id) -> Not_found (Dto.Api_response.not_found id)
@@ -195,8 +191,8 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
         (ok (Response.empty ~description:"Pet deleted" ())
          |+ JSON.not_found (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun id controller () ->
-    let%map result = Pets.delete controller.pets id in
+    @@ fun id database () ->
+    let%map result = Pets.delete ~database id in
     match result with
     | Ok () -> OK ()
     | Error (`Not_found id) -> Not_found (Dto.Api_response.not_found id)
@@ -223,8 +219,8 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
          |+ JSON.bad_request (module Dto.Api_response)
          |+ JSON.not_found (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun id metadata controller bytes ->
-    let%map result = Pets.upload_image controller.pets ~id ~metadata ~bytes in
+    @@ fun id metadata database bytes ->
+    let%map result = Pets.upload_image ~database ~id ~metadata ~bytes in
     match result with
     | Ok bytes -> OK (Dto.Api_response.upload_success ~id ~bytes ~metadata)
     | Error `Empty_file -> Bad_request (Dto.Api_response.bad_request "no file uploaded")
@@ -232,7 +228,7 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
     | Error (`Persistence error) -> unavailable error
   ;;
 
-  let groups ~auth controller =
+  let groups ~auth ~database =
     let group ~context ~description routes =
       Group.make_with_context
         ~context
@@ -242,7 +238,7 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
         routes
     in
     [ group
-        ~context:(Common.pet_oauth ~auth controller)
+        ~context:(Common.pet_oauth ~auth database)
         ~description:"Everything about your pets"
         [ add_pet
         ; update_pet
@@ -254,7 +250,7 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
         ; upload_image
         ]
     ; group
-        ~context:(Common.pet_lookup ~auth controller)
+        ~context:(Common.pet_lookup ~auth database)
         ~description:"Pet lookup accepting the official alternative credentials"
         [ get_pet ]
     ]

@@ -23,6 +23,10 @@
 - Асинхронный repository adapter должен разделять с backend один тип эффекта;
   передавай его через `Base.Monad.S`. Не скрывай зависимости сервисов или
   контроллеров в глобальных mutable-реестрах.
+- Repository ports в Petstore stateless и принимают transaction-scoped
+  `~conn`. Application services тоже stateless: они получают `~database` и
+  определяют границу `with_connection`/`transaction`. Controller может
+  получать `Database.t` через group context, но не `Database.connection`.
 - Метаданные пакетов задаются в `dune-project`; сгенерированные `.opam` вручную
   не редактируются.
 

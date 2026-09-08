@@ -20,14 +20,24 @@ let openapi_config =
 
 module Make
     (B : Backend.S)
-    (Pet_repository : Pet_repository.S with type 'a io = 'a B.io)
-    (Order_repository : Order_repository.S with type 'a io = 'a B.io)
-    (User_repository : User_repository.S with type 'a io = 'a B.io) =
+    (Database : Database.S with type 'a io = 'a B.io)
+    (Pet_repository :
+       Pet_repository.S
+       with type 'a io = 'a B.io
+        and type connection = Database.connection)
+    (Order_repository :
+       Order_repository.S
+       with type 'a io = 'a B.io
+        and type connection = Database.connection)
+    (User_repository :
+       User_repository.S
+       with type 'a io = 'a B.io
+        and type connection = Database.connection) =
 struct
   module Endpoint = Typed_endpoint.Make (B)
-  module Pets = Pet_service.Make (B.Io) (Pet_repository)
-  module Orders = Order_service.Make (B.Io) (Order_repository) (Pets)
-  module Users = User_service.Make (B.Io) (User_repository)
+  module Pets = Pet_service.Make (B.Io) (Database) (Pet_repository)
+  module Orders = Order_service.Make (B.Io) (Database) (Pet_repository) (Order_repository)
+  module Users = User_service.Make (B.Io) (Database) (User_repository)
   module Pet_controller = Pet_controller.Make (B) (Pets)
   module Store_controller = Store_controller.Make (B) (Pets) (Orders)
   module User_controller = User_controller.Make (B) (Users)
@@ -47,17 +57,11 @@ struct
       B.respond_json (`Assoc [ "status", `String "ok" ]))
   ;;
 
-  let compile ~auth ~pet_repository ~order_repository ~user_repository =
-    let pets = Pets.create ~repository:pet_repository in
-    let orders = Orders.create ~repository:order_repository ~pets in
-    let users = Users.create ~repository:user_repository in
-    let pet_controller = Pet_controller.create ~pets in
-    let store_controller = Store_controller.create ~pets ~orders in
-    let user_controller = User_controller.create ~users in
+  let compile ~auth ~database =
     let api =
-      Pet_controller.groups ~auth pet_controller
-      @ Store_controller.groups ~auth store_controller
-      @ User_controller.groups user_controller
+      Pet_controller.groups ~auth ~database
+      @ Store_controller.groups ~auth ~database
+      @ User_controller.groups ~database
     in
     let compiled = compile_exn api in
     let runtime =

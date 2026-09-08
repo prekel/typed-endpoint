@@ -4,7 +4,7 @@ open Typed_endpoint
 module Make
     (B : Backend.S)
     (Pets : Pet_service.S with type 'a io = 'a B.io)
-    (Orders : Order_service.S with type 'a io = 'a B.io) =
+    (Orders : Order_service.S with type 'a io = 'a B.io and type database = Pets.database) =
 struct
   module Common = Controller_context.Make (B)
   module Endpoint = Common.Endpoint
@@ -12,13 +12,6 @@ struct
   open Io.Let_syntax
   open Endpoint
   open Dsl
-
-  type t =
-    { pets : Pets.t
-    ; orders : Orders.t
-    }
-
-  let create ~pets ~orders = { pets; orders }
 
   let unavailable error =
     Code_5xx (`Service_unavailable, Dto.Api_response.persistence_error error)
@@ -35,8 +28,8 @@ struct
       ~responses:
         (JSON.ok (module Dto.Inventory)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun controller () ->
-    let%map result = Pets.inventory controller.pets in
+    @@ fun database () ->
+    let%map result = Pets.inventory ~database in
     match result with
     | Ok inventory -> OK (Dto.Inventory.of_domain inventory)
     | Error error -> unavailable error
@@ -55,11 +48,11 @@ struct
          |+ JSON.bad_request (module Dto.Api_response)
          |+ code4xx [ `Unprocessable_entity ] (Response.json (module Dto.Api_response))
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun controller order ->
+    @@ fun database order ->
     match Dto.Order.to_domain order with
     | Error message -> Io.return (Bad_request (Dto.Api_response.bad_request message))
     | Ok (id, attributes) ->
-      let%map result = Orders.place controller.orders ?id attributes in
+      let%map result = Orders.place ~database ?id attributes in
       (match result with
        | Ok order -> OK (Dto.Order.of_domain order)
        | Error (`Pet_not_found _) ->
@@ -85,8 +78,8 @@ struct
         (JSON.ok (module Dto.Order)
          |+ JSON.not_found (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun id controller () ->
-    let%map result = Orders.find controller.orders id in
+    @@ fun id database () ->
+    let%map result = Orders.find ~database id in
     match result with
     | Ok (Some order) -> OK (Dto.Order.of_domain order)
     | Ok None -> Not_found (Dto.Api_response.order_not_found id)
@@ -106,23 +99,23 @@ struct
         (ok (Response.empty ~description:"Order deleted" ())
          |+ JSON.not_found (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun id controller () ->
-    let%map result = Orders.delete controller.orders id in
+    @@ fun id database () ->
+    let%map result = Orders.delete ~database id in
     match result with
     | Ok () -> OK ()
     | Error (`Not_found id) -> Not_found (Dto.Api_response.order_not_found id)
     | Error (`Persistence error) -> unavailable error
   ;;
 
-  let groups ~auth controller =
+  let groups ~auth ~database =
     [ Group.make_with_context
-        ~context:(Common.api_key ~auth controller)
+        ~context:(Common.api_key ~auth database)
         ~decode_error:Common.decode_errors
         ~tags:[ "store" ]
         ~description:"Access to Petstore inventory"
         [ get_inventory ]
     ; Group.make_with_context
-        ~context:(Common.public controller)
+        ~context:(Common.public database)
         ~decode_error:Common.decode_errors
         ~tags:[ "store" ]
         ~description:"Access to Petstore orders"

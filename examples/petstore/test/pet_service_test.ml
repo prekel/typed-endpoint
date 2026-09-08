@@ -12,8 +12,10 @@ module Io = struct
     end)
 end
 
-module Repository = Petstore_app.Pet_repository_memory.Make (Io)
-module Pets = Petstore_app.Pet_service.Make (Io) (Repository)
+module Memory_database = Petstore_app.Database_memory.Make (Io)
+
+module Pets =
+  Petstore_app.Pet_service.Make (Io) (Memory_database) (Memory_database.Pet_repository)
 
 let result_exn = function
   | Ok value -> value
@@ -29,8 +31,8 @@ let pagination ~page ~limit =
   Petstore_app.Domain.Page_request.create ~page ~limit |> Result.ok_or_failwith
 ;;
 
-let add_exn service ?id attributes =
-  match Pets.add service ?id attributes with
+let add_exn database ?id attributes =
+  match Pets.add ~database ?id attributes with
   | Ok pet -> pet
   | Error (`Already_exists id) ->
     Stdlib.failwith ("unexpected occupied pet ID " ^ Int.to_string id)
@@ -39,19 +41,19 @@ let add_exn service ?id attributes =
 
 let () =
   let open Petstore_app in
-  let service = Pets.create ~repository:(Repository.create ()) in
-  let explicit = add_exn service ~id:40 (attributes "Milo" Domain.Status.Available) in
+  let database = Memory_database.create () in
+  let explicit = add_exn database ~id:40 (attributes "Milo" Domain.Status.Available) in
   assert (Int.equal explicit.id 40);
   assert (
-    match Pets.add service ~id:40 (attributes "Duplicate" Domain.Status.Sold) with
+    match Pets.add ~database ~id:40 (attributes "Duplicate" Domain.Status.Sold) with
     | Error (`Already_exists 40) -> true
     | Ok _ | Error (`Already_exists _) | Error (`Persistence _) -> false);
-  let generated = add_exn service (attributes "Otis" Domain.Status.Available) in
+  let generated = add_exn database (attributes "Otis" Domain.Status.Available) in
   assert (Int.equal generated.id 41);
-  let _ = add_exn service (attributes "Luna" Domain.Status.Sold) in
+  let _ = add_exn database (attributes "Luna" Domain.Status.Sold) in
   let first =
     Pets.find_by_status
-      service
+      ~database
       ~status:Domain.Status.Available
       ~pagination:(pagination ~page:1 ~limit:1)
     |> result_exn
@@ -59,7 +61,7 @@ let () =
   assert (Int.equal first.total 2);
   let updated =
     match
-      Pets.update service ~id:explicit.id (attributes "Milo" Domain.Status.Pending)
+      Pets.update ~database ~id:explicit.id (attributes "Milo" Domain.Status.Pending)
     with
     | Ok pet -> pet
     | Error (`Not_found _) -> Stdlib.failwith "existing pet was not found"
@@ -74,14 +76,14 @@ let () =
   assert (List.equal Int.equal (List.map first.items ~f:(fun pet -> pet.id)) [ 40 ]);
   let beyond =
     Pets.find_by_status
-      service
+      ~database
       ~status:Domain.Status.Available
       ~pagination:(pagination ~page:3 ~limit:1)
     |> result_exn
   in
   assert (List.is_empty beyond.items);
   let updated =
-    match Pets.update service ~id:40 (attributes "Milo" Domain.Status.Sold) with
+    match Pets.update ~database ~id:40 (attributes "Milo" Domain.Status.Sold) with
     | Ok pet -> pet
     | Error (`Not_found _) -> Stdlib.failwith "existing pet was not found"
     | Error (`Persistence _) -> Stdlib.failwith "unexpected persistence error"
@@ -90,7 +92,7 @@ let () =
     Domain.Status.equal (Option.value_exn updated.attributes.status) Domain.Status.Sold);
   let patched =
     match
-      Pets.patch service ~id:40 ~name:"Milo patched" ~status:Domain.Status.Pending ()
+      Pets.patch ~database ~id:40 ~name:"Milo patched" ~status:Domain.Status.Pending ()
     with
     | Ok pet -> pet
     | Error (`Not_found _) -> Stdlib.failwith "existing pet was not found"
@@ -99,19 +101,19 @@ let () =
   assert (String.equal patched.attributes.name "Milo patched");
   assert (
     Domain.Status.equal (Option.value_exn patched.attributes.status) Domain.Status.Pending);
-  assert (Result.is_error (Pets.upload_image service ~id:40 ~metadata:None ~bytes:""));
+  assert (Result.is_error (Pets.upload_image ~database ~id:40 ~metadata:None ~bytes:""));
   assert (
     Result.equal
       Int.equal
       Poly.equal
-      (Pets.upload_image service ~id:40 ~metadata:(Some "profile") ~bytes:"data")
+      (Pets.upload_image ~database ~id:40 ~metadata:(Some "profile") ~bytes:"data")
       (Ok 4));
-  let inventory = Pets.inventory service |> result_exn in
+  let inventory = Pets.inventory ~database |> result_exn in
   let count status = List.Assoc.find_exn inventory ~equal:Domain.Status.equal status in
   assert (Int.equal (count Domain.Status.Pending) 1);
-  assert (Result.is_error (Pets.update service ~id:999 updated.attributes));
-  assert (Result.is_ok (Pets.delete service 40));
-  assert (Pets.find service 40 |> result_exn |> Option.is_none);
+  assert (Result.is_error (Pets.update ~database ~id:999 updated.attributes));
+  assert (Result.is_ok (Pets.delete ~database 40));
+  assert (Pets.find ~database 40 |> result_exn |> Option.is_none);
   assert (Result.is_error (Domain.Page_request.create ~page:0 ~limit:20));
   assert (Result.is_error (Domain.Page_request.create ~page:1 ~limit:101))
 ;;

@@ -9,10 +9,6 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   open Endpoint
   open Dsl
 
-  type t = { users : Users.t }
-
-  let create ~users = { users }
-
   let unavailable error =
     Code_5xx (`Service_unavailable, Dto.Api_response.persistence_error error)
   ;;
@@ -30,11 +26,11 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
          |+ JSON.bad_request (module Dto.Api_response)
          |+ code4xx [ `Conflict ] (Response.json (module Dto.Api_response))
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun controller user ->
+    @@ fun database user ->
     match Dto.User.to_domain user with
     | Error message -> Io.return (Bad_request (Dto.Api_response.bad_request message))
     | Ok user ->
-      let%map result = Users.add controller.users user in
+      let%map result = Users.add ~database user in
       (match result with
        | Ok user -> OK (Dto.User.of_domain user)
        | Error (`Already_exists username) ->
@@ -55,14 +51,14 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
          |+ JSON.bad_request (module Dto.Api_response)
          |+ code4xx [ `Conflict ] (Response.json (module Dto.Api_response))
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun controller users ->
+    @@ fun database users ->
     match Dto.User_list.to_domain users with
     | Error message -> Io.return (Bad_request (Dto.Api_response.bad_request message))
     | Ok [] ->
       Io.return
         (Bad_request (Dto.Api_response.bad_request "at least one user is required"))
     | Ok users ->
-      let%map result = Users.add_many controller.users users in
+      let%map result = Users.add_many ~database users in
       (match result with
        | Ok users -> OK (Dto.User.of_domain (List.last_exn users))
        | Error (`Already_exists username) ->
@@ -87,10 +83,10 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
         (JSON.ok (module Dto.Login_token)
          |+ JSON.bad_request (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun username password controller () ->
+    @@ fun username password database () ->
     match username, password with
     | Some username, Some password ->
-      let%map result = Users.authenticate controller.users ~username ~password in
+      let%map result = Users.authenticate ~database ~username ~password in
       (match result with
        | Ok true -> OK (username ^ "-session-token")
        | Ok false ->
@@ -110,7 +106,7 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
       ~path:(s "user" / s "logout" /? nil)
       ~request:Request.empty
       ~responses:(ok (Response.empty ~description:"Successful operation" ()))
-    @@ fun _controller () -> Io.return (OK ())
+    @@ fun _database () -> Io.return (OK ())
   ;;
 
   let get_user =
@@ -125,8 +121,8 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
         (JSON.ok (module Dto.User)
          |+ JSON.not_found (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun username controller () ->
-    let%map result = Users.find controller.users username in
+    @@ fun username database () ->
+    let%map result = Users.find ~database username in
     match result with
     | Ok (Some user) -> OK (Dto.User.of_domain user)
     | Ok None -> Not_found (Dto.Api_response.user_not_found username)
@@ -146,11 +142,11 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
          |+ JSON.bad_request (module Dto.Api_response)
          |+ JSON.not_found (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun username controller user ->
+    @@ fun username database user ->
     match Dto.User.to_domain ~username user with
     | Error message -> Io.return (Bad_request (Dto.Api_response.bad_request message))
     | Ok user ->
-      let%map result = Users.update controller.users ~username user in
+      let%map result = Users.update ~database ~username user in
       (match result with
        | Ok _ -> OK ()
        | Error (`Not_found username) ->
@@ -170,17 +166,17 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
         (ok (Response.empty ~description:"User deleted" ())
          |+ JSON.not_found (module Dto.Api_response)
          |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun username controller () ->
-    let%map result = Users.delete controller.users username in
+    @@ fun username database () ->
+    let%map result = Users.delete ~database username in
     match result with
     | Ok () -> OK ()
     | Error (`Not_found username) -> Not_found (Dto.Api_response.user_not_found username)
     | Error (`Persistence error) -> unavailable error
   ;;
 
-  let groups controller =
+  let groups ~database =
     [ Group.make_with_context
-        ~context:(Common.public controller)
+        ~context:(Common.public database)
         ~decode_error:Common.decode_errors
         ~tags:[ "user" ]
         ~description:"Operations about users"

@@ -14,3 +14,8 @@
  (name order_user_service_test)
  (package typed-endpoint-testing)
  (libraries base petstore_app))
+
+(test
+ (name database_memory_test)
+ (package typed-endpoint-testing)
+ (libraries base petstore_app))

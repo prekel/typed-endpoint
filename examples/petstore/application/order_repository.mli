@@ -5,8 +5,8 @@ module type S = sig
   (** Effect used by the storage adapter. *)
   type 'a io
 
-  (** Repository instance, commonly containing a connection pool. *)
-  type t
+  (** Connection supplied by the application transaction boundary. *)
+  type connection
 
   (** Errors from operations targeting an existing order. *)
   type error =
@@ -22,14 +22,17 @@ module type S = sig
 
   (** Stores an order and allocates its ID when absent. *)
   val place
-    :  t
+    :  conn:connection
     -> ?id:int
     -> Domain.Order.attributes
     -> (Domain.Order.t, place_error) Result.t io
 
   (** Finds an order without treating absence as an infrastructure failure. *)
-  val find : t -> int -> (Domain.Order.t option, Persistence_error.t) Result.t io
+  val find
+    :  conn:connection
+    -> int
+    -> (Domain.Order.t option, Persistence_error.t) Result.t io
 
   (** Deletes one existing order. *)
-  val delete : t -> int -> (unit, error) Result.t io
+  val delete : conn:connection -> int -> (unit, error) Result.t io
 end

@@ -36,48 +36,53 @@ Petstore v3:
 Зависимости задаются явно на двух разных уровнях:
 
 1. `Pet_repository.S`, `Order_repository.S` и `User_repository.S` являются
-   портами хранения с абстрактным эффектом `'a io`;
-2. функторы `*_service.Make` получают реализации портов. `Order_service.Make`
-   дополнительно получает `Pet_service.S`, поэтому правило «заказываемый pet
-   существует» видно в графе зависимостей и проверяется вне HTTP;
-3. функторы контроллеров получают модули готовых сервисов;
-4. `Routes.Make` связывает весь статический граф repository → service →
+   stateless-портами хранения с абстрактными эффектом `'a io` и типом
+   `connection`; каждая операция явно принимает `~conn`;
+2. `Database.S` абстрагирует долгоживущий pool/state, выдачу соединения и
+   транзакции;
+3. функторы `*_service.Make` получают database и реализации портов.
+   `Order_service.Make` получает pet и order repositories, поэтому правило
+   «заказываемый pet существует» видно в графе зависимостей, проверяется вне
+   HTTP и выполняется в одной транзакции с записью заказа;
+4. функторы контроллеров получают stateless-модули готовых сервисов;
+5. `Routes.Make` связывает весь статический граф database/repository → service →
    controller и проверяет, что каждый узел использует эффект выбранного
    backend;
-5. серверный composition root создаёт только runtime-ресурсы репозиториев и
-   передаёт их в `App.compile` именованными аргументами.
+6. серверный composition root создаёт единственный application runtime resource
+   `Database.t` и передаёт его в `App.compile` именованным аргументом.
 
 Например, in-memory composition root Opium выглядит так:
 
 ```ocaml
 module Backend = Typed_endpoint_opium
-module Pet_repository = Petstore_app.Pet_repository_memory.Make (Backend.Io)
-module Order_repository = Petstore_app.Order_repository_memory.Make (Backend.Io)
-module User_repository = Petstore_app.User_repository_memory.Make (Backend.Io)
+module Database = Petstore_app.Database_memory.Make (Backend.Io)
 
 module App =
-  Petstore_app.Routes.Make (Backend) (Pet_repository) (Order_repository)
-    (User_repository)
+  Petstore_app.Routes.Make
+    (Backend)
+    (Database)
+    (Database.Pet_repository)
+    (Database.Order_repository)
+    (Database.User_repository)
 
 let compiled =
   App.compile
     ~auth:(Petstore_app.Routes.auth_from_env ())
-    ~pet_repository:(Pet_repository.create ())
-    ~order_repository:(Order_repository.create ())
-    ~user_repository:(User_repository.create ())
+    ~database:(Database.create ())
 ```
 
-В production composition root вместо `Pet_repository_memory.Make` можно
-подставить Caqti-адаптер с тем же `Pet_repository.S`, где
-`type 'a io = 'a Lwt.t`, а `type t` представляет pool или небольшой handle над
-ним. Пул приобретается и освобождается в executable, а его значение передаётся
-в `App.compile`. Сервисы и контроллеры при этом автоматически строятся внутри
-статически выбранного графа; ни домен, ни DTO не меняются.
+В production composition root вместо `Database_memory.Make` можно подставить
+Caqti-адаптер. В нём `Database.t` представляет pool, а
+`Database.connection` — scoped connection Caqti. Три repository adapters не
+хранят pool: они реализуют запросы с явным `~conn`. Пул приобретается и
+освобождается в executable, а его значение передаётся в `App.compile`.
+Сервисы и контроллеры при этом остаются stateless и автоматически строятся
+внутри статически выбранного графа; ни домен, ни DTO не меняются.
 
 Здесь нет runtime service locator: по типу или имени ничего не ищется, а
-реализацию нельзя случайно подменить внутри запроса. Runtime-значения всё же
-остаются, потому что состояние in-memory repository, database pool,
-конфигурация и их lifecycle существуют только во время работы процесса.
+реализацию нельзя случайно подменить внутри запроса. Runtime-значение всё же
+остаётся: состояние in-memory database или production pool существует только
+во время работы процесса.
 
 `Pet_service`, `Order_service` и `User_service` работают только с типами из
 `Domain`: они не знают о JSON, Swagger DTO и HTTP-кодах. Преобразование DTO и
@@ -86,7 +91,8 @@ let compiled =
 прикрепляется к группе через `Group.make_with_context`: `Context` доставляет
 уже собранную dependency в handler на уровне запроса, но не выбирает и не
 создаёт application services. OpenAPI security и runtime guard используют одну
-декларацию.
+декларацию. В context передаётся `Database.t`, но никогда не scoped
+`Database.connection`: границу транзакции определяет application service.
 
 Обоснование этой границы и сравнение с Servant, Tapir, Smithy4s, http4s и ZIO
 собраны в [заметке о типизированных FP-фреймворках](../../doc/typed-fp-framework-lessons.md).

@@ -5,8 +5,8 @@ module type S = sig
   (** Effect used by the storage adapter. *)
   type 'a io
 
-  (** Repository instance, commonly containing a connection pool. *)
-  type t
+  (** Connection supplied by the application transaction boundary. *)
+  type connection
 
   (** Errors from operations targeting an existing user. *)
   type error =
@@ -21,23 +21,33 @@ module type S = sig
     ]
 
   (** Inserts one user without replacing an occupied username. *)
-  val add : t -> Domain.User.t -> (Domain.User.t, create_error) Result.t io
+  val add : conn:connection -> Domain.User.t -> (Domain.User.t, create_error) Result.t io
 
   (** Inserts a complete batch atomically. *)
-  val add_many : t -> Domain.User.t list -> (Domain.User.t list, create_error) Result.t io
+  val add_many
+    :  conn:connection
+    -> Domain.User.t list
+    -> (Domain.User.t list, create_error) Result.t io
 
   (** Finds one user by username. *)
-  val find : t -> string -> (Domain.User.t option, Persistence_error.t) Result.t io
+  val find
+    :  conn:connection
+    -> string
+    -> (Domain.User.t option, Persistence_error.t) Result.t io
 
   (** Replaces the user selected by the authoritative path username. *)
-  val update : t -> username:string -> Domain.User.t -> (Domain.User.t, error) Result.t io
+  val update
+    :  conn:connection
+    -> username:string
+    -> Domain.User.t
+    -> (Domain.User.t, error) Result.t io
 
   (** Deletes one existing user. *)
-  val delete : t -> string -> (unit, error) Result.t io
+  val delete : conn:connection -> string -> (unit, error) Result.t io
 
   (** Checks the stored demo credential. *)
   val authenticate
-    :  t
+    :  conn:connection
     -> username:string
     -> password:string
     -> (bool, Persistence_error.t) Result.t io
