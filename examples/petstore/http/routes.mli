@@ -14,50 +14,36 @@ val auth_from_env : unit -> auth
 (** OpenAPI document metadata used by every server entrypoint. *)
 val openapi_config : Openapi.Config.t
 
-(** Advanced composition entrypoint. Applications provide service modules and
-    values built from arbitrary repository adapters—for example Lwt services
-    backed by PGOCaml. The functor constraints ensure every dependency uses the
-    selected HTTP backend's effect. *)
-module Make_with_services
+(** Statically assembles the complete application and HTTP graph. Repository
+    implementations are selected by functor application, while concrete
+    runtime resources—such as an in-memory state or a Caqti pool—remain explicit
+    arguments to {!compile}. The constraints prevent mixing effects from
+    different backends. *)
+module Make
     (B : Backend.S)
-    (Pets : Pet_service.S with type 'a io = 'a B.io)
-    (Orders : Order_service.S with type 'a io = 'a B.io)
-    (Users : User_service.S with type 'a io = 'a B.io) : sig
+    (Pet_repository : Pet_repository.S with type 'a io = 'a B.io)
+    (Order_repository : Order_repository.S with type 'a io = 'a B.io)
+    (User_repository : User_repository.S with type 'a io = 'a B.io) : sig
   (** Endpoint instance used to compile the assembled controllers. *)
   module Endpoint : module type of Typed_endpoint.Make (B)
 
-  (** Values expected from the application's runtime composition root. *)
-  type services = (Pets.t, Orders.t, Users.t) Services.t
+  (** Pet service selected and built by this graph. *)
+  module Pets : Pet_service.S with type 'a io = 'a B.io
 
-  (** Constructs controllers from the supplied services, collects their route
-      groups, and adds runtime-only health, OpenAPI, and documentation UI
-      endpoints. *)
-  val compile : auth:auth -> services -> Endpoint.Dsl.Compiled.t
-end
+  (** Order service wired statically to {!Pets}. *)
+  module Orders : Order_service.S with type 'a io = 'a B.io
 
-(** Development entrypoint with an in-memory composition root. The nested
-    [Services] module is the only place that chooses concrete repositories. *)
-module Make (B : Backend.S) : sig
-  module Services : sig
-    (** In-memory pet service selected by the default composition root. *)
-    module Pets : Pet_service.S with type 'a io = 'a B.io
+  (** User service selected and built by this graph. *)
+  module Users : User_service.S with type 'a io = 'a B.io
 
-    (** In-memory order service selected by the default composition root. *)
-    module Orders : Order_service.S with type 'a io = 'a B.io
-
-    (** In-memory user service selected by the default composition root. *)
-    module Users : User_service.S with type 'a io = 'a B.io
-
-    (** Complete application-scoped graph. *)
-    type t = (Pets.t, Orders.t, Users.t) Services.t
-
-    (** Creates an isolated application-scoped service graph. *)
-    val create : unit -> t
-  end
-
-  (** Endpoint instance used by the default application. *)
-  module Endpoint : module type of Typed_endpoint.Make (B)
-
-  (** Compiles the default in-memory controllers and runtime routes. *)
-  val compile : auth:auth -> Services.t -> Endpoint.Dsl.Compiled.t
+  (** Creates service and controller instances from the supplied repository
+      resources, collects their route groups, and adds runtime-only health,
+      OpenAPI, and documentation UI endpoints. Every argument is named so the
+      process-level dependency graph stays visible at the executable boundary. *)
+  val compile
+    :  auth:auth
+    -> pet_repository:Pet_repository.t
+    -> order_repository:Order_repository.t
+    -> user_repository:User_repository.t
+    -> Endpoint.Dsl.Compiled.t
 end

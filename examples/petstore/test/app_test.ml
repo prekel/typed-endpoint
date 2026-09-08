@@ -1,40 +1,34 @@
 open! Base
-module App = Petstore_app.Routes.Make (Typed_endpoint_testing)
+module Backend = Typed_endpoint_testing
+module Pet_repository = Petstore_app.Pet_repository_memory.Make (Backend.Io)
+module Order_repository = Petstore_app.Order_repository_memory.Make (Backend.Io)
+module User_repository = Petstore_app.User_repository_memory.Make (Backend.Io)
+
+module App =
+  Petstore_app.Routes.Make (Backend) (Pet_repository) (Order_repository) (User_repository)
+
 module Dsl = App.Endpoint.Dsl
 
-module Pet_repository_base =
-  Petstore_app.Pet_repository_memory.Make (Typed_endpoint_testing.Io)
-
 module Failing_pet_repository = struct
-  include Pet_repository_base
+  include Pet_repository
 
   let inventory _ : (_, Petstore_app.Persistence_error.t) Result.t = Error `Unavailable
 end
 
-module Failing_pets =
-  Petstore_app.Pet_service.Make (Typed_endpoint_testing.Io) (Failing_pet_repository)
-
-module Failing_order_repository =
-  Petstore_app.Order_repository_memory.Make (Typed_endpoint_testing.Io)
-
-module Failing_orders =
-  Petstore_app.Order_service.Make (Typed_endpoint_testing.Io) (Failing_order_repository)
-    (Failing_pets)
-
-module Failing_user_repository =
-  Petstore_app.User_repository_memory.Make (Typed_endpoint_testing.Io)
-
-module Failing_users =
-  Petstore_app.User_service.Make (Typed_endpoint_testing.Io) (Failing_user_repository)
-
 module Failing_app =
-  Petstore_app.Routes.Make_with_services (Typed_endpoint_testing) (Failing_pets)
-    (Failing_orders)
-    (Failing_users)
+  Petstore_app.Routes.Make (Backend) (Failing_pet_repository) (Order_repository)
+    (User_repository)
 
 let auth = Petstore_app.Routes.{ bearer_token = "test-token"; api_key = "test-key" }
-let services = App.Services.create ()
-let compiled = App.compile ~auth services
+
+let compiled =
+  App.compile
+    ~auth
+    ~pet_repository:(Pet_repository.create ())
+    ~order_repository:(Order_repository.create ())
+    ~user_repository:(User_repository.create ())
+;;
+
 let routes = Dsl.Compiled.app compiled
 let request = Typed_endpoint_testing.Client.call routes
 let bearer_headers = [ "authorization", "Bearer test-token" ]
@@ -357,15 +351,14 @@ let test_openapi () =
           ~substring:marker))
 ;;
 
-let test_injected_repository_failure () =
-  let pets = Failing_pets.create ~repository:(Failing_pet_repository.create ()) in
-  let orders =
-    Failing_orders.create ~repository:(Failing_order_repository.create ()) ~pets
-  in
-  let users = Failing_users.create ~repository:(Failing_user_repository.create ()) in
-  let services = Petstore_app.Services.v ~pets ~orders ~users in
+let test_static_repository_substitution () =
   let routes =
-    Failing_app.compile ~auth services |> Failing_app.Endpoint.Dsl.Compiled.app
+    Failing_app.compile
+      ~auth
+      ~pet_repository:(Failing_pet_repository.create ())
+      ~order_repository:(Order_repository.create ())
+      ~user_repository:(User_repository.create ())
+    |> Failing_app.Endpoint.Dsl.Compiled.app
   in
   let response =
     Typed_endpoint_testing.Client.call
@@ -387,5 +380,5 @@ let () =
   test_store_api pet_id;
   test_user_api ();
   test_openapi ();
-  test_injected_repository_failure ()
+  test_static_repository_substitution ()
 ;;

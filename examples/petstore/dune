@@ -15,8 +15,6 @@
   pet_service
   order_service
   user_service
-  services
-  memory_services
   auth
   api_docs
   http_parameter

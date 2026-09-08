@@ -1,5 +1,12 @@
 open! Base
-module App = Petstore_app.Routes.Make (Typed_endpoint_dream)
+module Backend = Typed_endpoint_dream
+module Pet_repository = Petstore_app.Pet_repository_memory.Make (Backend.Io)
+module Order_repository = Petstore_app.Order_repository_memory.Make (Backend.Io)
+module User_repository = Petstore_app.User_repository_memory.Make (Backend.Io)
+
+module App =
+  Petstore_app.Routes.Make (Backend) (Pet_repository) (Order_repository) (User_repository)
+
 module Dsl = App.Endpoint.Dsl
 module Access_log = Petstore_server_support.Access_log
 
@@ -26,7 +33,12 @@ let access_log inner request =
 ;;
 
 let () =
-  let services = App.Services.create () in
-  let compiled = App.compile ~auth:(Petstore_app.Routes.auth_from_env ()) services in
+  let compiled =
+    App.compile
+      ~auth:(Petstore_app.Routes.auth_from_env ())
+      ~pet_repository:(Pet_repository.create ())
+      ~order_repository:(Order_repository.create ())
+      ~user_repository:(User_repository.create ())
+  in
   Dsl.Compiled.app compiled |> Typed_endpoint_dream.router |> access_log |> Dream.run
 ;;

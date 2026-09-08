@@ -4,10 +4,10 @@
 
 ```text
 domain/          доменная модель и её инварианты
-application/     repository ports, сервисы и типизированный контейнер
-infrastructure/  in-memory реализации портов и development composition root
+application/     repository ports и сервисы
+infrastructure/  in-memory реализации портов
 http/            DTO, guards, контроллеры и сборка маршрутов
-servers/         entrypoint для Opium, Dream и Eio
+servers/         composition root и entrypoint для Opium, Dream и Eio
 test/            тесты сервисов и HTTP-контракта без запуска сервера
 ```
 
@@ -33,41 +33,63 @@ Petstore v3:
 
 ## DI и слои приложения
 
-Зависимости задаются явно в два этапа:
+Зависимости задаются явно на двух разных уровнях:
 
 1. `Pet_repository.S`, `Order_repository.S` и `User_repository.S` являются
    портами хранения с абстрактным эффектом `'a io`;
 2. функторы `*_service.Make` получают реализации портов. `Order_service.Make`
    дополнительно получает `Pet_service.S`, поэтому правило «заказываемый pet
    существует» видно в графе зависимостей и проверяется вне HTTP;
-3. контроллеры получают значения готовых сервисов через `create`;
-4. `Routes.Make_with_services` принимает модули сервисов, а `Services.v` — их
-   application-scoped экземпляры.
+3. функторы контроллеров получают модули готовых сервисов;
+4. `Routes.Make` связывает весь статический граф repository → service →
+   controller и проверяет, что каждый узел использует эффект выбранного
+   backend;
+5. серверный composition root создаёт только runtime-ресурсы репозиториев и
+   передаёт их в `App.compile` именованными аргументами.
 
-`Memory_services.Make` — development composition root с изолированными
-in-memory репозиториями. `Routes.Make` использует его по умолчанию, поэтому
-entrypoint сервера остаётся коротким:
+Например, in-memory composition root Opium выглядит так:
 
 ```ocaml
-module App = Petstore_app.Routes.Make (Typed_endpoint_opium)
+module Backend = Typed_endpoint_opium
+module Pet_repository = Petstore_app.Pet_repository_memory.Make (Backend.Io)
+module Order_repository = Petstore_app.Order_repository_memory.Make (Backend.Io)
+module User_repository = Petstore_app.User_repository_memory.Make (Backend.Io)
 
-let services = App.Services.create ()
-let compiled = App.compile ~auth:(Petstore_app.Routes.auth_from_env ()) services
+module App =
+  Petstore_app.Routes.Make (Backend) (Pet_repository) (Order_repository)
+    (User_repository)
+
+let compiled =
+  App.compile
+    ~auth:(Petstore_app.Routes.auth_from_env ())
+    ~pet_repository:(Pet_repository.create ())
+    ~order_repository:(Order_repository.create ())
+    ~user_repository:(User_repository.create ())
 ```
 
 В production composition root вместо `Pet_repository_memory.Make` можно
-подставить модуль с тем же `Pet_repository.S`, где `type 'a io = 'a Lwt.t`, а
-внутри использовать пул соединений PGOCaml. После этого собираются
-`Pet_service.Make (Io) (Pg_pet_repository)` и остальные сервисы, а в
-`Routes.Make_with_services` передаются получившиеся модули. Ни домен, ни DTO,
-ни контроллеры при этом не меняются.
+подставить Caqti-адаптер с тем же `Pet_repository.S`, где
+`type 'a io = 'a Lwt.t`, а `type t` представляет pool или небольшой handle над
+ним. Пул приобретается и освобождается в executable, а его значение передаётся
+в `App.compile`. Сервисы и контроллеры при этом автоматически строятся внутри
+статически выбранного графа; ни домен, ни DTO не меняются.
+
+Здесь нет runtime service locator: по типу или имени ничего не ищется, а
+реализацию нельзя случайно подменить внутри запроса. Runtime-значения всё же
+остаются, потому что состояние in-memory repository, database pool,
+конфигурация и их lifecycle существуют только во время работы процесса.
 
 `Pet_service`, `Order_service` и `User_service` работают только с типами из
 `Domain`: они не знают о JSON, Swagger DTO и HTTP-кодах. Преобразование DTO и
 выбор статуса выполняют контроллеры. Ошибки инфраструктуры отображаются в
 объявленный HTTP 503 с очищенным сообщением. Контроллер вместе с guard
-прикрепляется к группе через `Group.make_with_context`, поэтому runtime DI и
-OpenAPI security используют одну декларацию.
+прикрепляется к группе через `Group.make_with_context`: `Context` доставляет
+уже собранную dependency в handler на уровне запроса, но не выбирает и не
+создаёт application services. OpenAPI security и runtime guard используют одну
+декларацию.
+
+Обоснование этой границы и сравнение с Servant, Tapir, Smithy4s, http4s и ZIO
+собраны в [заметке о типизированных FP-фреймворках](../../doc/typed-fp-framework-lessons.md).
 
 Назначение ID принадлежит репозиторию: отсутствующий ID генерируется, а
 повторный явный ID не перезаписывает данные и отображается контроллером в HTTP

@@ -1,5 +1,12 @@
 open! Base
-module App = Petstore_app.Routes.Make (Typed_endpoint_opium)
+module Backend = Typed_endpoint_opium
+module Pet_repository = Petstore_app.Pet_repository_memory.Make (Backend.Io)
+module Order_repository = Petstore_app.Order_repository_memory.Make (Backend.Io)
+module User_repository = Petstore_app.User_repository_memory.Make (Backend.Io)
+
+module App =
+  Petstore_app.Routes.Make (Backend) (Pet_repository) (Order_repository) (User_repository)
+
 module Dsl = App.Endpoint.Dsl
 module Access_log = Petstore_server_support.Access_log
 
@@ -38,8 +45,13 @@ let access_log =
 ;;
 
 let () =
-  let services = App.Services.create () in
-  let compiled = App.compile ~auth:(Petstore_app.Routes.auth_from_env ()) services in
+  let compiled =
+    App.compile
+      ~auth:(Petstore_app.Routes.auth_from_env ())
+      ~pet_repository:(Pet_repository.create ())
+      ~order_repository:(Order_repository.create ())
+      ~user_repository:(User_repository.create ())
+  in
   Opium.App.empty
   |> Dsl.Compiled.app compiled
   |> Opium.App.middleware access_log

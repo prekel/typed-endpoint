@@ -18,19 +18,20 @@ let openapi_config =
     ()
 ;;
 
-module Make_with_services
+module Make
     (B : Backend.S)
-    (Pets : Pet_service.S with type 'a io = 'a B.io)
-    (Orders : Order_service.S with type 'a io = 'a B.io)
-    (Users : User_service.S with type 'a io = 'a B.io) =
+    (Pet_repository : Pet_repository.S with type 'a io = 'a B.io)
+    (Order_repository : Order_repository.S with type 'a io = 'a B.io)
+    (User_repository : User_repository.S with type 'a io = 'a B.io) =
 struct
   module Endpoint = Typed_endpoint.Make (B)
+  module Pets = Pet_service.Make (B.Io) (Pet_repository)
+  module Orders = Order_service.Make (B.Io) (Order_repository) (Pets)
+  module Users = User_service.Make (B.Io) (User_repository)
   module Pet_controller = Pet_controller.Make (B) (Pets)
   module Store_controller = Store_controller.Make (B) (Pets) (Orders)
   module User_controller = User_controller.Make (B) (Users)
   open Endpoint.Dsl
-
-  type services = (Pets.t, Orders.t, Users.t) Services.t
 
   let openapi_route compiled =
     Unsafe.route ~meth:B.get ~path:"/openapi.json" ~handler:(fun _request ->
@@ -46,10 +47,10 @@ struct
       B.respond_json (`Assoc [ "status", `String "ok" ]))
   ;;
 
-  let compile ~auth services =
-    let pets = Services.pets services in
-    let orders = Services.orders services in
-    let users = Services.users services in
+  let compile ~auth ~pet_repository ~order_repository ~user_repository =
+    let pets = Pets.create ~repository:pet_repository in
+    let orders = Orders.create ~repository:order_repository ~pets in
+    let users = Users.create ~repository:user_repository in
     let pet_controller = Pet_controller.create ~pets in
     let store_controller = Store_controller.create ~pets ~orders in
     let user_controller = User_controller.create ~users in
@@ -66,9 +67,4 @@ struct
     in
     compile_exn (api @ [ runtime ])
   ;;
-end
-
-module Make (B : Backend.S) = struct
-  module Services = Memory_services.Make (B.Io)
-  include Make_with_services (B) (Services.Pets) (Services.Orders) (Services.Users)
 end
