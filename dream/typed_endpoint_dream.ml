@@ -58,9 +58,14 @@ let body_to_string ~max_bytes request =
   read 0
 ;;
 
+let respond_empty ?status () =
+  let code = Option.map status ~f:code_of_status in
+  Dream.respond ?code ""
+;;
+
 let respond_string ?status body =
   let code = Option.map status ~f:code_of_status in
-  Dream.respond ?code body
+  Dream.respond ~headers:[ "content-type", "text/plain; charset=utf-8" ] ?code body
 ;;
 
 let respond_html ?status body =
@@ -103,6 +108,16 @@ let router routes =
           Dream.methods_equal (Dream.method_ request) (dream_method route.meth))
       with
       | Some route -> route.handler request
-      | None -> Dream.respond ~code:405 "Method not allowed"))
+      | None ->
+        let allow =
+          routes
+          |> List.map ~f:(fun route -> Cohttp.Code.string_of_method route.meth)
+          |> List.dedup_and_sort ~compare:String.compare
+          |> String.concat ~sep:", "
+        in
+        Dream.respond
+          ~code:405
+          ~headers:[ "allow", allow; "content-type", "text/plain; charset=utf-8" ]
+          "Method not allowed"))
   |> Dream.router
 ;;

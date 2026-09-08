@@ -27,7 +27,10 @@ let put : meth = `PUT
 let delete : meth = `DELETE
 let patch : meth = `PATCH
 let empty : app_builder = Fn.id
-let combine (a : app_builder) (b : app_builder) : app_builder = fun app -> app |> a |> b
+
+let combine (first : app_builder) (second : app_builder) : app_builder =
+  fun app -> app |> second |> first
+;;
 
 let route (m : meth) (path : string) (h : req -> resp Lwt.t) : app_builder =
   match m with
@@ -67,8 +70,11 @@ let body_to_string ~max_bytes (req : req) =
   read 0
 ;;
 
+let respond_empty ?status () : resp Lwt.t = Opium.App.respond' ?code:status (`String "")
+
 let respond_string ?status (s : string) : resp Lwt.t =
-  Opium.App.respond' ?code:status (`String s)
+  let headers = Cohttp.Header.init_with "content-type" "text/plain; charset=utf-8" in
+  Opium.App.respond' ~headers ?code:status (`String s)
 ;;
 
 let respond_html ?status (html : string) : resp Lwt.t =

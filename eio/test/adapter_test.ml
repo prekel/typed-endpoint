@@ -70,13 +70,23 @@ let route =
        [ service; user; id; Option.value query ~default:"none"; body ])
 ;;
 
+let captured =
+  Unsafe.route ~meth:B.get ~path:"/priority/:value" ~handler:(fun request ->
+    B.respond_string ("capture:" ^ B.param request "value"))
+;;
+
+let fixed =
+  Unsafe.route ~meth:B.get ~path:"/priority/fixed" ~handler:(fun _request ->
+    B.respond_string "static")
+;;
+
 let app =
   compile_exn
     ~decode_error:decode_errors
     [ Group.v
         ~prefix:[ "v1" ]
         ~metadata:(Operation_metadata.v ~description:"Eio test" ())
-        [ route ]
+        [ route; captured; fixed ]
     ]
   |> Compiled.app
 ;;
@@ -99,11 +109,58 @@ let () =
   let accepted = dispatch ~authorization:"Bearer secret" "/v1/items/42?q=hello" "body" in
   assert (Http.Status.compare (Typed_endpoint_eio.Response.status accepted) `OK = 0);
   assert (
+    Option.equal
+      String.equal
+      (Http.Header.get (Typed_endpoint_eio.Response.headers accepted) "content-type")
+      (Some "text/plain; charset=utf-8"));
+  assert (
     String.equal (Typed_endpoint_eio.Response.body accepted) "items:alice:42:hello:body");
   let wrong_method = dispatch ~meth:`GET "/v1/items/42?q=hello" "" in
   assert (
     Http.Status.compare
       (Typed_endpoint_eio.Response.status wrong_method)
       `Method_not_allowed
-    = 0)
+    = 0);
+  assert (
+    Option.equal
+      String.equal
+      (Http.Header.get (Typed_endpoint_eio.Response.headers wrong_method) "allow")
+      (Some "POST"));
+  let fixed = dispatch ~meth:`GET "/v1/priority/fixed" "" in
+  assert (String.equal (Typed_endpoint_eio.Response.body fixed) "static");
+  let calls = ref [] in
+  let middleware name ~request:_ ~next =
+    calls := !calls @ [ name ^ ":before" ];
+    let response = next () in
+    calls := !calls @ [ name ^ ":after" ];
+    response
+  in
+  let logged =
+    let request = Http.Request.make ~meth:`GET "/v1/priority/fixed" in
+    Typed_endpoint_eio.dispatch
+      ~middlewares:[ middleware "outer"; middleware "inner" ]
+      app
+      ~request
+      ~body:""
+  in
+  assert (String.equal (Typed_endpoint_eio.Response.body logged) "static");
+  assert (
+    List.equal
+      String.equal
+      !calls
+      [ "outer:before"; "inner:before"; "inner:after"; "outer:after" ]);
+  let with_header =
+    Typed_endpoint_eio.Response.with_header logged ~name:"x-test" ~value:"value"
+  in
+  let with_header =
+    Typed_endpoint_eio.Response.with_header
+      with_header
+      ~name:"x-test"
+      ~value:"replacement"
+  in
+  assert (
+    Option.equal
+      String.equal
+      (Http.Header.get (Typed_endpoint_eio.Response.headers with_header) "x-test")
+      (Some "replacement"))
 ;;

@@ -30,7 +30,8 @@ module Make_with_services
   type services = (Pets.t, Orders.t, Users.t) Services.t
 
   (** Constructs controllers from the supplied services, collects their route
-      groups, and adds runtime-only health, OpenAPI, and Swagger UI endpoints. *)
+      groups, and adds runtime-only health, OpenAPI, and documentation UI
+      endpoints. *)
   val compile : auth:auth -> services -> Endpoint.Dsl.Compiled.t
 end
 

@@ -19,8 +19,8 @@ include
 
     Routes sharing a path are grouped so Dream performs path matching once;
     dispatch then selects the declared HTTP method. A matched path with no
-    matching method returns [405]. Requests unmatched by this router continue
-    according to Dream router semantics.
+    matching method returns [405] with an [Allow] header. Requests unmatched by
+    this router continue according to Dream router semantics.
 
     Handler request bodies are read directly from Dream's body stream and are
     therefore single-use. Reading stops once an endpoint's configured byte

@@ -340,13 +340,21 @@ module Backend : sig
         is exceeded and return [`Too_large]. *)
     val body_to_string : max_bytes:int -> req -> (string, body_read_error) Result.t io
 
-    (** Creates response values. An omitted status means HTTP 200. *)
+    (** Creates a response without a representation or [Content-Type]. An
+        omitted status means HTTP 200. *)
+    val respond_empty : ?status:status_code -> unit -> resp io
+
+    (** Creates a [text/plain; charset=utf-8] response. An omitted status means
+        HTTP 200. *)
     val respond_string : ?status:status_code -> string -> resp io
 
+    (** Creates [text/html; charset=utf-8] and [application/json] responses. *)
     val respond_html : ?status:status_code -> string -> resp io
+
     val respond_json : ?status:status_code -> Yojson.Safe.t -> resp io
 
-    (** Combines routers while preserving declaration order. *)
+    (** Combines routers while preserving declaration order. Runtime assembly
+        places static paths before otherwise overlapping capture paths. *)
     val combine : app_builder -> app_builder -> app_builder
 
     (** The identity router containing no routes. *)
@@ -1041,12 +1049,42 @@ module Make
               { meth : string
               ; path : string
               }
+          | Ambiguous_route of
+              { meth : string
+              ; path : string
+              ; conflicts_with : string
+              }
+          (** A route has the same method and capture shape as another route,
+              so neither a runtime router nor OpenAPI can distinguish them. *)
+          | Invalid_group_prefix_segment of string
+          (** A group prefix is not a single static URL segment. *)
+          | Invalid_route_path of
+              { meth : string
+              ; path : string
+              } (** A typed route is not canonical or contains wildcard syntax. *)
+          | Mismatched_path_parameters of
+              { meth : string
+              ; path : string
+              ; declared : string list
+              ; captures : string list
+              } (** The rendered capture names differ from the typed parameters. *)
           | Duplicate_operation_id of string
+          | Duplicate_parameter of
+              { meth : string
+              ; path : string
+              ; kind : [ `Path | `Query ]
+              ; name : string
+              } (** One endpoint repeats a parameter name in the same location. *)
           | Duplicate_response_status of
               { meth : string
               ; path : string
               ; status : int
               }
+          | Invalid_response_status of
+              { meth : string
+              ; path : string
+              ; status : int
+              } (** A declared status is outside the HTTP range 100 through 599. *)
           | Empty_response_family of
               { meth : string
               ; path : string
@@ -1086,7 +1124,9 @@ module Make
       (** Validates route declarations and produces their common contract.
           Endpoint decode-error policies take precedence over group policies, which
           take precedence over [decode_error]. When none is supplied, the safe
-          {!Decode_error_response.default} policy is used. *)
+          {!Decode_error_response.default} policy is used. Runtime routes are
+          ordered by specificity, so a static segment takes precedence over a
+          capture at the same position regardless of declaration order. *)
       val compile
         :  ?decode_error:Decode_error_response.t
         -> Group.t list

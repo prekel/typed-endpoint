@@ -211,8 +211,35 @@ module Compile_error = struct
         { meth : string
         ; path : string
         }
+    | Ambiguous_route of
+        { meth : string
+        ; path : string
+        ; conflicts_with : string
+        }
+    | Invalid_group_prefix_segment of string
+    | Invalid_route_path of
+        { meth : string
+        ; path : string
+        }
+    | Mismatched_path_parameters of
+        { meth : string
+        ; path : string
+        ; declared : string list
+        ; captures : string list
+        }
     | Duplicate_operation_id of string
+    | Duplicate_parameter of
+        { meth : string
+        ; path : string
+        ; kind : param_kind
+        ; name : string
+        }
     | Duplicate_response_status of
+        { meth : string
+        ; path : string
+        ; status : int
+        }
+    | Invalid_response_status of
         { meth : string
         ; path : string
         ; status : int
@@ -241,9 +268,33 @@ module Compile_error = struct
 
   let to_string = function
     | Duplicate_route { meth; path } -> "duplicate route: " ^ meth ^ " " ^ path
+    | Ambiguous_route { meth; path; conflicts_with } ->
+      "ambiguous route: " ^ meth ^ " " ^ path ^ " conflicts with " ^ conflicts_with
+    | Invalid_group_prefix_segment segment -> "invalid group prefix segment: " ^ segment
+    | Invalid_route_path { meth; path } ->
+      "invalid typed route path: " ^ meth ^ " " ^ path
+    | Mismatched_path_parameters { meth; path; declared; captures } ->
+      let names values = "[" ^ String.concat values ~sep:", " ^ "]" in
+      "path captures do not match declared parameters: "
+      ^ meth
+      ^ " "
+      ^ path
+      ^ "; declared "
+      ^ names declared
+      ^ ", captures "
+      ^ names captures
     | Duplicate_operation_id operation_id -> "duplicate operationId: " ^ operation_id
+    | Duplicate_parameter { meth; path; kind; name } ->
+      let source =
+        match kind with
+        | `Path -> "path"
+        | `Query -> "query"
+      in
+      "duplicate " ^ source ^ " parameter " ^ name ^ ": " ^ meth ^ " " ^ path
     | Duplicate_response_status { meth; path; status } ->
       "duplicate response status " ^ Int.to_string status ^ ": " ^ meth ^ " " ^ path
+    | Invalid_response_status { meth; path; status } ->
+      "invalid response status " ^ Int.to_string status ^ ": " ^ meth ^ " " ^ path
     | Empty_response_family { meth; path } ->
       "empty response status family: " ^ meth ^ " " ^ path
     | Invalid_no_content_response { meth; path } ->
@@ -290,8 +341,44 @@ let prefix_to_string = function
 let full_path ~prefix path =
   if String.is_empty prefix then
     path
+  else if String.equal path "/" then
+    prefix
   else
     prefix ^ path
+;;
+
+let valid_group_prefix_segment segment =
+  (not (String.is_empty segment))
+  && (not (String.mem segment '/'))
+  && (not (String.is_prefix segment ~prefix:":"))
+  && (not (String.is_prefix segment ~prefix:"*"))
+  && (not (String.equal segment "."))
+  && not (String.equal segment "..")
+;;
+
+let valid_typed_route_path path =
+  if String.equal path "/" then
+    true
+  else if not (String.is_prefix path ~prefix:"/") then
+    false
+  else
+    String.drop_prefix path 1
+    |> String.split ~on:'/'
+    |> List.for_all ~f:(fun segment ->
+      (not (String.is_empty segment))
+      && (not (String.is_prefix segment ~prefix:"*"))
+      && (not (String.equal segment "."))
+      && (not (String.equal segment ".."))
+      &&
+      if String.is_prefix segment ~prefix:":" then
+        String.length segment > 1
+      else
+        true)
+;;
+
+let path_captures path =
+  String.split path ~on:'/'
+  |> List.filter_map ~f:(fun segment -> String.chop_prefix segment ~prefix:":")
 ;;
 
 let duplicate_statuses statuses =
@@ -303,6 +390,34 @@ let duplicate_statuses statuses =
       Hash_set.add seen status;
       false))
 ;;
+
+let duplicate_parameters params =
+  let seen = Hash_set.create (module String) in
+  List.filter params ~f:(fun param ->
+    let kind =
+      match param.kind with
+      | `Path -> "path"
+      | `Query -> "query"
+    in
+    let key = kind ^ "\000" ^ param.name in
+    if Hash_set.mem seen key then
+      true
+    else (
+      Hash_set.add seen key;
+      false))
+;;
+
+let route_shape path =
+  String.split path ~on:'/'
+  |> List.map ~f:(fun segment ->
+    if String.is_prefix segment ~prefix:":" then
+      ":"
+    else
+      segment)
+  |> String.concat ~sep:"/"
+;;
+
+let valid_http_status status = status >= 100 && status <= 599
 
 let deduplicate_schemas schemas =
   List.fold schemas ~init:[] ~f:(fun unique schema ->
@@ -404,7 +519,7 @@ let validate_security_scope scheme scope =
 ;;
 
 let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t =
-  let routes_seen = Hash_set.create (module String) in
+  let routes_seen = Hashtbl.create (module String) in
   let operation_ids = Hash_set.create (module String) in
   let named_schemas = Hashtbl.create (module String) in
   let security_schemes = Hashtbl.create (module String) in
@@ -438,17 +553,39 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
   in
   let compiled_groups =
     List.map groups ~f:(fun group ->
+      let prefix_is_valid = List.for_all group.prefix ~f:valid_group_prefix_segment in
+      List.filter group.prefix ~f:(Fn.non valid_group_prefix_segment)
+      |> List.iter ~f:(fun segment ->
+        add_error (Compile_error.Invalid_group_prefix_segment segment));
       let prefix = prefix_to_string group.prefix in
       let routes =
         List.map group.routes ~f:(fun route ->
           let path = full_path ~prefix route.path in
-          let route_key = route.meth ^ " " ^ path in
-          if Hash_set.mem routes_seen route_key then
-            add_error (Compile_error.Duplicate_route { meth = route.meth; path })
-          else
-            Hash_set.add routes_seen route_key;
+          let route_key = route.meth ^ " " ^ route_shape path in
+          (match Hashtbl.find routes_seen route_key with
+           | None -> Hashtbl.set routes_seen ~key:route_key ~data:path
+           | Some first_path when String.equal first_path path ->
+             add_error (Compile_error.Duplicate_route { meth = route.meth; path })
+           | Some conflicts_with ->
+             add_error
+               (Compile_error.Ambiguous_route { meth = route.meth; path; conflicts_with }));
           let endpoint =
             Option.map route.endpoint ~f:(fun endpoint ->
+              let route_path_is_valid = valid_typed_route_path route.path in
+              if not route_path_is_valid then
+                add_error (Compile_error.Invalid_route_path { meth = route.meth; path });
+              if prefix_is_valid && route_path_is_valid then (
+                let declared =
+                  List.filter_map endpoint.params ~f:(fun parameter ->
+                    match parameter.kind with
+                    | `Path -> Some parameter.name
+                    | `Query -> None)
+                in
+                let captures = path_captures path in
+                if not (List.equal String.equal declared captures) then
+                  add_error
+                    (Compile_error.Mismatched_path_parameters
+                       { meth = route.meth; path; declared; captures }));
               Option.iter endpoint.metadata ~f:(fun metadata ->
                 Option.iter metadata.operation_id ~f:(fun operation_id ->
                   if Hash_set.mem operation_ids operation_id then
@@ -466,7 +603,20 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
               let statuses =
                 List.map endpoint.responses ~f:(fun response -> response.status)
               in
+              duplicate_parameters endpoint.params
+              |> List.iter ~f:(fun parameter ->
+                add_error
+                  (Compile_error.Duplicate_parameter
+                     { meth = route.meth
+                     ; path
+                     ; kind = parameter.kind
+                     ; name = parameter.name
+                     }));
               List.iter endpoint.responses ~f:(fun response ->
+                if not (valid_http_status response.status) then
+                  add_error
+                    (Compile_error.Invalid_response_status
+                       { meth = route.meth; path; status = response.status });
                 match response.status, response.payload.content with
                 | 204, [] -> ()
                 | 204, _ :: _ ->

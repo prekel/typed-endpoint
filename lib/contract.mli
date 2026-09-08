@@ -290,14 +290,48 @@ module Compile_error : sig
     | Duplicate_route of
         { meth : string
         ; path : string
-        } (** Two routes resolve to the same HTTP method and fully prefixed path. *)
+        } (** Two routes use the same HTTP method and fully prefixed path. *)
+    | Ambiguous_route of
+        { meth : string
+        ; path : string
+        ; conflicts_with : string
+        }
+    (** Two routes use the same method and matching shape, but give a path
+        capture different names. Such routes are indistinguishable at runtime
+        and forbidden by OpenAPI. *)
+    | Invalid_group_prefix_segment of string
+    (** A group prefix contains an empty segment, a slash, a router capture or
+        wildcard marker, or a dot-navigation segment. *)
+    | Invalid_route_path of
+        { meth : string
+        ; path : string
+        } (** A typed route is not canonical or contains router wildcard syntax. *)
+    | Mismatched_path_parameters of
+        { meth : string
+        ; path : string
+        ; declared : string list
+        ; captures : string list
+        } (** The rendered capture names differ from the typed path parameters. *)
     | Duplicate_operation_id of string
     (** An explicit OpenAPI [operationId] is reused by another endpoint. *)
+    | Duplicate_parameter of
+        { meth : string
+        ; path : string
+        ; kind : param_kind
+        ; name : string
+        }
+    (** One endpoint declares the same parameter name more than once in the
+        same path or query location. *)
     | Duplicate_response_status of
         { meth : string
         ; path : string
         ; status : int
         } (** One endpoint explicitly declares the same status more than once. *)
+    | Invalid_response_status of
+        { meth : string
+        ; path : string
+        ; status : int
+        } (** An explicit response status is outside the HTTP range 100 through 599. *)
     | Empty_response_family of
         { meth : string
         ; path : string
@@ -368,8 +402,13 @@ end
     normalized. *)
 val prefix_to_string : string list -> string
 
-(** Validates groups, applies group prefixes, merges implicit responses, and
-    registers named schema and security components. *)
+(** Joins an already rendered route [path] to [prefix]. A root path becomes the
+    prefix itself, avoiding an adapter-dependent trailing slash. *)
+val full_path : prefix:string -> string -> string
+
+(** Validates groups, applies group prefixes, normalizes a prefixed root route,
+    verifies rendered captures against typed path parameters, merges implicit
+    responses, and registers named schema and security components. *)
 val compile : group list -> (Compiled.t, Compile_error.t list) Result.t
 
 (** Equivalent to {!compile}, raising [Failure] with all diagnostics joined by

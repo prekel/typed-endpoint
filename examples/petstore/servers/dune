@@ -1,16 +1,49 @@
 (include_subdirs no)
 
+(library
+ (name petstore_server_support)
+ (modules access_log)
+ (libraries base unix uri yojson))
+
 (executable
  (name opium_server)
  (modules opium_server)
- (libraries base opium petstore_app typed-endpoint-opium))
+ (libraries
+  base
+  lwt
+  opium
+  petstore_app
+  petstore_server_support
+  typed-endpoint-opium)
+ (preprocess
+  (pps ppx_let)))
 
 (executable
  (name dream_server)
  (modules dream_server)
- (libraries base dream petstore_app typed-endpoint-dream))
+ (libraries
+  base
+  dream
+  lwt
+  petstore_app
+  petstore_server_support
+  typed-endpoint-dream)
+ (preprocess
+  (pps ppx_let)))
 
 (executable
  (name eio_server)
  (modules eio_server)
- (libraries base cohttp-eio eio eio_main petstore_app typed-endpoint-eio))
+ (libraries
+  base
+  cohttp-eio
+  eio
+  eio_main
+  petstore_app
+  petstore_server_support
+  typed-endpoint-eio))
+
+(test
+ (name access_log_test)
+ (modules access_log_test)
+ (libraries base petstore_server_support yojson))

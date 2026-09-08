@@ -59,13 +59,23 @@ let custom =
     Dream.respond "custom")
 ;;
 
+let captured =
+  Unsafe.route ~meth:B.get ~path:"/priority/:value" ~handler:(fun request ->
+    Dream.respond ("capture:" ^ Dream.param request "value"))
+;;
+
+let fixed =
+  Unsafe.route ~meth:B.get ~path:"/priority/fixed" ~handler:(fun _request ->
+    Dream.respond "static")
+;;
+
 let handler =
   compile_exn
     ~decode_error:decode_errors
     [ Group.v
         ~prefix:[ "v1" ]
         ~metadata:(Operation_metadata.v ~description:"Dream test" ())
-        [ route; custom ]
+        [ route; custom; captured; fixed ]
     ]
   |> Compiled.app
   |> Typed_endpoint_dream.router
@@ -81,7 +91,19 @@ let () =
   in
   let response = Dream.test handler request in
   assert (Dream.status_to_int (Dream.status response) = 200);
+  assert (
+    Option.equal
+      String.equal
+      (Dream.header response "content-type")
+      (Some "text/plain; charset=utf-8"));
   assert (String.equal (Lwt_main.run (Dream.body response)) "42:hello:body");
+  let request = Dream.request ~method_:`GET ~target:"/v1/items/42" "" in
+  let response = Dream.test handler request in
+  assert (Dream.status_to_int (Dream.status response) = 405);
+  assert (Option.equal String.equal (Dream.header response "allow") (Some "POST"));
+  let request = Dream.request ~method_:`GET ~target:"/v1/priority/fixed" "" in
+  let response = Dream.test handler request in
+  assert (String.equal (Lwt_main.run (Dream.body response)) "static");
   let request = Dream.request ~method_:(`Method "PROPFIND") ~target:"/v1/custom" "" in
   let response = Dream.test handler request in
   assert (Dream.status_to_int (Dream.status response) = 200);

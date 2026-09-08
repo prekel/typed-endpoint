@@ -171,6 +171,7 @@ module Backend = struct
     val query : req -> string -> string option
     val header : req -> string -> string option
     val body_to_string : max_bytes:int -> req -> (string, body_read_error) Result.t io
+    val respond_empty : ?status:status_code -> unit -> resp io
     val respond_string : ?status:status_code -> string -> resp io
     val respond_html : ?status:status_code -> string -> resp io
     val respond_json : ?status:status_code -> Yojson.Safe.t -> resp io
@@ -879,7 +880,7 @@ module Make (B : Backend.S) = struct
       =
       fun ~status spec v ->
       match spec.payload with
-      | Response.Empty -> B.respond_string ~status ""
+      | Response.Empty -> B.respond_empty ~status ()
       | Response.PlainText -> B.respond_string ~status v
       | Response.JsonRaw -> B.respond_json ~status v
       | Response.Json (module P) -> B.respond_json ~status (P.to_yojson v)
@@ -1601,6 +1602,19 @@ module Make (B : Backend.S) = struct
       ;;
     end
 
+    let compare_path_specificity left right =
+      let specificity path =
+        String.split path ~on:'/'
+        |> List.filter ~f:(Fn.non String.is_empty)
+        |> List.map ~f:(fun segment ->
+          if String.is_prefix segment ~prefix:":" then
+            1
+          else
+            0)
+      in
+      List.compare Int.compare (specificity left) (specificity right)
+    ;;
+
     let build_app ~decode_error (groups : Group.t list) : B.app_builder =
       let compile_route
             ~(prefix : string)
@@ -1608,22 +1622,23 @@ module Make (B : Backend.S) = struct
             (r : Route.t)
         : B.app_builder
         =
-        let full_path =
-          if String.is_empty prefix then
-            r.path
-          else
-            prefix ^ r.path
-        in
+        let full_path = Contract.full_path ~prefix r.path in
         B.route r.meth full_path (r.handler decode_error)
       in
-      List.fold groups ~init:B.empty ~f:(fun acc g ->
-        let prefix = Contract.prefix_to_string g.prefix in
-        let decode_error = Option.value g.decode_error ~default:decode_error in
-        let gb =
-          List.fold g.routes ~init:B.empty ~f:(fun acc2 r ->
-            B.combine acc2 (compile_route ~prefix ~decode_error r))
-        in
-        B.combine acc gb)
+      let routes =
+        List.concat_map groups ~f:(fun group ->
+          let prefix = Contract.prefix_to_string group.prefix in
+          let decode_error = Option.value group.decode_error ~default:decode_error in
+          List.map group.routes ~f:(fun route -> prefix, decode_error, route))
+        |> List.stable_sort
+             ~compare:(fun (left_prefix, _, left) (right_prefix, _, right) ->
+               let full_path prefix route = Contract.full_path ~prefix route.Route.path in
+               compare_path_specificity
+                 (full_path left_prefix left)
+                 (full_path right_prefix right))
+      in
+      List.fold routes ~init:B.empty ~f:(fun app (prefix, decode_error, route) ->
+        B.combine app (compile_route ~prefix ~decode_error route))
     ;;
 
     module Compiled = struct
@@ -1645,8 +1660,35 @@ module Make (B : Backend.S) = struct
             { meth : string
             ; path : string
             }
+        | Ambiguous_route of
+            { meth : string
+            ; path : string
+            ; conflicts_with : string
+            }
+        | Invalid_group_prefix_segment of string
+        | Invalid_route_path of
+            { meth : string
+            ; path : string
+            }
+        | Mismatched_path_parameters of
+            { meth : string
+            ; path : string
+            ; declared : string list
+            ; captures : string list
+            }
         | Duplicate_operation_id of string
+        | Duplicate_parameter of
+            { meth : string
+            ; path : string
+            ; kind : Contract.param_kind
+            ; name : string
+            }
         | Duplicate_response_status of
+            { meth : string
+            ; path : string
+            ; status : int
+            }
+        | Invalid_response_status of
             { meth : string
             ; path : string
             ; status : int

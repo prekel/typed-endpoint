@@ -48,6 +48,9 @@ module Response : sig
       canonicalized. *)
   val headers : response -> (string * string) list
 
+  (** Looks up the first response header with a case-insensitive name. *)
+  val header : response -> string -> string option
+
   (** Returns the complete buffered response body. *)
   val body : response -> string
 
@@ -59,7 +62,21 @@ end
 (** Dispatches one request synchronously through the compiled route table.
 
     Path segments are percent-decoded before matching. A matching path with the
-    wrong method returns [405]; an unknown path returns [404]. The request value
-    remains reusable, because dispatch derives route parameters in a fresh
-    internal value and performs no observable mutation. *)
+    wrong method returns [405] and lists available methods in [Allow]; an
+    unknown path returns [404]. The request value remains reusable, because
+    dispatch derives route parameters in a fresh internal value and performs no
+    observable mutation. *)
 val dispatch : app_builder -> request -> response
+
+(** Concise request construction and dispatch for application tests. *)
+module Client : sig
+  (** Creates an immutable request and immediately dispatches it through
+      [routes]. [target] may include a query string. *)
+  val call
+    :  app_builder
+    -> ?headers:(string * string) list
+    -> ?body:string
+    -> meth
+    -> string
+    -> response
+end

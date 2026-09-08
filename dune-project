@@ -20,7 +20,6 @@
   "A framework-agnostic OCaml library for declaring typed HTTP routes and generating OpenAPI documents from the same definitions.")
  (depends
   (ocaml (>= 5.1))
-  (dune (>= 3.16))
   base
   yojson
   (ppx_let (and (>= v0.17.1) :build))
@@ -38,7 +37,6 @@
   "An Opium backend that turns typed-endpoint declarations into an Opium application.")
  (depends
   (ocaml (>= 5.1))
-  (dune (>= 3.16))
   (typed-endpoint (= :version))
   base
   cohttp
@@ -60,7 +58,6 @@
   "A framework-free in-memory backend for testing typed-endpoint applications and examples.")
  (depends
   (ocaml (>= 5.1))
-  (dune (>= 3.16))
   (typed-endpoint (= :version))
   base
   cohttp
@@ -80,7 +77,6 @@
   "A Dream backend that turns typed-endpoint declarations into a Dream router.")
  (depends
   (ocaml (>= 5.1))
-  (dune (>= 3.16))
   (typed-endpoint (= :version))
   base
   cohttp
@@ -98,7 +94,6 @@
   "A native cohttp-eio backend with routing for typed-endpoint declarations.")
  (depends
   (ocaml (>= 5.1))
-  (dune (>= 3.16))
   (typed-endpoint (= :version))
   base
   (cohttp-eio (= 6.3.0))

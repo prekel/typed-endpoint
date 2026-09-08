@@ -51,3 +51,13 @@ testing и Eio. Благодаря этому handler не вызывает back
 После [compile] используйте [Compiled.app] для backend-приложения и
 [Compiled.openapi] для документа. Полный пример находится в
 [examples/petstore].
+
+В framework-free тесте request можно выполнить одной функцией:
+
+{[
+let response =
+  Typed_endpoint_testing.Client.call
+    (Compiled.app compiled)
+    `GET
+    "/health"
+]}

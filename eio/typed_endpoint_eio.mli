@@ -4,14 +4,20 @@ open! Base
 
     The route table and router are internal to this package. Typed-endpoint
     owns neither the Eio switch nor the network resources used by a server;
-    their lifetime must enclose all calls made through {!server}. Framework
-    middleware or connection-level behavior belongs around the returned
-    [Cohttp_eio.Server.t], outside the framework-agnostic core. *)
+    their lifetime must enclose all calls made through {!server}. Application
+    middleware can be supplied to {!server} or {!dispatch}; connection-level
+    behavior belongs around the returned [Cohttp_eio.Server.t], outside the
+    framework-agnostic core. *)
 type req
 
 type resp
 type 'a io = 'a
 type app_builder
+
+(** A direct-style wrapper around one typed-endpoint dispatch. Middleware is
+    entered in list order, so the first element is the outermost wrapper.
+    It receives the raw Cohttp request but does not expose typed route internals. *)
+type middleware = request:Http.Request.t -> next:(unit -> resp) -> resp
 
 include
   Typed_endpoint.Backend.S
@@ -39,15 +45,25 @@ module Response : sig
   (** Returns the buffered response body. Typed-endpoint responses are not
       streamed by this backend. *)
   val body : resp -> string
+
+  (** Returns a response with [name] set to [value], replacing any existing
+      values for that header. *)
+  val with_header : resp -> name:string -> value:string -> resp
 end
 
 (** Dispatches one already-buffered request through the compiled route table.
 
     This entry point is intended for adapter-level tests and embeddings which
     already own the request body. It returns [405] when the decoded path exists
-    for another method and [404] when no path matches. [body] is checked against
-    the endpoint's byte limit before decoding. *)
-val dispatch : app_builder -> request:Http.Request.t -> body:string -> resp
+    for another method, including the available methods in [Allow], and [404]
+    when no path matches. [body] is checked against the endpoint's byte limit
+    before decoding. *)
+val dispatch
+  :  ?middlewares:middleware list
+  -> app_builder
+  -> request:Http.Request.t
+  -> body:string
+  -> resp
 
 (** Builds a native cohttp-eio server callback from the compiled route table.
 
@@ -56,4 +72,4 @@ val dispatch : app_builder -> request:Http.Request.t -> body:string -> resp
     and reports an oversized body without unbounded buffering. The caller is
     responsible for running the returned server with network resources whose
     lifetime remains valid. *)
-val server : app_builder -> Cohttp_eio.Server.t
+val server : ?middlewares:middleware list -> app_builder -> Cohttp_eio.Server.t

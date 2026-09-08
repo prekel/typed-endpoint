@@ -113,6 +113,30 @@ opam exec -- dune exec examples/petstore/servers/eio_server.exe
 `PETSTORE_API_KEY`. Исходный OpenAPI доступен по `/openapi.json`, health check —
 по `/health`.
 
+## Access log
+
+Все три server entrypoint пишут access log в `stderr`: ровно один компактный
+JSON-объект на строку. Плоский формат содержит `timestamp`, `level`, `event`,
+`request_id`, `method`, `path`, `status` и `duration_ms`. Успешный ответ
+возвращает тот же идентификатор в `X-Request-Id`.
+
+```json
+{"timestamp":"2026-09-08T12:00:00.123Z","level":"info","event":"http_request","request_id":"gateway-42","method":"GET","path":"/pet/42","status":200,"duration_ms":12.5}
+```
+
+Входящий `X-Request-Id` сохраняется, если содержит от 1 до 128 латинских букв,
+цифр, `.`, `_` или `-`; иначе сервер генерирует новый. Это позволяет связать
+событие приложения с reverse proxy или API gateway без доверия к произвольным
+значениям заголовка.
+
+В целях безопасности access log намеренно не содержит query string, request
+body, response body и `Authorization`. Необработанное исключение записывается
+как событие с `level: "error"` и полем `error`, после чего передаётся
+фреймворку; поэтому
+поток логов должен быть доступен только доверенной инфраструктуре. Duration
+измеряет выполнение middleware и handler до подготовки ответа, а не передачу
+байтов клиенту.
+
 На `/docs` находится страница выбора пяти OpenAPI renderer:
 
 - `/docs/swagger` — Swagger UI 5.32.14;

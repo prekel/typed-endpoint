@@ -20,6 +20,8 @@ OpenAPI 3.1.
 - JSON body ограничен по размеру (по умолчанию 1 МиБ), проверяется
   `Content-Type`, ошибки получают фиксированные статусы 400/413/415;
 - именованные схемы попадают в `components/schemas`, конфликт имён отклоняется;
+- компиляция отклоняет неоднозначные route-shape, повторные параметры и
+  status-коды вне диапазона HTTP;
 - `Guard` одновременно задаёт runtime-проверку и OpenAPI security requirement;
 - результат OpenAPI детерминирован.
 
@@ -67,9 +69,9 @@ endpoint объявляется через `make_in_group`, а контекст 
 В [examples/petstore](examples/petstore/README.md) находится расширенный пример
 с полным route surface Swagger Petstore v3: разделы `pet`, `store` и `user`,
 бинарная загрузка изображений, отдельное пагинированное расширение,
-OAuth/API-key guards, DI доменных сервисов, Swagger UI на `/docs`,
-`/openapi.json` и runtime-only `/health`. Один DSL запускается через testing,
-Opium, Dream и Eio.
+OAuth/API-key guards, DI доменных сервисов, страница выбора Swagger UI, Scalar,
+RapiDoc, Redoc и Stoplight Elements на `/docs`, `/openapi.json` и runtime-only
+`/health`. Один DSL запускается через testing, Opium, Dream и Eio.
 
 ```sh
 opam exec -- dune runtest examples/petstore/test

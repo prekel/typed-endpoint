@@ -98,8 +98,15 @@ let body_to_string ~max_bytes (request : request) =
     Ok request.body
 ;;
 
+let respond_empty ?(status = `OK) () =
+  { status = code_of_status status; headers = []; body = "" }
+;;
+
 let respond_string ?(status = `OK) body =
-  { status = code_of_status status; headers = []; body }
+  { status = code_of_status status
+  ; headers = [ "content-type", "text/plain; charset=utf-8" ]
+  ; body
+  }
 ;;
 
 let respond_html ?(status = `OK) body =
@@ -130,6 +137,14 @@ module Response = struct
   let headers response = response.headers
   let body response = response.body
 
+  let header response name =
+    List.find_map response.headers ~f:(fun (candidate, value) ->
+      if String.Caseless.equal candidate name then
+        Some value
+      else
+        None)
+  ;;
+
   let json response =
     try Ok (Yojson.Safe.from_string response.body) with
     | Yojson.Json_error error -> Error error
@@ -148,6 +163,19 @@ let dispatch routes request =
   with
   | Some (route, params) -> route.handler { request with params }
   | None when not (List.is_empty matches) ->
-    respond_string ~status:`Method_not_allowed "Method not allowed"
+    let allow =
+      matches
+      |> List.map ~f:(fun (route, _params) -> string_of_method route.meth)
+      |> List.dedup_and_sort ~compare:String.compare
+      |> String.concat ~sep:", "
+    in
+    let response = respond_string ~status:`Method_not_allowed "Method not allowed" in
+    { response with headers = ("allow", allow) :: response.headers }
   | None -> respond_string ~status:`Not_found "Not found"
 ;;
+
+module Client = struct
+  let call routes ?headers ?body meth target =
+    Request.v ?headers ?body ~meth ~target () |> dispatch routes
+  ;;
+end

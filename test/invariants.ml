@@ -83,10 +83,7 @@ let binary_route =
   @@ fun bytes -> return (OK (Int.to_string (String.length bytes)))
 ;;
 
-let call app ?(headers = []) ?(body = "") meth target =
-  Typed_endpoint_testing.Request.v ~headers ~body ~meth ~target ()
-  |> Typed_endpoint_testing.dispatch app
-;;
+let call = Typed_endpoint_testing.Client.call
 
 let%expect_test "backend IO exposes Base monad syntax" =
   let open Io.Let_syntax in
@@ -261,6 +258,66 @@ let primitive_route =
     ~request:Request.empty
     ~responses:(ok (Response.text ~description:"Decoded values" ()))
   @@ fun id enabled () -> return (OK (Int.to_string id ^ ":" ^ Bool.to_string enabled))
+;;
+
+let empty_response_route =
+  make
+    ~meth:B.get
+    ~path:(s "empty" /? nil)
+    ~request:Request.empty
+    ~responses:(ok (Response.empty ~description:"No representation" ()))
+  @@ fun () -> return (OK ())
+;;
+
+let%expect_test "testing client exposes representation and routing headers" =
+  let app =
+    compile_exn [ group [ primitive_route; empty_response_route ] ] |> Compiled.app
+  in
+  let text = call app `GET "/primitive/42?enabled=true" in
+  let empty = call app `GET "/empty" in
+  let wrong_method = call app `POST "/primitive/42?enabled=true" in
+  let header response name =
+    Typed_endpoint_testing.Response.header response name |> Option.value ~default:"none"
+  in
+  Stdlib.Printf.printf
+    "text=%s empty=%s allow=%s error=%s"
+    (header text "Content-Type")
+    (header empty "content-type")
+    (header wrong_method "ALLOW")
+    (header wrong_method "content-type");
+  [%expect
+    {|
+    text=text/plain; charset=utf-8 empty=none allow=GET error=text/plain; charset=utf-8 |}]
+;;
+
+let%expect_test "static routes take precedence over path captures" =
+  let captured =
+    make
+      ~meth:B.get
+      ~path:
+        (s "priority"
+         / param "value" (Parameter.string ~description:"Captured value" ())
+         /? nil)
+      ~request:Request.empty
+      ~responses:(ok (Response.text ~description:"Captured" ()))
+    @@ fun value () -> return (OK ("capture:" ^ value))
+  in
+  let fixed =
+    make
+      ~meth:B.get
+      ~path:(s "priority" / s "fixed" /? nil)
+      ~request:Request.empty
+      ~responses:(ok (Response.text ~description:"Static" ()))
+    @@ fun () -> return (OK "static")
+  in
+  let app = compile_exn [ group [ captured; fixed ] ] |> Compiled.app in
+  let fixed = call app `GET "/priority/fixed" in
+  let captured = call app `GET "/priority/other" in
+  Stdlib.Printf.printf
+    "%s %s"
+    (Typed_endpoint_testing.Response.body fixed)
+    (Typed_endpoint_testing.Response.body captured);
+  [%expect {| static capture:other |}]
 ;;
 
 let%expect_test "built-in parameter codecs drive runtime parsing and OpenAPI" =
@@ -479,6 +536,93 @@ let print_compile_errors groups =
   | Error errors ->
     List.iter errors ~f:(fun error ->
       Stdlib.print_endline (Compile_error.to_string error))
+;;
+
+let%expect_test "routes with indistinguishable capture shapes are rejected" =
+  let string = Parameter.string ~description:"Identifier" () in
+  let route name =
+    make
+      ~meth:B.get
+      ~path:(s "pets" / param name string /? nil)
+      ~request:Request.empty
+      ~responses:(ok (Response.text ~description:"Pet" ()))
+    @@ fun _id () -> return (OK "pet")
+  in
+  print_compile_errors [ group [ route "id"; route "name" ] ];
+  [%expect {| ambiguous route: get /pets/:name conflicts with /pets/:id |}]
+;;
+
+let%expect_test "group prefixes must contain canonical static segments" =
+  print_compile_errors
+    [ Group.make ~prefix:[ "/v1" ] ~description:"Invalid prefix" [ primitive_route ] ];
+  [%expect {| invalid group prefix segment: /v1 |}]
+;;
+
+let%expect_test "typed routes reject wildcards and undeclared captures" =
+  let route segment =
+    make
+      ~meth:B.get
+      ~path:(s segment /? nil)
+      ~request:Request.empty
+      ~responses:(ok (Response.text ~description:"Response" ()))
+    @@ fun () -> return (OK "response")
+  in
+  print_compile_errors [ group [ route "*"; route ":undeclared" ] ];
+  [%expect
+    {|
+    invalid typed route path: get /*
+    path captures do not match declared parameters: get /:undeclared; declared [], captures [undeclared] |}]
+;;
+
+let%expect_test "a root route is joined to its group prefix without a trailing slash" =
+  let route =
+    make
+      ~meth:B.get
+      ~path:nil
+      ~request:Request.empty
+      ~responses:(ok (Response.text ~description:"Root" ()))
+    @@ fun () -> return (OK "root")
+  in
+  let compiled =
+    compile_exn [ Group.make ~prefix:[ "v1" ] ~description:"Version root" [ route ] ]
+  in
+  let response = call (Compiled.app compiled) `GET "/v1" in
+  let open Yojson.Safe.Util in
+  let documented =
+    Compiled.openapi compiled |> member "paths" |> member "/v1" |> member "get"
+  in
+  Stdlib.Printf.printf
+    "runtime=%s documented=%b"
+    (Typed_endpoint_testing.Response.body response)
+    (not (Yojson.Safe.equal documented `Null));
+  [%expect {| runtime=root documented=true |}]
+;;
+
+let%expect_test "duplicate parameters in one location are rejected" =
+  let string = Parameter.string ~description:"Tag" () in
+  let route =
+    make
+      ~meth:B.get
+      ~path:(s "search" / query "tag" string / query "tag" string /? nil)
+      ~request:Request.empty
+      ~responses:(ok (Response.text ~description:"Search result" ()))
+    @@ fun _first _second () -> return (OK "result")
+  in
+  print_compile_errors [ group [ route ] ];
+  [%expect {| duplicate query parameter tag: get /search |}]
+;;
+
+let%expect_test "response status must be a valid HTTP status" =
+  let route =
+    make
+      ~meth:B.get
+      ~path:(s "invalid-status" /? nil)
+      ~request:Request.empty
+      ~responses:(code [ `Code 99 ] (Response.text ~description:"Invalid" ()))
+    @@ fun () -> return (Code (`Code 99, "invalid"))
+  in
+  print_compile_errors [ group [ route ] ];
+  [%expect {| invalid response status 99: get /invalid-status |}]
 ;;
 
 let%expect_test "invalid body limits are rejected" =

@@ -8,6 +8,11 @@ path/query/header, ограниченное чтение body и создани�
 эффектом testing и Eio backend. Производные [both] и [all] последовательны;
 параллелизм и управление ресурсами остаются возможностями конкретного runtime.
 
+[respond_empty] отделён от [respond_string]: пустой ответ не имеет
+представления и [Content-Type], а строковый ответ всегда является
+[text/plain; charset=utf-8]. Это сохраняет соответствие runtime тому media type,
+который та же декларация публикует в OpenAPI.
+
 [Context] вычисляет типизированные зависимости перед декодированием request.
 [Dependency.value] подходит для application-scoped сервиса,
 [Dependency.of_request] — для request-scoped значения. [Guard] является тем же

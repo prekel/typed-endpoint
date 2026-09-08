@@ -15,6 +15,7 @@ type resp =
 
 type 'a io = 'a
 type body_read_error = [ `Too_large ]
+type middleware = request:Http.Request.t -> next:(unit -> resp) -> resp
 
 module Io = struct
   type 'a t = 'a io
@@ -103,7 +104,16 @@ let body_to_string ~max_bytes (request : req) =
      | Error _ -> Error `Too_large)
 ;;
 
-let respond_string ?(status = `OK) body = { status; headers = Http.Header.init (); body }
+let respond_empty ?(status = `OK) () =
+  { status; headers = Http.Header.init (); body = "" }
+;;
+
+let respond_string ?(status = `OK) body =
+  { status
+  ; headers = Http.Header.init_with "content-type" "text/plain; charset=utf-8"
+  ; body
+  }
+;;
 
 let respond_html ?(status = `OK) body =
   { status
@@ -132,12 +142,29 @@ let dispatch_with_body routes ~request ~body =
   with
   | Some (route, params) -> route.handler { request; uri; body; params }
   | None when not (List.is_empty path_matches) ->
-    respond_string ~status:`Method_not_allowed "Method not allowed"
+    let allow =
+      path_matches
+      |> List.map ~f:(fun (route, _params) -> Http.Method.to_string route.meth)
+      |> List.dedup_and_sort ~compare:String.compare
+      |> String.concat ~sep:", "
+    in
+    let headers = Http.Header.init_with "allow" allow in
+    let headers = Http.Header.add headers "content-type" "text/plain; charset=utf-8" in
+    { status = `Method_not_allowed; headers; body = "Method not allowed" }
   | None -> respond_string ~status:`Not_found "Not found"
 ;;
 
-let dispatch routes ~request ~body =
-  dispatch_with_body routes ~request ~body:(`String body)
+let apply_middlewares middlewares ~request ~next =
+  List.fold_right middlewares ~init:next ~f:(fun middleware next () ->
+    middleware ~request ~next)
+;;
+
+let dispatch ?(middlewares = []) routes ~request ~body =
+  apply_middlewares
+    middlewares
+    ~request
+    ~next:(fun () -> dispatch_with_body routes ~request ~body:(`String body))
+    ()
 ;;
 
 let response_writer response =
@@ -148,11 +175,16 @@ let response_writer response =
     ()
 ;;
 
-let server routes =
+let server ?(middlewares = []) routes =
   Cohttp_eio.Server.make_response_action
     ~callback:(fun _connection request body ->
       `Response
-        (dispatch_with_body routes ~request ~body:(`Stream body) |> response_writer))
+        (apply_middlewares
+           middlewares
+           ~request
+           ~next:(fun () -> dispatch_with_body routes ~request ~body:(`Stream body))
+           ()
+         |> response_writer))
     ()
 ;;
 
@@ -165,4 +197,8 @@ module Response = struct
   let status response = response.status
   let headers response = response.headers
   let body response = response.body
+
+  let with_header response ~name ~value =
+    { response with headers = Http.Header.replace response.headers name value }
+  ;;
 end

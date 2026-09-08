@@ -24,12 +24,30 @@ JSON с полями [code] и [message] и также не отражает о�
 
 [Metadata.schema_name] включает components и [$ref]. Одинаковое имя с разными
 схемами, конфликтующие security schemes, неизвестные OAuth scopes, повторные
-маршруты, operationId и response status являются ошибками [compile]. Перед
-публикацией документа задайте [Openapi.Config] с title, version, description и
-servers.
+маршруты, operationId и response status являются ошибками [compile]. Маршруты
+вида [/pets/:id] и [/pets/:name] также конфликтуют: их runtime-shape совпадает,
+даже если имена capture различаются. В одном endpoint нельзя повторять имя
+path- или query-параметра, а явный status должен лежать в диапазоне 100--599.
+При допустимом пересечении [/pets/find] имеет приоритет над [/pets/:id]
+независимо от порядка объявления; маршруты одинаковой специфичности сохраняют
+исходный порядок.
+Prefix группы принимает только непустые статические сегменты без [/], [:], [*]
+и dot-navigation. Typed route не принимает wildcard-синтаксис, а список
+отрендеренных [:capture] сверяется со списком типизированных path-параметров.
+Корневой route внутри prefix нормализуется в [/v1], а не [/v1/].
+Перед публикацией документа задайте [Openapi.Config] с title, version,
+description и servers.
+
+Backend возвращает текст с [Content-Type: text/plain; charset=utf-8], HTML с
+[text/html; charset=utf-8], JSON с [application/json], а body-less response без
+[Content-Type]. Встроенные роутеры Dream, Eio и testing добавляют [Allow] к
+ответу 405.
 
 {1 Тестирование}
 
 [typed-endpoint-testing] исполняет [Compiled.app] напрямую и не запускает web
 framework или сокет. Основную бизнес-семантику проверяйте через него, а в
 adapter tests оставляйте преобразование request/response и router integration.
+[Typed_endpoint_testing.Client.call] объединяет создание request и dispatch, а
+[Typed_endpoint_testing.Response.header] выполняет регистронезависимый поиск
+заголовка.

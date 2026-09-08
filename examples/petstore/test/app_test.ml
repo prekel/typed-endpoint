@@ -36,12 +36,7 @@ let auth = Petstore_app.Routes.{ bearer_token = "test-token"; api_key = "test-ke
 let services = App.Services.create ()
 let compiled = App.compile ~auth services
 let routes = Dsl.Compiled.app compiled
-
-let request ?(headers = []) ?(body = "") meth target =
-  Typed_endpoint_testing.Request.v ~headers ~body ~meth ~target ()
-  |> Typed_endpoint_testing.dispatch routes
-;;
-
+let request = Typed_endpoint_testing.Client.call routes
 let bearer_headers = [ "authorization", "Bearer test-token" ]
 let api_key_headers = [ "api_key", "test-key" ]
 let json headers = ("content-type", "application/json") :: headers
@@ -373,12 +368,11 @@ let test_injected_repository_failure () =
     Failing_app.compile ~auth services |> Failing_app.Endpoint.Dsl.Compiled.app
   in
   let response =
-    Typed_endpoint_testing.Request.v
+    Typed_endpoint_testing.Client.call
+      routes
       ~headers:api_key_headers
-      ~meth:`GET
-      ~target:"/store/inventory"
-      ()
-    |> Typed_endpoint_testing.dispatch routes
+      `GET
+      "/store/inventory"
   in
   assert_status 503 response;
   let response = response_json response in

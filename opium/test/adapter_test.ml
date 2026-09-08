@@ -38,12 +38,22 @@ let route =
   @@ fun body -> return (OK body)
 ;;
 
+let captured =
+  Unsafe.route ~meth:B.get ~path:"/priority/:value" ~handler:(fun request ->
+    B.respond_string ("capture:" ^ B.param request "value"))
+;;
+
+let fixed =
+  Unsafe.route ~meth:B.get ~path:"/priority/fixed" ~handler:(fun _request ->
+    B.respond_string "static")
+;;
+
 let app =
   compile_exn
     ~decode_error:decode_errors
     [ Group.v
         ~metadata:(Operation_metadata.v ~description:"Opium adapter test" ())
-        [ route ]
+        [ route; captured; fixed ]
     ]
   |> Compiled.app
   |> fun build -> build Opium.App.empty |> Opium.App.to_rock
@@ -64,8 +74,22 @@ let () =
   in
   let response = Lwt_main.run (handler request) in
   assert (Int.equal (Cohttp.Code.code_of_status (Opium.Std.Response.code response)) 200);
+  assert (
+    Option.equal
+      String.equal
+      (Cohttp.Header.get (Opium.Std.Response.headers response) "content-type")
+      (Some "text/plain; charset=utf-8"));
   let body =
     Lwt_main.run (Opium.Std.Response.body response |> Opium.Std.Body.to_string)
   in
-  assert (String.equal body "hello")
+  assert (String.equal body "hello");
+  let request =
+    Cohttp.Request.make ~meth:`GET (Uri.of_string "/priority/fixed")
+    |> Opium.Std.Request.create ~body:Cohttp_lwt.Body.empty
+  in
+  let response = Lwt_main.run (handler request) in
+  let body =
+    Lwt_main.run (Opium.Std.Response.body response |> Opium.Std.Body.to_string)
+  in
+  assert (String.equal body "static")
 ;;

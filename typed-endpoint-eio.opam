@@ -10,8 +10,8 @@ tags: ["http" "routing" "openapi" "eio"]
 homepage: "https://github.com/prekel/typed-endpoint"
 bug-reports: "https://github.com/prekel/typed-endpoint/issues"
 depends: [
+  "dune" {>= "3.14"}
   "ocaml" {>= "5.1"}
-  "dune" {>= "3.14" & >= "3.16"}
   "typed-endpoint" {= version}
   "base"
   "cohttp-eio" {= "6.3.0"}
