@@ -12,23 +12,25 @@ struct
   open Io.Let_syntax
   open Endpoint
   open Dsl
+  open Staged
 
   let unavailable error =
     Code_5xx (`Service_unavailable, Dto.Api_response.persistence_error error)
   ;;
 
   let get_inventory =
-    make_in_group
-      ~meth:B.get
-      ~operation_id:"getInventory"
-      ~summary:"Returns pet inventories by status."
-      ~description:"Returns a map of status names to quantities."
-      ~path:(s "store" / s "inventory" /? nil)
-      ~request:Request.empty
-      ~responses:
-        (JSON.ok (module Dto.Inventory)
-         |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun database () ->
+    get / "store" / "inventory"
+    |> documented
+         ~operation_id:"getInventory"
+         ~summary:"Returns pet inventories by status."
+         ~description:"Returns a map of status names to quantities."
+         ()
+    |> accepts Request.empty
+    |> returns
+         (JSON.ok (module Dto.Inventory)
+          <|> JSON.server_errors [ `Service_unavailable ] (module Dto.Api_response))
+    ==> fun context () ->
+    let database = Common.Secured.dependency context in
     let%map result = Pets.inventory ~database in
     match result with
     | Ok inventory -> OK (Dto.Inventory.of_domain inventory)
@@ -36,19 +38,19 @@ struct
   ;;
 
   let place_order =
-    make_in_group
-      ~meth:B.post
-      ~operation_id:"placeOrder"
-      ~summary:"Place an order for a pet."
-      ~description:"Place a new order in the store."
-      ~path:(s "store" / s "order" /? nil)
-      ~request:(Request.json (module Dto.Order))
-      ~responses:
-        (JSON.ok (module Dto.Order)
-         |+ JSON.bad_request (module Dto.Api_response)
-         |+ code4xx [ `Unprocessable_entity ] (Response.json (module Dto.Api_response))
-         |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun database order ->
+    post / "store" / "order"
+    |> documented
+         ~operation_id:"placeOrder"
+         ~summary:"Place an order for a pet."
+         ~description:"Place a new order in the store."
+         ()
+    |> accepts (Request.json (module Dto.Order))
+    |> returns
+         (JSON.ok (module Dto.Order)
+          <|> JSON.bad_request (module Dto.Api_response)
+          <|> JSON.client_errors [ `Unprocessable_entity ] (module Dto.Api_response)
+          <|> JSON.server_errors [ `Service_unavailable ] (module Dto.Api_response))
+    ==> fun database order ->
     match Dto.Order.to_domain order with
     | Error message -> Io.return (Bad_request (Dto.Api_response.bad_request message))
     | Ok (id, attributes) ->
@@ -66,19 +68,18 @@ struct
   ;;
 
   let get_order =
-    make_in_group
-      ~meth:B.get
-      ~operation_id:"getOrderById"
-      ~summary:"Find purchase order by ID."
-      ~description:"Returns a stored purchase order."
-      ~path:
-        (s "store" / s "order" / param "orderId" (module Http_parameter.Order_id) /? nil)
-      ~request:Request.empty
-      ~responses:
-        (JSON.ok (module Dto.Order)
-         |+ JSON.not_found (module Dto.Api_response)
-         |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun id database () ->
+    get / "store" / "order" /: arg "orderId" (module Http_parameter.Order_id)
+    |> documented
+         ~operation_id:"getOrderById"
+         ~summary:"Find purchase order by ID."
+         ~description:"Returns a stored purchase order."
+         ()
+    |> accepts Request.empty
+    |> returns
+         (JSON.ok (module Dto.Order)
+          <|> JSON.not_found (module Dto.Api_response)
+          <|> JSON.server_errors [ `Service_unavailable ] (module Dto.Api_response))
+    ==> fun id database () ->
     let%map result = Orders.find ~database id in
     match result with
     | Ok (Some order) -> OK (Dto.Order.of_domain order)
@@ -87,19 +88,18 @@ struct
   ;;
 
   let delete_order =
-    make_in_group
-      ~meth:B.delete
-      ~operation_id:"deleteOrder"
-      ~summary:"Delete purchase order by identifier."
-      ~description:"Deletes a stored purchase order."
-      ~path:
-        (s "store" / s "order" / param "orderId" (module Http_parameter.Order_id) /? nil)
-      ~request:Request.empty
-      ~responses:
-        (ok (Response.empty ~description:"Order deleted" ())
-         |+ JSON.not_found (module Dto.Api_response)
-         |+ code5xx [ `Service_unavailable ] (Response.json (module Dto.Api_response)))
-    @@ fun id database () ->
+    delete / "store" / "order" /: arg "orderId" (module Http_parameter.Order_id)
+    |> documented
+         ~operation_id:"deleteOrder"
+         ~summary:"Delete purchase order by identifier."
+         ~description:"Deletes a stored purchase order."
+         ()
+    |> accepts Request.empty
+    |> returns
+         (ok (Response.empty ~description:"Order deleted" ())
+          <|> JSON.not_found (module Dto.Api_response)
+          <|> JSON.server_errors [ `Service_unavailable ] (module Dto.Api_response))
+    ==> fun id database () ->
     let%map result = Orders.delete ~database id in
     match result with
     | Ok () -> OK ()

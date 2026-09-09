@@ -80,20 +80,29 @@ let path_of_target target =
   | _ -> "/"
 ;;
 
-let start logger ~method_ ~target ~request_id =
+let ensure_request_id logger = function
+  | Some value when is_valid_request_id value -> value
+  | Some _ | None -> logger.fresh_id ()
+;;
+
+let start_with_path logger ~method_ ~path ~request_id =
   let started_at = logger.now () in
-  let request_id =
-    match request_id with
-    | Some value when is_valid_request_id value -> value
-    | Some _ | None -> logger.fresh_id ()
-  in
+  let request_id = ensure_request_id logger request_id in
   { logger
   ; started_at
   ; timestamp = format_timestamp started_at
   ; method_
-  ; path = path_of_target target
+  ; path
   ; request_id
   }
+;;
+
+let start logger ~method_ ~target ~request_id =
+  start_with_path logger ~method_ ~path:(path_of_target target) ~request_id
+;;
+
+let start_route logger ~method_ ~path_template ~request_id =
+  start_with_path logger ~method_ ~path:path_template ~request_id
 ;;
 
 let request_id request = request.request_id

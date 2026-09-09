@@ -25,10 +25,11 @@ Servant, Tapir, Smithy4s, http4s и ZIO. Это backlog, а не описани�
 
 ```ocaml
 let get_pet =
-  Endpoint.get
-    ~operation_id:"getPetById"
-    ~path:(s "pet" / param "petId" Pet_id /? nil)
-    ~responses:(JSON.ok Pet |+ JSON.not_found Api_response)
+  Contract.Staged.(
+    get / "pet" /: arg "petId" Pet_id
+    |> documented ~operation_id:"getPetById" ()
+    |> accepts Request.empty
+    |> returns (JSON.ok Pet <|> JSON.not_found Api_response))
 
 let get_pet_server =
   Server_endpoint.handle get_pet @@ fun pet_id database () ->
@@ -40,45 +41,55 @@ client function. Текущие curried path/query/body arguments следует
 обязательный input record и `map_input` не нужны. Record остаётся локальным
 выбором приложения, когда параметров действительно много.
 
-### Пункт 6: backend conformance suite
+### Пункт 6: backend conformance suite — реализовано
 
-Нужен общий набор black-box тестов для каждого `Backend.S`: body limit,
-заголовки и content type, пустой ответ, 404/405 и `Allow`, приоритет статических
-маршрутов, decode errors и порядок routes. Новый backend считается готовым
-только после прохождения этого suite.
+`Typed_endpoint_testing.Backend_conformance` содержит общий black-box suite для
+`Backend.S`: ограничение body, регистронезависимые заголовки, content type,
+пустой ответ, 404/405 и `Allow`, приоритет статического маршрута, path capture,
+decode errors и порядок `Backend.combine`. Suite подключён к testing, Opium,
+Dream и Eio adapter tests. Новый backend должен предоставить небольшой harness
+преобразования request/response и запустить тот же suite.
 
-### Пункт 7: типизированный `Route_info`
+### Пункт 7: типизированный `Route_info` — реализовано
 
-Runtime route должен предоставлять backend adapter или interceptor стабильные
-метаданные: `operation_id`, HTTP method, route template, tags и security
-requirements. Observability должна использовать template (`/pet/{petId}`), а
-не raw path с высокой cardinality.
+После совпадения маршрута interceptor получает `Route_info.t` с
+`operation_id`, HTTP method, OpenAPI-style route template, итоговыми tags и
+security requirements. Метаданные строятся из той же декларации, что runtime и
+OpenAPI. Petstore access log использует `/pet/{petId}`, а не raw path с высокой
+cardinality.
 
-### Пункт 8: три явных уровня middleware
+### Пункт 8: три явных уровня middleware — реализовано
 
-Нужно сохранить строгую границу:
+Сохранена строгая граница:
 
 1. framework middleware — request ID, CORS, compression, transport timeout;
 2. route-aware interceptor — tracing, metrics и логирование с `Route_info`;
 3. `Context`/`Guard` — типизированные request-scoped значения и авторизация.
 
-Interceptor не должен превращаться в service locator или получать доступ к
-произвольным application dependencies.
+Framework middleware остаётся API конкретного адаптера. `Dsl.Interceptor.t`
+подключается через `compile ~interceptors`, выполняется только для совпавшего
+typed route и получает лишь `Route_info`, raw request и `next`. Поэтому он не
+может превратиться в service locator или получить произвольные application
+dependencies. В Petstore request-ID middleware работает до router, access-log
+interceptor — после совпадения route, а guard/context остаются частью typed
+endpoint.
 
-### Пункт 9: request-scoped значения и `Principal.t`
+### Пункт 9: request-scoped значения и `Principal.t` — реализовано
 
-Следует расширить существующие `Dependency`/`Guard`, а не создавать отдельный
-аналог http4s `ContextMiddleware`. Успешный guard должен возвращать
-типизированный `Principal.t`; вместе с ним через applicative context можно
-передавать request ID, trace context и другие дешёвые request-scoped значения.
-Petstore должен показать этот подход на защищённой группе.
+`Principal.t` хранит application-defined identity и детерминированный набор
+scopes. `Guard.authenticate` возвращает его как обычный typed context, поэтому
+principal компонуется с `Dependency.of_request` и application dependency через
+`Context.Let_syntax`. Защищённые группы Petstore передают handler значение
+`Controller_context.Secured.t` с principal, request ID и статически выбранной
+dependency; connection и runtime service locator туда не попадают.
 
-### Пункт 14: независимые wire contract tests
+### Пункт 14: независимые wire contract tests — реализовано
 
-Нужны тесты сырого HTTP boundary и fake transport, которые не используют один
-и тот же codec для подготовки запроса и проверки ответа. Они должны ловить
-совместимые на уровне OCaml типов, но неправильные JSON field names, status,
-headers и content types.
+`examples/petstore/test/wire_contract_test.ml` отправляет literal HTTP body
+через in-memory transport и независимо разбирает сырой ответ. Тесты не
+используют application codecs для подготовки ожидаемых данных и проверяют JSON
+field names, status, headers, content types, decode-error shape, пустые ответы
+и router 404.
 
 ## Не планируется сейчас
 

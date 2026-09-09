@@ -34,14 +34,45 @@ let metadata : t Typed_endpoint.Metadata.t =
 [Parameter.int], [Parameter.int64], [Parameter.float] и [Parameter.bool].
 [Parameter.v] создаёт локальный codec без отдельного именованного модуля.
 
-Обычный [make] передаёт handler декодированные path/query-аргументы, затем
-body. Backend request не добавляется неявно. Если нужен request или зависимости,
-используйте [make_with] с [Context.request], [Dependency] и [Guard]. Несколько
-контекстов удобно сводить операторами из [Context.Applicative_infix]: например,
-[guard *> Dependency.value service] выполняет guard и передаёт handler сервис.
-[Context.all] собирает однородный список контекстов. Если приложение использует
-[ppx_let], тот же код можно писать через [Context.Let_syntax] и
-[let%map ... and ...].
+{1 Staged URI DSL}
+
+[Dsl.Staged] является URI-first DSL объявления endpoint. Phantom phase
+заставляет соблюдать порядок: path, затем query, metadata, request, responses и
+handler. После первого query type checker больше не принимает [/] и [/:];
+[accepts] и [returns] также нельзя переставить местами.
+
+{[
+let get_pet =
+  let open Staged in
+  let ready =
+    get
+    / "pet"
+    /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
+    /? arg "verbose" (Parameter.bool ~description:"Verbose response" ())
+    |> documented
+         ~operation_id:"getPetById"
+         ~summary:"Finds a pet"
+         ()
+    |> accepts Request.empty
+    |> returns
+         (JSON.ok (module Pet)
+          <|> JSON.not_found (module Api_response))
+  in
+  handle ready @@ fun pet_id verbose () ->
+  find_pet pet_id verbose
+]}
+
+[/] добавляет static segment, [/:] — required path capture, [/?] — optional
+query и [/!] — required query. Порядок операторов одновременно задаёт порядок
+curried аргументов handler. [<|>] является читаемым alias для [|+]. Для route,
+который затем входит в [Group.make_with_context], последний шаг можно записать
+[ready ==> fun ...]; standalone route завершается [handle], а route со своим
+контекстом — [handle_with]. Backend request не добавляется неявно: при
+необходимости передайте [Context.request] в [handle_with]. [Dependency] и
+[Guard] добавляют остальные typed context values. Несколько контекстов удобно
+сводить операторами из [Context.Applicative_infix]; [Context.all] собирает
+однородный список. При использовании [ppx_let] композицию можно писать через
+[Context.Let_syntax] и [let%map ... and ...].
 
 Асинхронные handlers используют тот же [ppx_let] через [Io.Let_syntax]. Тип
 [Io.t] совпадает с backend [io]: это [Lwt.t] для Dream и Opium и identity для
@@ -51,6 +82,12 @@ testing и Eio. Благодаря этому handler не вызывает back
 После [compile] используйте [Compiled.app] для backend-приложения и
 [Compiled.openapi] для документа. Полный пример находится в
 [examples/petstore].
+
+[compile ~interceptors] принимает route-aware wrappers. Каждый wrapper
+выполняется после совпадения route, получает [Route_info.t] и поэтому пишет
+низкокардинальный template вроде [/pet/{petId}], а не raw target. Framework
+middleware по-прежнему отвечает за request ID, CORS, compression и timeout;
+[Context]/[Guard] — за request-scoped typed значения и авторизацию.
 
 В framework-free тесте request можно выполнить одной функцией:
 

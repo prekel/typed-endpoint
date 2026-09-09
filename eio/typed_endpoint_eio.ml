@@ -15,7 +15,7 @@ type resp =
 
 type 'a io = 'a
 type body_read_error = [ `Too_large ]
-type middleware = request:Http.Request.t -> next:(unit -> resp) -> resp
+type middleware = request:Http.Request.t -> next:(Http.Request.t -> resp) -> resp
 
 module Io = struct
   type 'a t = 'a io
@@ -155,16 +155,16 @@ let dispatch_with_body routes ~request ~body =
 ;;
 
 let apply_middlewares middlewares ~request ~next =
-  List.fold_right middlewares ~init:next ~f:(fun middleware next () ->
-    middleware ~request ~next)
+  let next =
+    List.fold_right middlewares ~init:next ~f:(fun middleware next request ->
+      middleware ~request ~next)
+  in
+  next request
 ;;
 
 let dispatch ?(middlewares = []) routes ~request ~body =
-  apply_middlewares
-    middlewares
-    ~request
-    ~next:(fun () -> dispatch_with_body routes ~request ~body:(`String body))
-    ()
+  apply_middlewares middlewares ~request ~next:(fun request ->
+    dispatch_with_body routes ~request ~body:(`String body))
 ;;
 
 let response_writer response =
@@ -179,11 +179,8 @@ let server ?(middlewares = []) routes =
   Cohttp_eio.Server.make_response_action
     ~callback:(fun _connection request body ->
       `Response
-        (apply_middlewares
-           middlewares
-           ~request
-           ~next:(fun () -> dispatch_with_body routes ~request ~body:(`Stream body))
-           ()
+        (apply_middlewares middlewares ~request ~next:(fun request ->
+           dispatch_with_body routes ~request ~body:(`Stream body))
          |> response_writer))
     ()
 ;;

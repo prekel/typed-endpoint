@@ -57,7 +57,7 @@ struct
       B.respond_json (`Assoc [ "status", `String "ok" ]))
   ;;
 
-  let compile ~auth ~database =
+  let compile ?(interceptors = []) ~auth ~database () =
     let api =
       Pet_controller.groups ~auth ~database
       @ Store_controller.groups ~auth ~database
@@ -69,6 +69,6 @@ struct
         ~description:"Runtime endpoints"
         (openapi_route compiled :: health :: List.map Api_docs.pages ~f:docs_page)
     in
-    compile_exn (api @ [ runtime ])
+    compile_exn ~interceptors (api @ [ runtime ])
   ;;
 end

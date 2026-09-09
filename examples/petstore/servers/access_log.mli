@@ -20,10 +20,23 @@ val create
   -> unit
   -> t
 
+(** Returns a valid incoming request ID or creates a new one. This operation is
+    intended for framework middleware, before route matching. *)
+val ensure_request_id : t -> string option -> string
+
 (** Begins an event for an incoming request. A supplied [request_id] is reused
     only when it contains 1 to 128 ASCII letters, digits, dots, underscores,
     or hyphens. Otherwise a server-generated ID is used. *)
 val start : t -> method_:string -> target:string -> request_id:string option -> request
+
+(** Begins an event for an already matched typed route. Unlike {!start}, this
+    stores the low-cardinality route template verbatim. *)
+val start_route
+  :  t
+  -> method_:string
+  -> path_template:string
+  -> request_id:string option
+  -> request
 
 (** The correlation ID to return as [X-Request-Id]. *)
 val request_id : request -> string

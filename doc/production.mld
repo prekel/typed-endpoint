@@ -51,3 +51,16 @@ adapter tests оставляйте преобразование request/response
 [Typed_endpoint_testing.Client.call] объединяет создание request и dispatch, а
 [Typed_endpoint_testing.Response.header] выполняет регистронезависимый поиск
 заголовка.
+
+[Typed_endpoint_testing.Backend_conformance] задаёт единый black-box suite для
+всех backend: bounded body, response representations, case-insensitive headers,
+404/405 с [Allow], статический приоритет, path capture, decode errors и порядок
+[Backend.S.combine]. Каждый adapter test предоставляет только harness для
+создания request и чтения response. Прохождение suite является обязательной
+частью готовности нового backend.
+
+Отдельно проверяйте wire contract без повторного использования application
+codec в setup и assertions. В Petstore такой тест отправляет literal JSON и
+проверяет сырой status, headers, content type, body и имена полей через
+независимый разбор [Yojson.Safe]. Это ловит симметричные ошибки encoder/decoder,
+которые не видны при round trip одним codec.

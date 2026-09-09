@@ -104,6 +104,36 @@ module Security : sig
   val combine_alternatives : requirement list -> requirement list -> requirement list
 end
 
+(** An authenticated identity together with the scopes granted for the current
+    request. The identity type belongs to the application; the HTTP core only
+    carries it and never performs runtime type lookup. *)
+module Principal : sig
+  type 'identity t = private
+    { identity : 'identity
+    ; scopes : string list
+    }
+
+  (** Creates a principal with a deterministic, duplicate-free scope list. *)
+  val v : ?scopes:string list -> identity:'identity -> unit -> 'identity t
+
+  val identity : 'identity t -> 'identity
+  val scopes : _ t -> string list
+  val has_scope : _ t -> string -> bool
+end
+
+(** Stable, low-cardinality metadata for one matched runtime route.
+    [path_template] uses OpenAPI-style captures such as [/pet/{petId}], never
+    the raw request target. *)
+module Route_info : sig
+  type t = private
+    { operation_id : string option
+    ; method_ : string
+    ; path_template : string
+    ; tags : string list
+    ; security : Security.requirement list
+    }
+end
+
 (** OpenAPI document configuration shared by all backends. *)
 module Openapi : sig
   (** A server on which the described API is available. *)
@@ -440,12 +470,6 @@ module Parameter : sig
     -> (module S with type t = bool)
 end
 
-(** Backwards-compatible names for parameter codecs. Both aliases are exactly
-    the same API; their use at a path position determines the OpenAPI location. *)
-module Param = Parameter
-
-module Query = Parameter
-
 module Request_payload : sig
   (** A JSON request DTO. [of_yojson] runs only after media type, size, and JSON
       syntax checks have succeeded. *)
@@ -642,12 +666,11 @@ module Make
           end
         end
 
-        (** The raw backend request. Use it explicitly with {!make_with} only
+        (** The raw backend request. Pass it to {!Staged.handle_with} explicitly
             when framework-neutral dependencies are insufficient. *)
         val request : B.req t
 
-        (** A context carrying no request data. It is equivalent to [return ()]
-            and is what {!make} uses. *)
+        (** A context carrying no request data. It is equivalent to [return ()]. *)
         val empty : unit t
       end
 
@@ -671,6 +694,17 @@ module Make
           -> check:(B.req -> ('context, 'error) Result.t B.io)
           -> unit
           -> 'context Context.t
+
+        (** Authentication-specific name for {!v}. A successful check returns
+            a typed principal which can be combined with request-scoped
+            dependencies through {!Context}. *)
+        val authenticate
+          :  ?security:Security.requirement list
+          -> status:B.client_error_status
+          -> response:'error Response.t
+          -> check:(B.req -> ('identity Principal.t, 'error) Result.t B.io)
+          -> unit
+          -> 'identity Principal.t Context.t
       end
 
       module Decode_error_response : sig
@@ -693,45 +727,6 @@ module Make
           -> t
       end
 
-      (** A path declaration indexed by the initial handler type and its final
-          type after all path/query arguments have been applied. *)
-      type (_, _) path
-
-      (** The end of a typed path declaration. *)
-      val nil : ('f, 'f) path
-
-      (** Adds one literal URL segment. Segments are supplied from left to right
-          with the composition operators below. *)
-      val s : string -> ('h, 'f) path -> ('h, 'f) path
-
-      (** Adds a required path parameter and prepends its decoded value to the
-          handler arguments. *)
-      val param
-        :  string
-        -> (module Param.S with type t = 'p)
-        -> ('h, 'f) path
-        -> ('p -> 'h, 'f) path
-
-      (** Adds an optional query parameter and passes [None] when it is absent. *)
-      val query
-        :  string
-        -> (module Query.S with type t = 'q)
-        -> ('h, 'f) path
-        -> ('q option -> 'h, 'f) path
-
-      (** Like {!query}, but rejects an absent value before running the handler. *)
-      val query_req
-        :  string
-        -> (module Query.S with type t = 'q)
-        -> ('h, 'f) path
-        -> ('q -> 'h, 'f) path
-
-      (** Composes another path segment. Written as [s "items" / param ...]. *)
-      val ( / ) : ('a -> 'b) -> ('c -> 'a) -> 'c -> 'b
-
-      (** Terminates a path declaration with {!nil}. *)
-      val ( /? ) : ('a -> 'b) -> 'a -> 'b
-
       (** Internal response-list index exposed abstractly so declarations remain
           type safe while response combinators compose. *)
       type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
@@ -745,6 +740,15 @@ module Make
       (** Combines response declarations from left to right. Duplicate status
           declarations are rejected during compilation. *)
       val ( |+ )
+        :  (('a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i) rb
+            -> ('j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r) rb)
+        -> (('s, 't, 'u, 'v, 'w, 'x, 'y, 'z, 'a1) rb
+            -> ('a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i) rb)
+        -> ('s, 't, 'u, 'v, 'w, 'x, 'y, 'z, 'a1) rb
+        -> ('j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r) rb
+
+      (** Choice-shaped alias for [|+], intended for the staged DSL. *)
+      val ( <|> )
         :  (('a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i) rb
             -> ('j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r) rb)
         -> (('s, 't, 'u, 'v, 'w, 'x, 'y, 'z, 'a1) rb
@@ -778,6 +782,20 @@ module Make
         val internal_server_error
           :  (module Response_payload.S with type t = 'ise)
           -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, never, 'code5xx, 'code) rb
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
+
+        (** JSON shorthand for a set of client-error statuses. *)
+        val client_errors
+          :  B.client_error_status list
+          -> (module Response_payload.S with type t = 'code4xx)
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, never, 'ise, 'code5xx, 'code) rb
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
+
+        (** JSON shorthand for a set of server-error statuses. *)
+        val server_errors
+          :  B.server_error_status list
+          -> (module Response_payload.S with type t = 'code5xx)
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, never, 'code) rb
           -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
       end
 
@@ -852,88 +870,17 @@ module Make
         type t
       end
 
-      (** Resolves [context] before path, query, and body decoding. A context
-          rejection short-circuits the endpoint with its declared response. *)
-      val make_with
-        :  context:'context Context.t
-        -> meth:B.meth
-        -> ?summary:string
-        -> ?tags:string list
-        -> ?deprecated:bool
-        -> ?operation_id:string
-        -> ?description:string
-        -> ?decode_error:Decode_error_response.t
-        -> request:'req Request.t
-        -> path:
-             ( 'h
-               , 'context
-                 -> 'req
-                 -> ( 'ok
-                      , 'created
-                      , 'code2xx
-                      , 'nf
-                      , 'bad
-                      , 'code4xx
-                      , 'ise
-                      , 'code5xx
-                      , 'code )
-                      resp
-                      B.io )
-               path
-        -> responses:
-             ( 'ok
-               , 'created
-               , 'code2xx
-               , 'nf
-               , 'bad
-               , 'code4xx
-               , 'ise
-               , 'code5xx
-               , 'code )
-               responses
-        -> 'h
-        -> Route.t
-
-      (** Declares the usual endpoint. Path/query values are followed directly
-          by the decoded request body; the backend request is not injected. Use
-          {!make_with} with {!Context.request} when raw request access is needed. *)
-      val make
-        :  meth:B.meth
-        -> ?summary:string
-        -> ?tags:string list
-        -> ?deprecated:bool
-        -> ?operation_id:string
-        -> ?description:string
-        -> ?decode_error:Decode_error_response.t
-        -> request:'req Request.t
-        -> path:
-             ( 'h
-               , 'req
-                 -> ( 'ok
-                      , 'created
-                      , 'code2xx
-                      , 'nf
-                      , 'bad
-                      , 'code4xx
-                      , 'ise
-                      , 'code5xx
-                      , 'code )
-                      resp
-                      B.io )
-               path
-        -> responses:
-             ( 'ok
-               , 'created
-               , 'code2xx
-               , 'nf
-               , 'bad
-               , 'code4xx
-               , 'ise
-               , 'code5xx
-               , 'code )
-               responses
-        -> 'h
-        -> Route.t
+      module Interceptor : sig
+        (** A route-aware runtime wrapper. It runs only after a route has
+            matched, receives stable contract metadata, and deliberately has no
+            application dependency store. The first interceptor in a compile
+            list is the outermost wrapper. *)
+        type t =
+          route_info:Route_info.t
+          -> request:B.req
+          -> next:(unit -> B.resp B.io)
+          -> B.resp B.io
+      end
 
       module Group : sig
         type t
@@ -973,11 +920,11 @@ module Make
           -> 'context route list
           -> t
 
-        (** Attaches one typed context to every {!make_in_group} declaration.
-            The context is resolved only for the matched route, and its guard
-            responses and security requirements are emitted on every attached
-            OpenAPI operation. Split routes into multiple groups when they need
-            different authorization policies. *)
+        (** Attaches one typed context to every route finalized with
+            {!Staged.handle_in_group}. The context is resolved only for the
+            matched route, and its guard responses and security requirements
+            are emitted on every attached OpenAPI operation. Split routes into
+            multiple groups when they need different authorization policies. *)
         val make_with_context
           :  ?prefix:string list
           -> ?decode_error:Decode_error_response.t
@@ -990,47 +937,230 @@ module Make
           -> t
       end
 
-      (** Declares an endpoint whose context is supplied later by
-          {!Group.make_with_context}. This keeps a shared dependency/guard out
-          of every route constructor while preserving its type in the handler. *)
-      val make_in_group
-        :  meth:B.meth
-        -> ?summary:string
-        -> ?tags:string list
-        -> ?deprecated:bool
-        -> ?operation_id:string
-        -> ?description:string
-        -> ?decode_error:Decode_error_response.t
-        -> request:'req Request.t
-        -> path:
-             ( 'h
-               , 'context
-                 -> 'req
-                 -> ( 'ok
-                      , 'created
-                      , 'code2xx
-                      , 'nf
-                      , 'bad
-                      , 'code4xx
-                      , 'ise
-                      , 'code5xx
-                      , 'code )
-                      resp
-                      B.io )
-               path
-        -> responses:
-             ( 'ok
+      (** The URI-first endpoint DSL. Its abstract phase types enforce the
+          declaration order path -> query -> documentation -> request ->
+          responses -> handler. *)
+      module Staged : sig
+        (** A named typed path or query argument. The operator determines its
+            location and whether it is optional. *)
+        type 'a argument
+
+        val arg : string -> (module Parameter.S with type t = 'a) -> 'a argument
+
+        type ('phase, 'handler, 'terminal) uri
+        type ('handler, 'terminal) documented
+        type ('handler, 'terminal, 'request) requested
+
+        type ('handler
+             , 'terminal
+             , 'request
+             , 'ok
+             , 'created
+             , 'code2xx
+             , 'not_found
+             , 'bad_request
+             , 'code4xx
+             , 'internal_server_error
+             , 'code5xx
+             , 'code)
+             ready
+
+        (** Starts a path for an arbitrary backend method. *)
+        val meth : B.meth -> ([ `Path ], 'terminal, 'terminal) uri
+
+        val get : ([ `Path ], 'terminal, 'terminal) uri
+        val post : ([ `Path ], 'terminal, 'terminal) uri
+        val put : ([ `Path ], 'terminal, 'terminal) uri
+        val delete : ([ `Path ], 'terminal, 'terminal) uri
+        val patch : ([ `Path ], 'terminal, 'terminal) uri
+
+        (** Appends a static segment. Static and captured segments are no
+            longer accepted after the first query parameter. *)
+        val ( / )
+          :  ([ `Path ], 'handler, 'terminal) uri
+          -> string
+          -> ([ `Path ], 'handler, 'terminal) uri
+
+        (** Appends a required captured path segment. *)
+        val ( /: )
+          :  ([ `Path ], 'handler, 'value -> 'terminal) uri
+          -> 'value argument
+          -> ([ `Path ], 'handler, 'terminal) uri
+
+        (** Appends an optional query parameter. *)
+        val ( /? )
+          :  ([< `Path | `Query ], 'handler, 'value option -> 'terminal) uri
+          -> 'value argument
+          -> ([ `Query ], 'handler, 'terminal) uri
+
+        (** Appends a required query parameter. *)
+        val ( /! )
+          :  ([< `Path | `Query ], 'handler, 'value -> 'terminal) uri
+          -> 'value argument
+          -> ([ `Query ], 'handler, 'terminal) uri
+
+        (** Closes URI construction and records endpoint metadata. *)
+        val documented
+          :  ?summary:string
+          -> ?tags:string list
+          -> ?deprecated:bool
+          -> ?operation_id:string
+          -> ?description:string
+          -> ?decode_error:Decode_error_response.t
+          -> unit
+          -> ([< `Path | `Query ], 'handler, 'terminal) uri
+          -> ('handler, 'terminal) documented
+
+        (** Adds the only request-body declaration and advances to responses. *)
+        val accepts
+          :  'request Request.t
+          -> ('handler, 'terminal) documented
+          -> ('handler, 'terminal, 'request) requested
+
+        (** Adds the response algebra and advances to a handler-ready route. *)
+        val returns
+          :  ( 'ok
                , 'created
                , 'code2xx
-               , 'nf
-               , 'bad
+               , 'not_found
+               , 'bad_request
                , 'code4xx
-               , 'ise
+               , 'internal_server_error
                , 'code5xx
                , 'code )
                responses
-        -> 'h
-        -> 'context Group.route
+          -> ('handler, 'terminal, 'request) requested
+          -> ( 'handler
+               , 'terminal
+               , 'request
+               , 'ok
+               , 'created
+               , 'code2xx
+               , 'not_found
+               , 'bad_request
+               , 'code4xx
+               , 'internal_server_error
+               , 'code5xx
+               , 'code )
+               ready
+
+        val handle
+          :  ( 'handler
+               , 'request
+                 -> ( 'ok
+                      , 'created
+                      , 'code2xx
+                      , 'not_found
+                      , 'bad_request
+                      , 'code4xx
+                      , 'internal_server_error
+                      , 'code5xx
+                      , 'code )
+                      resp
+                      B.io
+               , 'request
+               , 'ok
+               , 'created
+               , 'code2xx
+               , 'not_found
+               , 'bad_request
+               , 'code4xx
+               , 'internal_server_error
+               , 'code5xx
+               , 'code )
+               ready
+          -> 'handler
+          -> Route.t
+
+        val handle_with
+          :  context:'context Context.t
+          -> ( 'handler
+               , 'context
+                 -> 'request
+                 -> ( 'ok
+                      , 'created
+                      , 'code2xx
+                      , 'not_found
+                      , 'bad_request
+                      , 'code4xx
+                      , 'internal_server_error
+                      , 'code5xx
+                      , 'code )
+                      resp
+                      B.io
+               , 'request
+               , 'ok
+               , 'created
+               , 'code2xx
+               , 'not_found
+               , 'bad_request
+               , 'code4xx
+               , 'internal_server_error
+               , 'code5xx
+               , 'code )
+               ready
+          -> 'handler
+          -> Route.t
+
+        val handle_in_group
+          :  ( 'handler
+               , 'context
+                 -> 'request
+                 -> ( 'ok
+                      , 'created
+                      , 'code2xx
+                      , 'not_found
+                      , 'bad_request
+                      , 'code4xx
+                      , 'internal_server_error
+                      , 'code5xx
+                      , 'code )
+                      resp
+                      B.io
+               , 'request
+               , 'ok
+               , 'created
+               , 'code2xx
+               , 'not_found
+               , 'bad_request
+               , 'code4xx
+               , 'internal_server_error
+               , 'code5xx
+               , 'code )
+               ready
+          -> 'handler
+          -> 'context Group.route
+
+        (** Infix finalizer for grouped routes. *)
+        val ( ==> )
+          :  ( 'handler
+               , 'context
+                 -> 'request
+                 -> ( 'ok
+                      , 'created
+                      , 'code2xx
+                      , 'not_found
+                      , 'bad_request
+                      , 'code4xx
+                      , 'internal_server_error
+                      , 'code5xx
+                      , 'code )
+                      resp
+                      B.io
+               , 'request
+               , 'ok
+               , 'created
+               , 'code2xx
+               , 'not_found
+               , 'bad_request
+               , 'code4xx
+               , 'internal_server_error
+               , 'code5xx
+               , 'code )
+               ready
+          -> 'handler
+          -> 'context Group.route
+      end
 
       module Unsafe : sig
         (** Adds a runtime-only route that is deliberately absent from OpenAPI. *)
@@ -1129,12 +1259,14 @@ module Make
           capture at the same position regardless of declaration order. *)
       val compile
         :  ?decode_error:Decode_error_response.t
+        -> ?interceptors:Interceptor.t list
         -> Group.t list
         -> (Compiled.t, Compile_error.t list) Result.t
 
       (** Like [compile], but raises [Failure] with all validation errors. *)
       val compile_exn
         :  ?decode_error:Decode_error_response.t
+        -> ?interceptors:Interceptor.t list
         -> Group.t list
         -> Compiled.t
     end

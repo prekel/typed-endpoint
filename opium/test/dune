@@ -8,4 +8,5 @@
   opium
   typed-endpoint
   typed-endpoint-opium
+  typed-endpoint-testing
   yojson))

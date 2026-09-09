@@ -14,7 +14,9 @@ let last_line lines =
 
 let () =
   let lines = ref [] in
-  let times = ref [ 1_700_000_000.; 1_700_000_000.125 ] in
+  let times =
+    ref [ 1_700_000_000.; 1_700_000_000.125; 1_700_000_001.; 1_700_000_001.250 ]
+  in
   let now () =
     match !times with
     | time :: remaining ->
@@ -46,9 +48,27 @@ let () =
   assert (Yojson.Safe.equal (field "request_id" event) (`String "gateway-42"));
   assert (Yojson.Safe.equal (field "duration_ms" event) (`Float 125.));
   assert (not (String.is_substring (last_line !lines) ~substring:"secret"));
+  let route_request =
+    Access_log.start_route
+      logger
+      ~method_:"GET"
+      ~path_template:"/pet/{petId}"
+      ~request_id:(Some "gateway-43")
+  in
+  Access_log.finish route_request ~status:200;
+  let route_event = last_line !lines |> Yojson.Safe.from_string in
+  assert (Yojson.Safe.equal (field "path" route_event) (`String "/pet/{petId}"));
   let invalid_logger =
     Access_log.create ~fresh_id:(fun () -> "generated") ~write:(fun _ -> ()) ()
   in
+  assert (
+    String.equal
+      (Access_log.ensure_request_id invalid_logger (Some "gateway-44"))
+      "gateway-44");
+  assert (
+    String.equal
+      (Access_log.ensure_request_id invalid_logger (Some "not\nvalid"))
+      "generated");
   let invalid_request =
     Access_log.start
       invalid_logger

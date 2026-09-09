@@ -80,3 +80,29 @@ module Client : sig
     -> string
     -> response
 end
+
+(** Reusable black-box laws for every {!Typed_endpoint.Backend.S}. Adapter
+    tests provide only request/response conversion and effect execution. *)
+module Backend_conformance : sig
+  module type Harness = sig
+    module Backend : Typed_endpoint.Backend.S
+
+    val call
+      :  Backend.app_builder
+      -> ?headers:(string * string) list
+      -> ?body:string
+      -> Backend.meth
+      -> string
+      -> Backend.resp Backend.io
+
+    val status : Backend.resp -> int
+    val header : Backend.resp -> string -> string option
+    val body : Backend.resp -> string Backend.io
+  end
+
+  module Make (H : Harness) : sig
+    (** Runs bounded-body, representation, routing, decode-error, header, and
+        declaration-order checks. *)
+    val run : unit -> unit H.Backend.io
+  end
+end

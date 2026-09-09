@@ -179,3 +179,228 @@ module Client = struct
     Request.v ?headers ?body ~meth ~target () |> dispatch routes
   ;;
 end
+
+module Backend_conformance = struct
+  module type Harness = sig
+    module Backend : Typed_endpoint.Backend.S
+
+    val call
+      :  Backend.app_builder
+      -> ?headers:(string * string) list
+      -> ?body:string
+      -> Backend.meth
+      -> string
+      -> Backend.resp Backend.io
+
+    val status : Backend.resp -> int
+    val header : Backend.resp -> string -> string option
+    val body : Backend.resp -> string Backend.io
+  end
+
+  module Make (H : Harness) = struct
+    module B = H.Backend
+    module Endpoint = Typed_endpoint.Make (B)
+    open Endpoint
+    open Dsl
+    open Staged
+
+    let check condition message =
+      if not condition then
+        failwith ("backend conformance: " ^ message)
+    ;;
+
+    let text description = Response.text ~description ()
+
+    let endpoint uri request responses handler =
+      let ready = uri |> documented () |> accepts request |> returns responses in
+      handle ready handler
+    ;;
+
+    let endpoint_with ~context uri request responses handler =
+      let ready = uri |> documented () |> accepts request |> returns responses in
+      handle_with ~context ready handler
+    ;;
+
+    let bounded =
+      endpoint
+        (post / "bounded")
+        (Request.text ~max_body_bytes:4 ~description:"Bounded body" ())
+        (ok (text "Echo"))
+        (fun body -> B.Io.return (OK body))
+    ;;
+
+    let header_route =
+      endpoint_with
+        ~context:Context.request
+        (get / "header")
+        Request.empty
+        (ok (text "Header"))
+        (fun request () ->
+           B.Io.return
+             (OK (Option.value (B.header request "x-conformance") ~default:"none")))
+    ;;
+
+    let empty_route =
+      endpoint
+        (get / "empty")
+        Request.empty
+        (ok (Response.empty ~description:"Empty" ()))
+        (fun () -> B.Io.return (OK ()))
+    ;;
+
+    let decoded =
+      endpoint
+        (get
+         / "decoded"
+         /: arg "id" (Typed_endpoint.Parameter.int ~description:"Identifier" ())
+         /! arg "enabled" (Typed_endpoint.Parameter.bool ~description:"Enabled" ()))
+        Request.empty
+        (ok (text "Decoded"))
+        (fun id enabled () ->
+           B.Io.return (OK (Int.to_string id ^ ":" ^ Bool.to_string enabled)))
+    ;;
+
+    let captured =
+      endpoint
+        (get
+         / "priority"
+         /: arg "value" (Typed_endpoint.Parameter.string ~description:"Value" ()))
+        Request.empty
+        (ok (text "Captured"))
+        (fun value () -> B.Io.return (OK ("capture:" ^ value)))
+    ;;
+
+    let fixed =
+      endpoint
+        (get / "priority" / "fixed")
+        Request.empty
+        (ok (text "Static"))
+        (fun () -> B.Io.return (OK "static"))
+    ;;
+
+    let method_get =
+      endpoint
+        (get / "methods")
+        Request.empty
+        (ok (text "GET"))
+        (fun () -> B.Io.return (OK "get"))
+    ;;
+
+    let method_post =
+      endpoint
+        (post / "methods")
+        Request.empty
+        (ok (text "POST"))
+        (fun () -> B.Io.return (OK "post"))
+    ;;
+
+    let app =
+      compile_exn
+        [ Group.make
+            ~description:"Backend conformance"
+            [ bounded
+            ; header_route
+            ; empty_route
+            ; decoded
+            ; captured
+            ; fixed
+            ; method_get
+            ; method_post
+            ]
+        ]
+      |> Compiled.app
+    ;;
+
+    let body response = H.body response
+
+    let check_response response ~status ~content_type =
+      check
+        (Int.equal (H.status response) status)
+        ("expected status "
+         ^ Int.to_string status
+         ^ ", got "
+         ^ Int.to_string (H.status response));
+      check
+        (Option.equal String.equal (H.header response "content-type") content_type)
+        "unexpected Content-Type"
+    ;;
+
+    let run () =
+      let open B.Io.Let_syntax in
+      let%bind echoed =
+        H.call
+          app
+          ~headers:[ "content-type", "text/plain" ]
+          ~body:"data"
+          B.post
+          "/bounded"
+      in
+      check_response echoed ~status:200 ~content_type:(Some "text/plain; charset=utf-8");
+      let%bind echoed_body = body echoed in
+      check (String.equal echoed_body "data") "text response body";
+      let%bind too_large =
+        H.call
+          app
+          ~headers:[ "content-type", "text/plain" ]
+          ~body:"large"
+          B.post
+          "/bounded"
+      in
+      check_response too_large ~status:413 ~content_type:(Some "application/json");
+      let%bind too_large_body = body too_large in
+      check
+        (String.is_substring too_large_body ~substring:"body_too_large")
+        "body limit error shape";
+      let%bind unsupported =
+        H.call
+          app
+          ~headers:[ "content-type", "application/json" ]
+          ~body:"data"
+          B.post
+          "/bounded"
+      in
+      check_response unsupported ~status:415 ~content_type:(Some "application/json");
+      let%bind reflected =
+        H.call app ~headers:[ "X-Conformance", "present" ] B.get "/header"
+      in
+      let%bind reflected_body = body reflected in
+      check (String.equal reflected_body "present") "case-insensitive request header";
+      let%bind empty = H.call app B.get "/empty" in
+      check_response empty ~status:200 ~content_type:None;
+      let%bind empty_body = body empty in
+      check (String.is_empty empty_body) "empty response body";
+      let%bind missing = H.call app B.get "/missing" in
+      check (Int.equal (H.status missing) 404) "404 status";
+      let%bind wrong_method = H.call app B.put "/methods" in
+      check_response
+        wrong_method
+        ~status:405
+        ~content_type:(Some "text/plain; charset=utf-8");
+      check
+        (Option.equal String.equal (H.header wrong_method "allow") (Some "GET, POST"))
+        "405 Allow header";
+      let%bind fixed_response = H.call app B.get "/priority/fixed" in
+      let%bind fixed_body = body fixed_response in
+      check (String.equal fixed_body "static") "static route priority";
+      let%bind captured_response = H.call app B.get "/priority/other" in
+      let%bind captured_body = body captured_response in
+      check (String.equal captured_body "capture:other") "captured route";
+      let%bind invalid = H.call app B.get "/decoded/nope?enabled=true" in
+      check_response invalid ~status:400 ~content_type:(Some "application/json");
+      let%bind invalid_body = body invalid in
+      check
+        (String.is_substring invalid_body ~substring:"invalid_parameter")
+        "invalid parameter error shape";
+      let%bind absent = H.call app B.get "/decoded/42" in
+      check (Int.equal (H.status absent) 400) "missing query status";
+      let ordered =
+        B.combine
+          (B.route B.get "/ordered/:first" (fun _request -> B.respond_string "first"))
+          (B.route B.get "/ordered/:second" (fun _request -> B.respond_string "second"))
+      in
+      let%bind ordered_response = H.call ordered B.get "/ordered/value" in
+      let%map ordered_body = body ordered_response in
+      check (String.equal ordered_body "first") "route declaration order"
+    ;;
+  end
+end

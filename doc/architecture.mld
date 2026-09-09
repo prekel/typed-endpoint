@@ -17,26 +17,46 @@ path/query/header, ограниченное чтение body и создани�
 [Dependency.value] подходит для application-scoped сервиса,
 [Dependency.of_request] — для request-scoped значения. [Guard] является тем же
 типизированным контекстом, но может завершить request объявленным ответом.
+[Guard.authenticate] фиксирует частый случай: успешная проверка возвращает
+типизированный [Principal.t] с application-defined identity и выданными scopes.
+[Principal] ничего не знает о способе аутентификации и не выполняет runtime
+lookup.
 [Context] реализует [Base.Applicative.S]: [map2], [map3] и [all] собирают
 независимые зависимости без вложенных пар, а [all_unit] компонует guards.
 Через [Context.Let_syntax] ту же композицию можно записать с [let%map] и [and].
 [bind] намеренно отсутствует: набор responses и security requirements должен
-быть известен до выполнения request. Обычный [make] использует пустой контекст;
-[make_with] делает зависимости и доступ к сырому request явными в сигнатуре
-handler.
+быть известен до выполнения request. [Staged.handle] использует пустой context;
+[Staged.handle_with] делает зависимости и доступ к сырому request явными в
+сигнатуре handler.
 
 Одинаковый контекст нескольких endpoint можно объявить один раз через
-[Group.make_with_context]. Такие endpoint создаются [make_in_group], поэтому
-тип результата контекста проверяется для каждого handler до сборки группы.
-Guard выполняется только у совпавшего маршрута, а его ответы и security
-requirements добавляются к каждой операции группы. Разные политики доступа
-следует оформлять отдельными группами.
+[Group.make_with_context]. Такие endpoint завершаются
+[Staged.handle_in_group] или [Staged.(==>)], поэтому тип результата контекста
+проверяется для каждого handler до сборки группы. Guard выполняется только у
+совпавшего маршрута, а его ответы и security requirements добавляются к каждой
+операции группы. Разные политики доступа следует оформлять отдельными группами.
 
 Security requirements прикрепляются к [Guard]. Список requirements означает
 OR, [Security.all] объединяет схемы как AND. При [Context.both] requirements
 двух guards образуют AND-комбинации, совпадающие с runtime-порядком проверок.
 
-Общие HTTP middleware намеренно не входят в ядро. Логирование, tracing,
-compression, CORS и обработка необъявленных исключений лучше ставить снаружи
-[Compiled.app] средствами framework. В ядре остаётся только то, что влияет на
-типизированный контракт endpoint.
+{1 Middleware и метаданные маршрута}
+
+HTTP pipeline разделён на три уровня. Framework middleware находится снаружи
+[Compiled.app] и отвечает за работу, не требующую совпавшего typed route:
+request ID, CORS, compression и transport timeout. [Dsl.Interceptor] включается
+при [compile], выполняется только после выбора маршрута и получает [Route_info]:
+[operation_id], HTTP method, низкокардинальный route template, итоговые tags и
+security requirements. Это уровень tracing, metrics и access log. [Context] и
+[Guard] остаются третьим уровнем для типизированных request-scoped значений и
+авторизации.
+
+Interceptor видит только [Route_info], raw backend request и continuation. У
+него нет application dependency store. Первый interceptor в списке
+[compile ~interceptors] является внешним. Не совпавшие с typed route запросы в
+interceptor не попадают и остаются ответственностью framework middleware.
+
+[Route_info.path_template] использует OpenAPI captures, например
+[/pet/{petId}], а не фактический [/pet/42]. Prefix и tags группы уже объединены
+с endpoint metadata, а security requirements включают guard группы. Поэтому
+runtime observability и публикуемый контракт не расходятся.

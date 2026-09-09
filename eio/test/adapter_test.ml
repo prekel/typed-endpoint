@@ -3,6 +3,28 @@ open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_eio)
 open Endpoint
 open Endpoint.Dsl
+open Staged
+
+module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
+    module Backend = Typed_endpoint_eio
+
+    let call app ?(headers = []) ?(body = "") meth target =
+      let request =
+        Http.Request.make ~meth ~headers:(Http.Header.of_list headers) target
+      in
+      Typed_endpoint_eio.dispatch app ~request ~body
+    ;;
+
+    let status response =
+      Typed_endpoint_eio.Response.status response |> Cohttp.Code.code_of_status
+    ;;
+
+    let header response name =
+      Http.Header.get (Typed_endpoint_eio.Response.headers response) name
+    ;;
+
+    let body = Typed_endpoint_eio.Response.body
+  end)
 
 module String_param = struct
   type t = string
@@ -53,17 +75,13 @@ let authenticated =
 
 let route =
   let context = Context.both authenticated (Dependency.value "items") in
-  make_with
-    ~context
-    ~meth:B.post
-    ~path:
-      (s "items"
-       / param "id" (module String_param)
-       / query "q" (module String_param)
-       /? nil)
-    ~request:(Request.text ~description:"Body" ())
-    ~responses:(ok (Response.text ~description:"OK" ()))
-  @@ fun id query (user, service) body ->
+  let ready =
+    post / "items" /: arg "id" (module String_param) /? arg "q" (module String_param)
+    |> documented ()
+    |> accepts (Request.text ~description:"Body" ())
+    |> returns (ok (Response.text ~description:"OK" ()))
+  in
+  handle_with ~context ready @@ fun id query (user, service) body ->
   OK
     (String.concat
        ~sep:":"
@@ -129,9 +147,9 @@ let () =
   let fixed = dispatch ~meth:`GET "/v1/priority/fixed" "" in
   assert (String.equal (Typed_endpoint_eio.Response.body fixed) "static");
   let calls = ref [] in
-  let middleware name ~request:_ ~next =
+  let middleware name ~request ~next =
     calls := !calls @ [ name ^ ":before" ];
-    let response = next () in
+    let response = next request in
     calls := !calls @ [ name ^ ":after" ];
     response
   in
@@ -149,6 +167,28 @@ let () =
       String.equal
       !calls
       [ "outer:before"; "inner:before"; "inner:after"; "outer:after" ]);
+  let add_request_id ~request ~next =
+    let headers =
+      Http.Header.replace (Http.Request.headers request) "x-request-id" "generated"
+    in
+    next ({ request with headers } : Http.Request.t)
+  in
+  let observe_request_id ~request ~next =
+    assert (
+      Option.equal
+        String.equal
+        (Http.Header.get (Http.Request.headers request) "x-request-id")
+        (Some "generated"));
+    next request
+  in
+  let request = Http.Request.make ~meth:`GET "/v1/priority/fixed" in
+  let _response =
+    Typed_endpoint_eio.dispatch
+      ~middlewares:[ add_request_id; observe_request_id ]
+      app
+      ~request
+      ~body:""
+  in
   let with_header =
     Typed_endpoint_eio.Response.with_header logged ~name:"x-test" ~value:"value"
   in
@@ -162,5 +202,6 @@ let () =
     Option.equal
       String.equal
       (Http.Header.get (Typed_endpoint_eio.Response.headers with_header) "x-test")
-      (Some "replacement"))
+      (Some "replacement"));
+  Conformance.run ()
 ;;

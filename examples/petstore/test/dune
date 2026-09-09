@@ -6,6 +6,11 @@
  (libraries base petstore_app typed-endpoint-testing yojson))
 
 (test
+ (name wire_contract_test)
+ (package typed-endpoint-testing)
+ (libraries base petstore_app typed-endpoint-testing yojson))
+
+(test
  (name pet_service_test)
  (package typed-endpoint-testing)
  (libraries base petstore_app))

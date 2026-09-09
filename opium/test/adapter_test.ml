@@ -5,6 +5,36 @@ module Io = Endpoint.Io
 open Io.Let_syntax
 open Endpoint
 open Dsl
+open Staged
+
+module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
+    module Backend = Typed_endpoint_opium
+
+    let handler app =
+      let app = app Opium.App.empty |> Opium.App.to_rock in
+      let filters =
+        Opium.Std.Rock.App.middlewares app |> List.map ~f:Opium.Std.Rock.Middleware.filter
+      in
+      Opium.Std.Rock.Filter.apply_all filters (Opium.Std.Rock.App.handler app)
+    ;;
+
+    let call app ?(headers = []) ?(body = "") meth target =
+      let headers = Cohttp.Header.of_list headers in
+      let request =
+        Cohttp.Request.make ~meth ~headers (Uri.of_string target)
+        |> Opium.Std.Request.create ~body:(Cohttp_lwt.Body.of_string body)
+      in
+      handler app request
+    ;;
+
+    let status response = Cohttp.Code.code_of_status (Opium.Std.Response.code response)
+
+    let header response name =
+      Cohttp.Header.get (Opium.Std.Response.headers response) name
+    ;;
+
+    let body response = Opium.Std.Response.body response |> Opium.Std.Body.to_string
+  end)
 
 module Error_payload = struct
   type t = { message : string }
@@ -30,12 +60,13 @@ let decode_errors =
 ;;
 
 let route =
-  make
-    ~meth:B.post
-    ~path:(s "echo" /? nil)
-    ~request:(Request.text ~description:"Body" ())
-    ~responses:(ok (Response.text ~description:"Echo" ()))
-  @@ fun body -> return (OK body)
+  let ready =
+    post / "echo"
+    |> documented ()
+    |> accepts (Request.text ~description:"Body" ())
+    |> returns (ok (Response.text ~description:"Echo" ()))
+  in
+  handle ready @@ fun body -> return (OK body)
 ;;
 
 let captured =
@@ -91,5 +122,6 @@ let () =
   let body =
     Lwt_main.run (Opium.Std.Response.body response |> Opium.Std.Body.to_string)
   in
-  assert (String.equal body "static")
+  assert (String.equal body "static");
+  Lwt_main.run (Conformance.run ())
 ;;

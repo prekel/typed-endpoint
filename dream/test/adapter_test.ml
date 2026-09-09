@@ -5,6 +5,33 @@ module Io = Endpoint.Io
 open Io.Let_syntax
 open Endpoint
 open Endpoint.Dsl
+open Staged
+
+module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
+    module Backend = Typed_endpoint_dream
+
+    let dream_method : Backend.meth -> Dream.method_ = function
+      | `GET -> `GET
+      | `POST -> `POST
+      | `PUT -> `PUT
+      | `DELETE -> `DELETE
+      | `PATCH -> `PATCH
+      | `HEAD -> `HEAD
+      | `CONNECT -> `CONNECT
+      | `OPTIONS -> `OPTIONS
+      | `TRACE -> `TRACE
+      | `Other method_ -> `Method method_
+    ;;
+
+    let call app ?(headers = []) ?(body = "") meth target =
+      let request = Dream.request ~method_:(dream_method meth) ~target ~headers body in
+      Dream.test (Typed_endpoint_dream.router app) request |> Lwt.return
+    ;;
+
+    let status response = Dream.status_to_int (Dream.status response)
+    let header response name = Dream.header response name
+    let body = Dream.body
+  end)
 
 module String_param = struct
   type t = string
@@ -43,13 +70,13 @@ let decode_errors =
 ;;
 
 let route =
-  make_with
-    ~context:Context.request
-    ~meth:B.post
-    ~path:(s "items" / param "id" (module String_param) /? nil)
-    ~request:(Request.text ~description:"Body" ())
-    ~responses:(ok (Response.text ~description:"OK" ()))
-  @@ fun id request body ->
+  let ready =
+    post / "items" /: arg "id" (module String_param)
+    |> documented ()
+    |> accepts (Request.text ~description:"Body" ())
+    |> returns (ok (Response.text ~description:"OK" ()))
+  in
+  handle_with ~context:Context.request ready @@ fun id request body ->
   let query = Dream.query request "q" |> Option.value ~default:"none" in
   return (OK (String.concat ~sep:":" [ id; query; body ]))
 ;;
@@ -107,5 +134,6 @@ let () =
   let request = Dream.request ~method_:(`Method "PROPFIND") ~target:"/v1/custom" "" in
   let response = Dream.test handler request in
   assert (Dream.status_to_int (Dream.status response) = 200);
-  assert (String.equal (Lwt_main.run (Dream.body response)) "custom")
+  assert (String.equal (Lwt_main.run (Dream.body response)) "custom");
+  Lwt_main.run (Conformance.run ())
 ;;

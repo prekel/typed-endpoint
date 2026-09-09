@@ -23,6 +23,8 @@ OpenAPI 3.1.
 - компиляция отклоняет неоднозначные route-shape, повторные параметры и
   status-коды вне диапазона HTTP;
 - `Guard` одновременно задаёт runtime-проверку и OpenAPI security requirement;
+- route-aware interceptors получают типизированный `Route_info` с шаблоном
+  пути, tags и security, но без application service locator;
 - результат OpenAPI детерминирован.
 
 ## Минимальная декларация
@@ -36,14 +38,15 @@ module Io = Endpoint.Io
 open Io.Let_syntax
 open Endpoint
 open Dsl
+open Staged
 
-let route =
-  make
-    ~meth:B.get
-    ~path:(s "health" /? nil)
-    ~request:Request.empty
-    ~responses:(ok (Response.text ~description:"Health status" ()))
-  @@ fun () -> return (OK "ok")
+let ready =
+  get / "health"
+  |> documented ~operation_id:"health" ()
+  |> accepts Request.empty
+  |> returns (ok (Response.text ~description:"Health status" ()))
+
+let route = handle ready @@ fun () -> return (OK "ok")
 
 let compiled =
   compile_exn
@@ -51,18 +54,42 @@ let compiled =
 ```
 
 `Compiled.app compiled` возвращает значение конкретного backend, а
-`Compiled.openapi compiled` — тот же контракт в OpenAPI.
+`Compiled.openapi compiled` — тот же контракт в OpenAPI. Промежуточные типы
+staged DSL не позволяют добавить path segment после query, переставить request
+и responses или забыть одну из стадий. Например, маршрут с path-параметром:
 
-Обычный `make` передаёт handler только path/query-параметры и body. Для
-типизированных зависимостей и авторизации служит `make_with ~context`; сырой
-request доступен явно через `Context.request`. Ошибки декодирования по умолчанию
-получают безопасный JSON `{ "code": ..., "message": ... }`, который можно
-заменить на уровне endpoint, группы или всей компиляции.
+```ocaml
+let get_pet =
+  let open Staged in
+  let ready =
+    get
+    / "pet"
+    /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
+    |> documented ~operation_id:"getPetById" ()
+    |> accepts Request.empty
+    |> returns (ok (Response.text ~description:"Pet name" ()))
+  in
+  handle ready @@ fun pet_id () -> return (OK (Int64.to_string pet_id))
+```
+
+`/?` добавляет optional query, `/!` — required query, `<|>` соединяет
+альтернативные responses, а `==>` завершает route для typed group. Исходные
+path/query-параметры передаются handler слева направо, затем следуют context и
+body. Standalone route завершается `handle`, route со своим контекстом —
+`handle_with ~context`, а grouped route — `==>`. Сырой request можно запросить
+явно через `Context.request`. Ошибки декодирования по умолчанию получают
+безопасный JSON `{ "code": ..., "message": ... }`, который можно заменить на
+уровне endpoint, группы или всей компиляции.
 
 Если один guard/набор зависимостей используется несколькими маршрутами,
-endpoint объявляется через `make_in_group`, а контекст один раз прикрепляется
-через `Group.make_with_context`. Его тип остаётся связан с handler каждого
-маршрута.
+endpoint завершается `==>`, а контекст один раз прикрепляется через
+`Group.make_with_context`. Его тип остаётся связан с handler каждого маршрута.
+
+Interceptors передаются в `compile ~interceptors`. Они запускаются после
+совпадения маршрута и подходят для tracing, metrics и access log по стабильному
+`Route_info.path_template`. Request ID, CORS, compression и transport timeout
+остаются framework middleware вокруг `Compiled.app`; авторизация и
+request-scoped значения выражаются через `Guard`/`Context`.
 
 ## Petstore
 

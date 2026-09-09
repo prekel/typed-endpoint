@@ -1,4 +1,11 @@
 (test
  (name adapter_test)
  (package typed-endpoint-dream)
- (libraries base dream lwt.unix typed-endpoint typed-endpoint-dream yojson))
+ (libraries
+  base
+  dream
+  lwt.unix
+  typed-endpoint
+  typed-endpoint-dream
+  typed-endpoint-testing
+  yojson))

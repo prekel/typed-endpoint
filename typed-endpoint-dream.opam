@@ -13,6 +13,7 @@ depends: [
   "dune" {>= "3.14"}
   "ocaml" {>= "5.1"}
   "typed-endpoint" {= version}
+  "typed-endpoint-testing" {= version & with-test}
   "base"
   "cohttp"
   "dream" {= "1.0.0~alpha8"}

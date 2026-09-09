@@ -31,6 +31,12 @@ Petstore v3:
 `Pet_controller`, `Store_controller` и `User_controller`; `Routes` только
 собирает их группы и служебные endpoints.
 
+Все 20 публичных операций объявлены через `Dsl.Staged`: URI собирается
+операторами `/`, `/:`, `/?` и `/!`, затем последовательно задаются
+`documented`, `accepts`, `returns` и grouped handler `==>`. Служебные
+`/health`, `/docs` и `/openapi.json` остаются `Unsafe.route`, поскольку они
+намеренно не публикуются в OpenAPI.
+
 ## DI и слои приложения
 
 Зависимости задаются явно на двух разных уровнях:
@@ -69,6 +75,7 @@ let compiled =
   App.compile
     ~auth:(Petstore_app.Routes.auth_from_env ())
     ~database:(Database.create ())
+    ()
 ```
 
 В production composition root вместо `Database_memory.Make` можно подставить
@@ -93,6 +100,13 @@ Caqti-адаптер. В нём `Database.t` представляет pool, а
 создаёт application services. OpenAPI security и runtime guard используют одну
 декларацию. В context передаётся `Database.t`, но никогда не scoped
 `Database.connection`: границу транзакции определяет application service.
+
+Успешная проверка защищённой группы создаёт
+`Typed_endpoint.Principal.t`: identity различает OAuth и API key, а scopes
+сохраняются рядом с ним. Через applicative context handler одновременно
+получает principal, `X-Request-Id` текущего запроса и статически выбранный
+`Database.t`. Это request-scoped record, а не service locator: repository и
+application services по-прежнему выбираются только функтором composition root.
 
 Обоснование этой границы и сравнение с Servant, Tapir, Smithy4s, http4s и ZIO
 собраны в [заметке о типизированных FP-фреймворках](../../doc/typed-fp-framework-lessons.md).
@@ -149,13 +163,20 @@ JSON-объект на строку. Плоский формат содержи�
 возвращает тот же идентификатор в `X-Request-Id`.
 
 ```json
-{"timestamp":"2026-09-08T12:00:00.123Z","level":"info","event":"http_request","request_id":"gateway-42","method":"GET","path":"/pet/42","status":200,"duration_ms":12.5}
+{"timestamp":"2026-09-08T12:00:00.123Z","level":"info","event":"http_request","request_id":"gateway-42","method":"GET","path":"/pet/{petId}","status":200,"duration_ms":12.5}
 ```
 
 Входящий `X-Request-Id` сохраняется, если содержит от 1 до 128 латинских букв,
 цифр, `.`, `_` или `-`; иначе сервер генерирует новый. Это позволяет связать
 событие приложения с reverse proxy или API gateway без доверия к произвольным
 значениям заголовка.
+
+Здесь используются два разных слоя: framework middleware валидирует или
+создаёт request ID до маршрутизации и возвращает его клиенту, а typed
+interceptor после совпадения маршрута пишет access event с
+`Route_info.path_template`. Поэтому неизвестные framework routes всё ещё
+получают correlation ID, а метрики typed routes не создают отдельный label для
+каждого `petId`.
 
 В целях безопасности access log намеренно не содержит query string, request
 body, response body и `Authorization`. Необработанное исключение записывается

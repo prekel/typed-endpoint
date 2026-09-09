@@ -24,6 +24,31 @@ module Security = Contract.Security
 module Openapi_renderer = Openapi
 module Openapi = Contract.Openapi
 
+module Principal = struct
+  type 'identity t =
+    { identity : 'identity
+    ; scopes : string list
+    }
+
+  let v ?(scopes = []) ~identity () =
+    { identity; scopes = List.dedup_and_sort scopes ~compare:String.compare }
+  ;;
+
+  let identity principal = principal.identity
+  let scopes principal = principal.scopes
+  let has_scope principal scope = List.mem principal.scopes scope ~equal:String.equal
+end
+
+module Route_info = struct
+  type t =
+    { operation_id : string option
+    ; method_ : string
+    ; path_template : string
+    ; tags : string list
+    ; security : Security.requirement list
+    }
+end
+
 let schema_of_metadata (type a) (metadata : a Metadata.t) : Contract.Schema.t =
   Contract.Schema.v ?name:metadata.schema_name metadata.schema
 ;;
@@ -299,9 +324,6 @@ module Parameter = struct
       ()
   ;;
 end
-
-module Param = Parameter
-module Query = Parameter
 
 module Request_payload = struct
   module type S = sig
@@ -636,6 +658,8 @@ module Make (B : Backend.S) = struct
         ; security
         }
       ;;
+
+      let authenticate = v
     end
 
     module Decode_error_response = struct
@@ -659,50 +683,14 @@ module Make (B : Backend.S) = struct
       | End : ('f, 'f) path
       | Static : string * ('h, 'f) path -> ('h, 'f) path
       | Param :
-          string * (module Param.S with type t = 'p) * ('h, 'f) path
+          string * (module Parameter.S with type t = 'p) * ('h, 'f) path
           -> ('p -> 'h, 'f) path
       | Query :
-          string * (module Query.S with type t = 'q) * ('h, 'f) path
+          string * (module Parameter.S with type t = 'q) * ('h, 'f) path
           -> ('q option -> 'h, 'f) path
       | QueryReq :
-          string * (module Query.S with type t = 'q) * ('h, 'f) path
+          string * (module Parameter.S with type t = 'q) * ('h, 'f) path
           -> ('q -> 'h, 'f) path
-
-    let nil : ('f, 'f) path = End
-    let s seg tail = Static (seg, tail)
-
-    let param
-          (type p h f)
-          name
-          ((module P : Param.S with type t = p) as pm)
-          (tail : (h, f) path)
-      : (p -> h, f) path
-      =
-      Param (name, pm, tail)
-    ;;
-
-    let query
-          (type q h f)
-          name
-          ((module Q : Query.S with type t = q) as qm)
-          (tail : (h, f) path)
-      : (q option -> h, f) path
-      =
-      Query (name, qm, tail)
-    ;;
-
-    let query_req
-          (type q h f)
-          name
-          ((module Q : Query.S with type t = q) as qm)
-          (tail : (h, f) path)
-      : (q -> h, f) path
-      =
-      QueryReq (name, qm, tail)
-    ;;
-
-    let ( / ) m1 m2 r = m1 (m2 r)
-    let ( /? ) m1 r = m1 r
 
     let path_to_string : type h f. (h, f) path -> string =
       fun p ->
@@ -711,7 +699,7 @@ module Make (B : Backend.S) = struct
         match p with
         | End -> acc
         | Static (seg, rest) -> collect rest (seg :: acc)
-        | Param (name, (module P : Param.S with type t = _), rest) ->
+        | Param (name, (module P : Parameter.S with type t = _), rest) ->
           collect rest ((":" ^ name) :: acc)
         | Query (_, _, rest) -> collect rest acc
         | QueryReq (_, _, rest) -> collect rest acc
@@ -755,7 +743,7 @@ module Make (B : Backend.S) = struct
       match pattern with
       | End -> Ok handler
       | Static (_seg, rest) -> apply_path rest handler req0
-      | Param (name, (module P : Param.S with type t = _), rest) ->
+      | Param (name, (module P : Parameter.S with type t = _), rest) ->
         let raw = B.param req0 name in
         (match P.of_string raw with
          | Error error ->
@@ -764,7 +752,7 @@ module Make (B : Backend.S) = struct
          | Ok v ->
            let handler' = handler v in
            apply_path rest handler' req0)
-      | Query (name, (module Q : Query.S with type t = _), rest) ->
+      | Query (name, (module Q : Parameter.S with type t = _), rest) ->
         let raw_opt = B.query req0 name in
         let parsed =
           match raw_opt with
@@ -779,7 +767,7 @@ module Make (B : Backend.S) = struct
          | Ok v_opt ->
            let handler' = handler v_opt in
            apply_path rest handler' req0)
-      | QueryReq (name, (module Q : Query.S with type t = _), rest) ->
+      | QueryReq (name, (module Q : Parameter.S with type t = _), rest) ->
         let raw_opt = B.query req0 name in
         let parsed =
           match raw_opt with
@@ -1007,6 +995,7 @@ module Make (B : Backend.S) = struct
     ;;
 
     let ( |+ ) f g x = f (g x)
+    let ( <|> ) = ( |+ )
 
     module JSON = struct
       let ok m = ok (Response.json m)
@@ -1014,6 +1003,8 @@ module Make (B : Backend.S) = struct
       let bad_request m = bad_request (Response.json m)
       let not_found m = not_found (Response.json m)
       let internal_server_error m = internal_server_error (Response.json m)
+      let client_errors statuses m = code4xx statuses (Response.json m)
+      let server_errors statuses m = code5xx statuses (Response.json m)
     end
 
     let rec get_ok
@@ -1388,7 +1379,7 @@ module Make (B : Backend.S) = struct
         match p with
         | End -> []
         | Static (_, rest) -> path_params rest
-        | Param (name, (module P : Param.S with type t = _), rest) ->
+        | Param (name, (module P : Parameter.S with type t = _), rest) ->
           { name
           ; kind = `Path
           ; required = true
@@ -1396,7 +1387,7 @@ module Make (B : Backend.S) = struct
           ; metadata = documentation_of_metadata P.metadata
           }
           :: path_params rest
-        | Query (name, (module Q : Query.S with type t = _), rest) ->
+        | Query (name, (module Q : Parameter.S with type t = _), rest) ->
           { name
           ; kind = `Query
           ; required = false
@@ -1404,7 +1395,7 @@ module Make (B : Backend.S) = struct
           ; metadata = documentation_of_metadata Q.metadata
           }
           :: path_params rest
-        | QueryReq (name, (module Q : Query.S with type t = _), rest) ->
+        | QueryReq (name, (module Q : Parameter.S with type t = _), rest) ->
           { name
           ; kind = `Query
           ; required = true
@@ -1537,15 +1528,35 @@ module Make (B : Backend.S) = struct
       type t =
         { meth : B.meth
         ; path : string
+        ; metadata : Operation_metadata.t option
+        ; security : Security.requirement list
         ; handler : Decode_error_response.t -> B.req -> B.resp B.io
         ; contract : Decode_error_response.t -> Contract.route
         }
+    end
+
+    module Interceptor = struct
+      type t =
+        route_info:Route_info.t
+        -> request:B.req
+        -> next:(unit -> B.resp B.io)
+        -> B.resp B.io
+
+      let apply interceptors ~route_info ~request ~next =
+        List.fold_right
+          interceptors
+          ~init:next
+          ~f:(fun interceptor next () -> interceptor ~route_info ~request ~next)
+          ()
+      ;;
     end
 
     module Unsafe = struct
       let route ~meth ~path ~handler =
         { Route.meth
         ; path
+        ; metadata = None
+        ; security = []
         ; handler = (fun _decode_error -> handler)
         ; contract =
             (fun _decode_error ->
@@ -1615,30 +1626,69 @@ module Make (B : Backend.S) = struct
       List.compare Int.compare (specificity left) (specificity right)
     ;;
 
-    let build_app ~decode_error (groups : Group.t list) : B.app_builder =
+    let path_to_template path =
+      String.split path ~on:'/'
+      |> List.map ~f:(fun segment ->
+        match String.chop_prefix segment ~prefix:":" with
+        | None -> segment
+        | Some name -> "{" ^ name ^ "}")
+      |> String.concat ~sep:"/"
+    ;;
+
+    let route_metadata
+          ~(group : Operation_metadata.t)
+          (route : Operation_metadata.t option)
+      : Operation_metadata.t
+      =
+      match route with
+      | None -> group
+      | Some route ->
+        { route with
+          tags = List.dedup_and_sort (group.tags @ route.tags) ~compare:String.compare
+        }
+    ;;
+
+    let build_app ~decode_error ~interceptors (groups : Group.t list) : B.app_builder =
       let compile_route
             ~(prefix : string)
             ~(decode_error : Decode_error_response.t)
+            ~(group_metadata : Operation_metadata.t)
             (r : Route.t)
         : B.app_builder
         =
         let full_path = Contract.full_path ~prefix r.path in
-        B.route r.meth full_path (r.handler decode_error)
+        let metadata = route_metadata ~group:group_metadata r.metadata in
+        let route_info : Route_info.t =
+          { operation_id = metadata.operation_id
+          ; method_ = meth_to_string r.meth |> String.uppercase
+          ; path_template = path_to_template full_path
+          ; tags = metadata.tags
+          ; security = r.security
+          }
+        in
+        let handler = r.handler decode_error in
+        B.route r.meth full_path (fun request ->
+          Interceptor.apply interceptors ~route_info ~request ~next:(fun () ->
+            handler request))
       in
       let routes =
         List.concat_map groups ~f:(fun group ->
           let prefix = Contract.prefix_to_string group.prefix in
           let decode_error = Option.value group.decode_error ~default:decode_error in
-          List.map group.routes ~f:(fun route -> prefix, decode_error, route))
+          List.map group.routes ~f:(fun route ->
+            prefix, decode_error, group.metadata, route))
         |> List.stable_sort
-             ~compare:(fun (left_prefix, _, left) (right_prefix, _, right) ->
+             ~compare:(fun (left_prefix, _, _, left) (right_prefix, _, _, right) ->
                let full_path prefix route = Contract.full_path ~prefix route.Route.path in
                compare_path_specificity
                  (full_path left_prefix left)
                  (full_path right_prefix right))
       in
-      List.fold routes ~init:B.empty ~f:(fun app (prefix, decode_error, route) ->
-        B.combine app (compile_route ~prefix ~decode_error route))
+      List.fold
+        routes
+        ~init:B.empty
+        ~f:(fun app (prefix, decode_error, group_metadata, route) ->
+          B.combine app (compile_route ~prefix ~decode_error ~group_metadata route))
     ;;
 
     module Compiled = struct
@@ -1718,7 +1768,10 @@ module Make (B : Backend.S) = struct
       let to_string = Contract.Compile_error.to_string
     end
 
-    let compile ?(decode_error = Decode_error_response.default) (groups : Group.t list)
+    let compile
+          ?(decode_error = Decode_error_response.default)
+          ?(interceptors = [])
+          (groups : Group.t list)
       : (Compiled.t, Compile_error.t list) Result.t
       =
       let contract_groups =
@@ -1731,11 +1784,11 @@ module Make (B : Backend.S) = struct
       in
       Contract.compile contract_groups
       |> Result.map ~f:(fun contract ->
-        { Compiled.contract; app = build_app ~decode_error groups })
+        { Compiled.contract; app = build_app ~decode_error ~interceptors groups })
     ;;
 
-    let compile_exn ?decode_error groups =
-      match compile ?decode_error groups with
+    let compile_exn ?decode_error ?interceptors groups =
+      match compile ?decode_error ?interceptors groups with
       | Ok compiled -> compiled
       | Error errors ->
         errors
@@ -1823,96 +1876,237 @@ module Make (B : Backend.S) = struct
         ; endpoint = Some endpoint
         }
       in
-      { Route.meth = b.meth; path = path_str; handler = wrapped; contract }
+      { Route.meth = b.meth
+      ; path = path_str
+      ; metadata = b.metadata
+      ; security = b.context.security
+      ; handler = wrapped
+      ; contract
+      }
     ;;
 
-    let make_with
-          ~context
-          ~meth
-          ?summary
-          ?tags
-          ?deprecated
-          ?operation_id
-          ?description
-          ?decode_error
-          ~request
-          ~path
-          ~responses
-          f
-      =
-      make_route
-        ~context
-        ~invoke:(fun handler context body -> handler context body)
-        ~meth
-        ?summary
-        ?tags
-        ?deprecated
-        ?operation_id
-        ?description
-        ?decode_error
-        ~request
-        ~path
-        ~responses
-        f
-    ;;
+    module Staged = struct
+      type 'a argument =
+        { name : string
+        ; codec : (module Parameter.S with type t = 'a)
+        }
 
-    let make
-          ~meth
-          ?summary
-          ?tags
-          ?deprecated
-          ?operation_id
-          ?description
-          ?decode_error
-          ~request
-          ~path
-          ~responses
-          f
-      =
-      make_route
-        ~context:Context.empty
-        ~invoke:(fun handler () body -> handler body)
-        ~meth
-        ?summary
-        ?tags
-        ?deprecated
-        ?operation_id
-        ?description
-        ?decode_error
-        ~request
-        ~path
-        ~responses
-        f
-    ;;
+      let arg name codec = { name; codec }
 
-    let make_in_group
-          ~meth
-          ?summary
-          ?tags
-          ?deprecated
-          ?operation_id
-          ?description
-          ?decode_error
-          ~request
-          ~path
-          ~responses
-          f
-      =
-      Group.Contextual_route
-        (fun context ->
-          make_with
-            ~context
-            ~meth
+      type ('phase, 'handler, 'terminal) uri =
+        { meth : B.meth
+        ; path : ('handler, 'terminal) path
+        }
+
+      type (_, _) segment =
+        | Static_segment : string -> ('a, 'a) segment
+        | Path_segment :
+            string * (module Parameter.S with type t = 'a)
+            -> ('a -> 'tail, 'tail) segment
+        | Optional_query_segment :
+            string * (module Parameter.S with type t = 'a)
+            -> ('a option -> 'tail, 'tail) segment
+        | Required_query_segment :
+            string * (module Parameter.S with type t = 'a)
+            -> ('a -> 'tail, 'tail) segment
+
+      let prepend_segment
+        : type before after final.
+          (before, after) segment -> (after, final) path -> (before, final) path
+        =
+        fun segment tail ->
+        match segment with
+        | Static_segment value -> Static (value, tail)
+        | Path_segment (name, codec) -> Param (name, codec, tail)
+        | Optional_query_segment (name, codec) -> Query (name, codec, tail)
+        | Required_query_segment (name, codec) -> QueryReq (name, codec, tail)
+      ;;
+
+      let rec append_segment
+        : type handler before after.
+          (handler, before) path -> (before, after) segment -> (handler, after) path
+        =
+        fun path segment ->
+        match path with
+        | End -> prepend_segment segment End
+        | Static (value, tail) -> Static (value, append_segment tail segment)
+        | Param (name, codec, tail) -> Param (name, codec, append_segment tail segment)
+        | Query (name, codec, tail) -> Query (name, codec, append_segment tail segment)
+        | QueryReq (name, codec, tail) ->
+          QueryReq (name, codec, append_segment tail segment)
+      ;;
+
+      let meth meth = { meth; path = End }
+      let get : ([ `Path ], 'terminal, 'terminal) uri = { meth = B.get; path = End }
+      let post : ([ `Path ], 'terminal, 'terminal) uri = { meth = B.post; path = End }
+      let put : ([ `Path ], 'terminal, 'terminal) uri = { meth = B.put; path = End }
+      let delete : ([ `Path ], 'terminal, 'terminal) uri = { meth = B.delete; path = End }
+      let patch : ([ `Path ], 'terminal, 'terminal) uri = { meth = B.patch; path = End }
+
+      let ( / ) builder value =
+        { meth = builder.meth; path = append_segment builder.path (Static_segment value) }
+      ;;
+
+      let ( /: )
+            (type handler value terminal)
+            (builder : ([ `Path ], handler, value -> terminal) uri)
+            ({ name; codec } : value argument)
+        : ([ `Path ], handler, terminal) uri
+        =
+        { meth = builder.meth
+        ; path = append_segment builder.path (Path_segment (name, codec))
+        }
+      ;;
+
+      let ( /? )
+            (type phase handler value terminal)
+            (builder : (phase, handler, value option -> terminal) uri)
+            ({ name; codec } : value argument)
+        : ([ `Query ], handler, terminal) uri
+        =
+        { meth = builder.meth
+        ; path = append_segment builder.path (Optional_query_segment (name, codec))
+        }
+      ;;
+
+      let ( /! )
+            (type phase handler value terminal)
+            (builder : (phase, handler, value -> terminal) uri)
+            ({ name; codec } : value argument)
+        : ([ `Query ], handler, terminal) uri
+        =
+        { meth = builder.meth
+        ; path = append_segment builder.path (Required_query_segment (name, codec))
+        }
+      ;;
+
+      type ('handler, 'terminal) documented =
+        { meth : B.meth
+        ; path : ('handler, 'terminal) path
+        ; summary : string option
+        ; tags : string list option
+        ; deprecated : bool option
+        ; operation_id : string option
+        ; description : string option
+        ; decode_error : Decode_error_response.t option
+        }
+
+      let documented
+            (type phase handler terminal)
             ?summary
             ?tags
             ?deprecated
             ?operation_id
             ?description
             ?decode_error
-            ~request
-            ~path
-            ~responses
-            f)
-    ;;
+            ()
+            (builder : (phase, handler, terminal) uri)
+        : (handler, terminal) documented
+        =
+        { meth = builder.meth
+        ; path = builder.path
+        ; summary
+        ; tags
+        ; deprecated
+        ; operation_id
+        ; description
+        ; decode_error
+        }
+      ;;
+
+      type ('handler, 'terminal, 'request) requested =
+        { documented : ('handler, 'terminal) documented
+        ; request : 'request Request.t
+        }
+
+      let accepts request documented = { documented; request }
+
+      type ('handler
+           , 'terminal
+           , 'request
+           , 'ok
+           , 'created
+           , 'code2xx
+           , 'not_found
+           , 'bad_request
+           , 'code4xx
+           , 'internal_server_error
+           , 'code5xx
+           , 'code)
+           ready =
+        { requested : ('handler, 'terminal, 'request) requested
+        ; responses :
+            ( 'ok
+              , 'created
+              , 'code2xx
+              , 'not_found
+              , 'bad_request
+              , 'code4xx
+              , 'internal_server_error
+              , 'code5xx
+              , 'code )
+              responses
+        }
+
+      let returns responses requested = { requested; responses }
+
+      let handle ready handler =
+        let { requested = { documented; request }; responses } = ready in
+        make_route
+          ~context:Context.empty
+          ~invoke:(fun handler () body -> handler body)
+          ~meth:documented.meth
+          ?summary:documented.summary
+          ?tags:documented.tags
+          ?deprecated:documented.deprecated
+          ?operation_id:documented.operation_id
+          ?description:documented.description
+          ?decode_error:documented.decode_error
+          ~request
+          ~path:documented.path
+          ~responses
+          handler
+      ;;
+
+      let handle_with ~context ready handler =
+        let { requested = { documented; request }; responses } = ready in
+        make_route
+          ~context
+          ~invoke:(fun handler context body -> handler context body)
+          ~meth:documented.meth
+          ?summary:documented.summary
+          ?tags:documented.tags
+          ?deprecated:documented.deprecated
+          ?operation_id:documented.operation_id
+          ?description:documented.description
+          ?decode_error:documented.decode_error
+          ~request
+          ~path:documented.path
+          ~responses
+          handler
+      ;;
+
+      let handle_in_group ready handler =
+        let { requested = { documented; request }; responses } = ready in
+        Group.Contextual_route
+          (fun context ->
+            make_route
+              ~context
+              ~invoke:(fun handler context body -> handler context body)
+              ~meth:documented.meth
+              ?summary:documented.summary
+              ?tags:documented.tags
+              ?deprecated:documented.deprecated
+              ?operation_id:documented.operation_id
+              ?description:documented.description
+              ?decode_error:documented.decode_error
+              ~request
+              ~path:documented.path
+              ~responses
+              handler)
+      ;;
+
+      let ( ==> ) = handle_in_group
+    end
   end
 end

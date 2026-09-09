@@ -41,9 +41,9 @@ package: smoke
 smoke:
 	opam exec -- dune build -p typed-endpoint @install @runtest
 	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-testing @install @runtest
-	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-opium @install @runtest
-	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-dream @install @runtest
-	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-eio @install @runtest
+	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-testing,typed-endpoint-opium @install @runtest
+	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-testing,typed-endpoint-dream @install @runtest
+	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-testing,typed-endpoint-eio @install @runtest
 
 .PHONY: check
 check: fmt build test doc package

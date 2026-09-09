@@ -38,6 +38,7 @@
  (depends
   (ocaml (>= 5.1))
   (typed-endpoint (= :version))
+  (typed-endpoint-testing (and (= :version) :with-test))
   base
   cohttp
   lwt
@@ -63,7 +64,7 @@
   cohttp
   uri
   yojson
-  (ppx_let (and (>= v0.17.1) :with-test))
+  (ppx_let (>= v0.17.1))
   (ppx_deriving_yojson :with-test)
   (ppx_deriving_jsonschema (and (>= 0.0.8) :with-test))
   (ppx_expect :with-test))
@@ -78,6 +79,7 @@
  (depends
   (ocaml (>= 5.1))
   (typed-endpoint (= :version))
+  (typed-endpoint-testing (and (= :version) :with-test))
   base
   cohttp
   (dream (= 1.0.0~alpha8))
@@ -95,6 +97,7 @@
  (depends
   (ocaml (>= 5.1))
   (typed-endpoint (= :version))
+  (typed-endpoint-testing (and (= :version) :with-test))
   base
   (cohttp-eio (= 6.3.0))
   (eio (>= 1.5))

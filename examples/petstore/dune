@@ -15,6 +15,7 @@
   order_service
   user_service
   auth
+  principal
   api_docs
   http_parameter
   controller_context

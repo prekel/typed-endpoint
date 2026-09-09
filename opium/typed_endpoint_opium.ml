@@ -32,14 +32,53 @@ let combine (first : app_builder) (second : app_builder) : app_builder =
   fun app -> app |> second |> first
 ;;
 
+let method_not_allowed_middleware (m : meth) path =
+  let route = Opium.Std.Route.of_string path in
+  Opium.Std.Rock.Middleware.create
+    ~name:"typed-endpoint-method-not-allowed"
+    ~filter:(fun next request ->
+      let open Io.Let_syntax in
+      let%map response = next request in
+      let status = Cohttp.Code.code_of_status response.code in
+      let path_matches =
+        Opium.Std.Route.match_url route (Opium.Std.Request.uri request |> Uri.path)
+        |> Option.is_some
+      in
+      if path_matches && (Int.equal status 404 || Int.equal status 405) then (
+        let methods =
+          Cohttp.Header.get response.headers "allow"
+          |> Option.value_map ~default:[] ~f:(fun value ->
+            String.split value ~on:',' |> List.map ~f:String.strip)
+          |> List.cons (Cohttp.Code.string_of_method m)
+          |> List.dedup_and_sort ~compare:String.compare
+        in
+        let headers =
+          Cohttp.Header.replace response.headers "allow" (String.concat methods ~sep:", ")
+        in
+        let headers =
+          Cohttp.Header.replace headers "content-type" "text/plain; charset=utf-8"
+        in
+        { response with
+          code = `Method_not_allowed
+        ; headers
+        ; body = Cohttp_lwt.Body.of_string "Method not allowed"
+        })
+      else
+        response)
+;;
+
 let route (m : meth) (path : string) (h : req -> resp Lwt.t) : app_builder =
-  match m with
-  | `GET -> Opium.Std.get path h
-  | `POST -> Opium.Std.post path h
-  | `PUT -> Opium.Std.put path h
-  | `DELETE -> Opium.Std.delete path h
-  | `PATCH -> Opium.Std.App.patch path h
-  | meth -> Opium.Std.App.action meth path h
+  let register =
+    match m with
+    | `GET -> Opium.Std.get path h
+    | `POST -> Opium.Std.post path h
+    | `PUT -> Opium.Std.put path h
+    | `DELETE -> Opium.Std.delete path h
+    | `PATCH -> Opium.Std.App.patch path h
+    | meth -> Opium.Std.App.action meth path h
+  in
+  fun app ->
+    app |> register |> Opium.Std.App.middleware (method_not_allowed_middleware m path)
 ;;
 
 let param (req : req) (name : string) : string = Opium.Std.param req name

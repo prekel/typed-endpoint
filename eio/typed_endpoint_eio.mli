@@ -16,8 +16,10 @@ type app_builder
 
 (** A direct-style wrapper around one typed-endpoint dispatch. Middleware is
     entered in list order, so the first element is the outermost wrapper.
-    It receives the raw Cohttp request but does not expose typed route internals. *)
-type middleware = request:Http.Request.t -> next:(unit -> resp) -> resp
+    It receives the raw Cohttp request but does not expose typed route internals.
+    Passing a replaced request to [next] makes request-local header enrichment
+    possible before route matching. *)
+type middleware = request:Http.Request.t -> next:(Http.Request.t -> resp) -> resp
 
 include
   Typed_endpoint.Backend.S

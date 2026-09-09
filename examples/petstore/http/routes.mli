@@ -50,5 +50,10 @@ module Make
       OpenAPI, and documentation UI endpoints. [database] is the sole runtime
       application resource; repository and service selection remains visible
       in the functor application. *)
-  val compile : auth:auth -> database:Database.t -> Endpoint.Dsl.Compiled.t
+  val compile
+    :  ?interceptors:Endpoint.Dsl.Interceptor.t list
+    -> auth:auth
+    -> database:Database.t
+    -> unit
+    -> Endpoint.Dsl.Compiled.t
 end
