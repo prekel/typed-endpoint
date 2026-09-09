@@ -19,37 +19,55 @@ end
 
 include Cohttp.Code
 
-type app_builder = Opium.Std.App.t -> Opium.Std.App.t
+type route =
+  { meth : meth
+  ; path : string
+  ; handler : req -> resp io
+  }
+
+type app_builder = route list
 
 let get : meth = `GET
 let post : meth = `POST
 let put : meth = `PUT
 let delete : meth = `DELETE
 let patch : meth = `PATCH
-let empty : app_builder = Fn.id
+let empty = []
+let combine = List.append
 
-let combine (first : app_builder) (second : app_builder) : app_builder =
-  fun app -> app |> second |> first
-;;
-
-let method_not_allowed_middleware (m : meth) path =
-  let route = Opium.Std.Route.of_string path in
+let method_not_allowed_middleware routes =
+  let routes =
+    List.map routes ~f:(fun route -> route, Opium.Std.Route.of_string route.path)
+  in
   Opium.Std.Rock.Middleware.create
     ~name:"typed-endpoint-method-not-allowed"
     ~filter:(fun next request ->
       let open Io.Let_syntax in
       let%map response = next request in
       let status = Cohttp.Code.code_of_status response.code in
+      let path = Opium.Std.Request.uri request |> Uri.path in
       let path_matches =
-        Opium.Std.Route.match_url route (Opium.Std.Request.uri request |> Uri.path)
-        |> Option.is_some
+        List.filter routes ~f:(fun (_route, pattern) ->
+          Opium.Std.Route.match_url pattern path |> Option.is_some)
       in
-      if path_matches && (Int.equal status 404 || Int.equal status 405) then (
+      let method_matches =
+        List.exists path_matches ~f:(fun (route, _pattern) ->
+          Int.equal
+            (Cohttp.Code.compare_method route.meth (Opium.Std.Request.meth request))
+            0)
+      in
+      if
+        (not (List.is_empty path_matches))
+        && (not method_matches)
+        && (Int.equal status 404 || Int.equal status 405)
+      then (
         let methods =
           Cohttp.Header.get response.headers "allow"
           |> Option.value_map ~default:[] ~f:(fun value ->
             String.split value ~on:',' |> List.map ~f:String.strip)
-          |> List.cons (Cohttp.Code.string_of_method m)
+          |> List.append
+               (List.map path_matches ~f:(fun (route, _pattern) ->
+                  Cohttp.Code.string_of_method route.meth))
           |> List.dedup_and_sort ~compare:String.compare
         in
         let headers =
@@ -68,24 +86,37 @@ let method_not_allowed_middleware (m : meth) path =
 ;;
 
 let route (m : meth) (path : string) (h : req -> resp Lwt.t) : app_builder =
+  [ { meth = m; path; handler = h } ]
+;;
+
+let register route app =
   let register =
-    match m with
-    | `GET -> Opium.Std.get path h
-    | `POST -> Opium.Std.post path h
-    | `PUT -> Opium.Std.put path h
-    | `DELETE -> Opium.Std.delete path h
-    | `PATCH -> Opium.Std.App.patch path h
-    | meth -> Opium.Std.App.action meth path h
+    match route.meth with
+    | `GET -> Opium.Std.get route.path route.handler
+    | `POST -> Opium.Std.post route.path route.handler
+    | `PUT -> Opium.Std.put route.path route.handler
+    | `DELETE -> Opium.Std.delete route.path route.handler
+    | `PATCH -> Opium.Std.App.patch route.path route.handler
+    | meth -> Opium.Std.App.action meth route.path route.handler
   in
-  fun app ->
-    app |> register |> Opium.Std.App.middleware (method_not_allowed_middleware m path)
+  register app
+;;
+
+let mount routes app =
+  let app = List.fold_right routes ~init:app ~f:register in
+  Opium.Std.App.middleware (method_not_allowed_middleware routes) app
 ;;
 
 let param (req : req) (name : string) : string = Opium.Std.param req name
 
-let query (req : req) (name : string) : string option =
+let query (req : req) (name : string) : string list =
   let uri = Opium.Std.Request.uri req in
-  Uri.get_query_param uri name
+  Uri.query uri
+  |> List.filter_map ~f:(fun (candidate, values) ->
+    if String.equal candidate name then
+      Some (String.concat values ~sep:",")
+    else
+      None)
 ;;
 
 let header (req : req) name = Cohttp.Header.get (Opium.Std.Request.headers req) name
@@ -109,20 +140,24 @@ let body_to_string ~max_bytes (req : req) =
   read 0
 ;;
 
-let respond_empty ?status () : resp Lwt.t = Opium.App.respond' ?code:status (`String "")
-
-let respond_string ?status (s : string) : resp Lwt.t =
-  let headers = Cohttp.Header.init_with "content-type" "text/plain; charset=utf-8" in
-  Opium.App.respond' ~headers ?code:status (`String s)
+let respond ?status ~headers ~body () : resp Lwt.t =
+  Opium.Std.respond' ~headers:(Cohttp.Header.of_list headers) ?code:status (`String body)
 ;;
 
-let respond_html ?status (html : string) : resp Lwt.t =
-  let headers = Cohttp.Header.init_with "content-type" "text/html; charset=utf-8" in
-  Opium.Std.respond' ~headers ?code:status (`String html)
+let respond_empty ?status () = respond ?status ~headers:[] ~body:"" ()
+
+let respond_string ?status body =
+  respond ?status ~headers:[ "content-type", "text/plain; charset=utf-8" ] ~body ()
 ;;
 
-let respond_json ?status (json : Yojson.Safe.t) : resp Lwt.t =
-  let headers = Cohttp.Header.init_with "content-type" "application/json" in
-  let s = Yojson.Safe.to_string json in
-  Opium.Std.respond' ~headers ?code:status (`String s)
+let respond_html ?status body =
+  respond ?status ~headers:[ "content-type", "text/html; charset=utf-8" ] ~body ()
+;;
+
+let respond_json ?status json =
+  respond
+    ?status
+    ~headers:[ "content-type", "application/json" ]
+    ~body:(Yojson.Safe.to_string json)
+    ()
 ;;

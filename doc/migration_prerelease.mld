@@ -1,0 +1,63 @@
+{0 Миграция prerelease API}
+
+Релиза до этих изменений не было, поэтому compatibility aliases намеренно не
+добавлены. Этот документ нужен пользователям текущей ветки разработки.
+
+{1 Opium}
+
+Раньше [Compiled.app] для Opium был функцией [Opium.App.t -> Opium.App.t]:
+
+{[
+Opium.App.empty |> Compiled.app compiled
+]}
+
+Теперь он возвращает immutable route collection:
+
+{[
+Opium.App.empty
+|> Typed_endpoint_opium.mount (Compiled.app compiled)
+]}
+
+Mount можно добавить рядом с существующими Opium routes. Для одной compiled
+collection он устанавливает один 405/[Allow] middleware.
+
+{1 Реализация Backend.S}
+
+[query] теперь возвращает [string list]: каждое значение соответствует одному
+вхождению имени в query string. Реализация не должна разбивать одно значение по
+запятой. Staged DSL сам различает missing, single и duplicate scalar values.
+
+Новый [respond] принимает полный список headers и готовую buffered body. Старые
+[respond_empty], [respond_string], [respond_html] и [respond_json] остаются
+обязательными convenience operations с фиксированными content types. Новый
+backend должен запускать обновлённый [Backend_conformance] suite.
+
+{1 Типизированные headers}
+
+Request header добавляется после path/query и до [documented]:
+
+{[
+let version =
+  Header.required "X-Api-Version" (Header.int ~description:"API version" ())
+
+get / "items"
+|> Staged.header version
+|> documented ()
+]}
+
+Response header оборачивает payload; handler возвращает пару:
+
+{[
+let location =
+  Header.required "Location" (Header.string ~description:"Resource URI" ())
+
+let response =
+  Response.json (module Item)
+  |> Response.with_header location
+
+(* Created (location_value, item) *)
+]}
+
+Optional header использует ['a option] и при [None] отсутствует на wire.
+Повторные или синтаксически неверные имена обнаруживаются при [compile]; CR/LF
+в закодированном response value приводят к [Runtime_error].

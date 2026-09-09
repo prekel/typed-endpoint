@@ -1,0 +1,4 @@
+(executable
+ (name router_bench)
+ (modules router_bench)
+ (libraries base typed-endpoint typed-endpoint-testing unix))

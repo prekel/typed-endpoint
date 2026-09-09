@@ -36,7 +36,7 @@ let empty = []
 let combine = List.append
 let route meth path handler = [ { meth; path; handler } ]
 let param = Dream.param
-let query = Dream.query
+let query = Dream.queries
 let header request name = Dream.header request name
 
 let body_to_string ~max_bytes request =
@@ -58,24 +58,27 @@ let body_to_string ~max_bytes request =
   read 0
 ;;
 
-let respond_empty ?status () =
+let respond ?status ~headers ~body () =
   let code = Option.map status ~f:code_of_status in
-  Dream.respond ?code ""
+  Dream.respond ~headers ?code body
 ;;
 
+let respond_empty ?status () = respond ?status ~headers:[] ~body:"" ()
+
 let respond_string ?status body =
-  let code = Option.map status ~f:code_of_status in
-  Dream.respond ~headers:[ "content-type", "text/plain; charset=utf-8" ] ?code body
+  respond ?status ~headers:[ "content-type", "text/plain; charset=utf-8" ] ~body ()
 ;;
 
 let respond_html ?status body =
-  let code = Option.map status ~f:code_of_status in
-  Dream.html ?code body
+  respond ?status ~headers:[ "content-type", "text/html; charset=utf-8" ] ~body ()
 ;;
 
 let respond_json ?status json =
-  let code = Option.map status ~f:code_of_status in
-  Dream.json ?code (Yojson.Safe.to_string json)
+  respond
+    ?status
+    ~headers:[ "content-type", "application/json" ]
+    ~body:(Yojson.Safe.to_string json)
+    ()
 ;;
 
 let dream_method : meth -> Dream.method_ = function

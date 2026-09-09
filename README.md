@@ -14,7 +14,7 @@ OpenAPI 3.1.
 
 ## Основные гарантии
 
-- типы path/query/body становятся аргументами handler;
+- типы path/query/header/body становятся аргументами handler;
 - handler может вернуть только объявленный тип ответа, а динамический status
   проверяется во время выполнения;
 - JSON body ограничен по размеру (по умолчанию 1 МиБ), проверяется
@@ -72,7 +72,8 @@ let get_pet =
   handle ready @@ fun pet_id () -> return (OK (Int64.to_string pet_id))
 ```
 
-`/?` добавляет optional query, `/!` — required query, `<|>` соединяет
+`/?` добавляет optional query, `/!` — required query, `Staged.header` —
+required или optional typed header, `<|>` соединяет
 альтернативные responses, а `==>` завершает route для typed group. Исходные
 path/query-параметры передаются handler слева направо, затем следуют context и
 body. Standalone route завершается `handle`, route со своим контекстом —
@@ -90,6 +91,12 @@ Interceptors передаются в `compile ~interceptors`. Они запус�
 `Route_info.path_template`. Request ID, CORS, compression и transport timeout
 остаются framework middleware вокруг `Compiled.app`; авторизация и
 request-scoped значения выражаются через `Guard`/`Context`.
+
+Opium использует отдельный шаг mount: `Compiled.app` возвращает immutable
+коллекцию typed routes, а `Typed_endpoint_opium.mount routes app` один раз
+добавляет маршруты и общий 405/`Allow` middleware в существующее приложение.
+Так старые Opium endpoint можно заменять по одному без передачи server lifecycle
+библиотеке.
 
 ## Petstore
 
@@ -113,6 +120,7 @@ opam exec -- dune exec examples/petstore/servers/opium_server.exe
 make create_switch
 make deps_all
 make check
+make release-check
 ```
 
 `make check` проверяет форматирование, сборку, тесты, odoc, install targets и

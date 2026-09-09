@@ -53,6 +53,7 @@ end
 let error_kind : Decode_error.t -> string = function
   | Invalid_parameter _ -> "invalid_parameter"
   | Missing_parameter _ -> "missing_parameter"
+  | Duplicate_parameter _ -> "duplicate_parameter"
   | Invalid_json _ -> "invalid_json"
   | Invalid_body _ -> "invalid_body"
   | Unsupported_media_type _ -> "unsupported_media_type"
@@ -63,6 +64,7 @@ let error_message : Decode_error.t -> string = function
   | Invalid_parameter { error; _ } | Invalid_json { error } | Invalid_body { error } ->
     error
   | Missing_parameter { name; _ } -> "missing " ^ name
+  | Duplicate_parameter { name; _ } -> "duplicate " ^ name
   | Unsupported_media_type { actual; _ } -> Option.value actual ~default:"missing"
   | Body_too_large { max_bytes } -> Int.to_string max_bytes
 ;;
@@ -310,6 +312,86 @@ let%expect_test "staged URI DSL preserves handler order and OpenAPI" =
     (operation |> member "operationId" |> to_string)
     (operation |> member "parameters" |> to_list |> List.length);
   [%expect {| 200 42:true operation=stagedRoute params=2 |}]
+;;
+
+let%expect_test "typed request and response headers drive runtime and OpenAPI" =
+  let version =
+    Header.required "X-Api-Version" (Header.int ~description:"API version" ())
+  in
+  let request_id =
+    Header.optional "X-Request-Id" (Header.string ~description:"Request identifier" ())
+  in
+  let result =
+    Header.required "X-Result" (Header.string ~description:"Result marker" ())
+  in
+  let route =
+    let ready =
+      get / "headers"
+      |> header version
+      |> header request_id
+      |> documented ~operation_id:"typedHeaders" ()
+      |> accepts Request.empty
+      |> returns
+           (ok
+              (Response.text ~description:"Header result" ()
+               |> Response.with_header result))
+    in
+    handle ready @@ fun version request_id () ->
+    let request_id = Option.value request_id ~default:"none" in
+    return (OK ("ok", Int.to_string version ^ ":" ^ request_id))
+  in
+  let compiled = compile_exn [ group [ route ] ] in
+  let response =
+    call
+      (Compiled.app compiled)
+      ~headers:[ "x-api-version", "2"; "X-Request-ID", "req-1" ]
+      `GET
+      "/headers"
+  in
+  let missing = call (Compiled.app compiled) `GET "/headers" in
+  let open Yojson.Safe.Util in
+  let operation =
+    Compiled.openapi compiled |> member "paths" |> member "/headers" |> member "get"
+  in
+  let parameters = operation |> member "parameters" |> to_list in
+  let documented_header =
+    operation
+    |> member "responses"
+    |> member "200"
+    |> member "headers"
+    |> member "X-Result"
+  in
+  Stdlib.Printf.printf
+    "status=%d body=%s result=%s missing=%d params=%d required=%b"
+    (Typed_endpoint_testing.Response.status response)
+    (Typed_endpoint_testing.Response.body response)
+    (Typed_endpoint_testing.Response.header response "x-result"
+     |> Option.value ~default:"none")
+    (Typed_endpoint_testing.Response.status missing)
+    (List.length parameters)
+    (documented_header |> member "required" |> to_bool);
+  [%expect {| status=200 body=2:req-1 result=ok missing=400 params=2 required=true |}]
+;;
+
+let%expect_test "response header values reject line breaks without echoing the value" =
+  let unsafe =
+    Header.required "X-Value" (Header.string ~description:"Validated value" ())
+  in
+  let route =
+    let ready =
+      get / "unsafe-header"
+      |> documented ()
+      |> accepts Request.empty
+      |> returns
+           (ok (Response.text ~description:"Response" () |> Response.with_header unsafe))
+    in
+    handle ready @@ fun () -> return (OK ("bad\r\nInjected: yes", "body"))
+  in
+  let app = compile_exn [ group [ route ] ] |> Compiled.app in
+  (try ignore (call app `GET "/unsafe-header" : Typed_endpoint_testing.response) with
+   | Runtime_error error -> Stdlib.print_endline (Runtime_error.to_string error));
+  [%expect
+    {| invalid response header X-Value: value contains a carriage return or line feed |}]
 ;;
 
 let empty_response_route =
@@ -726,6 +808,41 @@ let%expect_test "duplicate parameters in one location are rejected" =
   in
   print_compile_errors [ group [ route ] ];
   [%expect {| duplicate query parameter tag: get /search |}]
+;;
+
+let%expect_test "header declarations validate names and duplicates" =
+  let codec = Header.string ~description:"Header" () in
+  let invalid = Header.required "Bad Header" codec in
+  let duplicate = Header.required "X-Value" codec in
+  let invalid_route =
+    let ready =
+      get / "invalid-header"
+      |> header invalid
+      |> documented ()
+      |> accepts Request.empty
+      |> returns (ok (Response.text ~description:"Response" ()))
+    in
+    handle ready @@ fun _value () -> return (OK "ok")
+  in
+  let duplicate_route =
+    let response =
+      Response.text ~description:"Response" ()
+      |> Response.with_header duplicate
+      |> Response.with_header duplicate
+    in
+    let ready =
+      get / "duplicate-header"
+      |> documented ()
+      |> accepts Request.empty
+      |> returns (ok response)
+    in
+    handle ready @@ fun () -> return (OK ("first", ("second", "ok")))
+  in
+  print_compile_errors [ group [ invalid_route; duplicate_route ] ];
+  [%expect
+    {|
+    invalid header name Bad Header: get /invalid-header
+    duplicate response header X-Value for status 200: get /duplicate-header |}]
 ;;
 
 let%expect_test "response status must be a valid HTTP status" =

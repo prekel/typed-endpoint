@@ -140,6 +140,7 @@ end
 type param_kind =
   [ `Path
   | `Query
+  | `Header
   ]
 
 type param =
@@ -170,9 +171,17 @@ type response_content =
   | Text
   | Json of Schema.t list
 
+type response_header =
+  { name : string
+  ; required : bool
+  ; schema : Schema.t
+  ; metadata : Documentation.t
+  }
+
 type response_payload =
   { metadata : Documentation.t
   ; content : response_content list
+  ; headers : response_header list
   }
 
 type response =
@@ -257,6 +266,23 @@ module Compile_error = struct
         ; path : string
         ; max_body_bytes : int
         }
+    | Invalid_header_name of
+        { meth : string
+        ; path : string
+        ; name : string
+        }
+    | Duplicate_response_header of
+        { meth : string
+        ; path : string
+        ; status : int
+        ; name : string
+        }
+    | Conflicting_response_header of
+        { meth : string
+        ; path : string
+        ; status : int
+        ; name : string
+        }
     | Invalid_schema_name of string
     | Conflicting_schema of string
     | Invalid_security_scheme_name of string
@@ -289,6 +315,7 @@ module Compile_error = struct
         match kind with
         | `Path -> "path"
         | `Query -> "query"
+        | `Header -> "header"
       in
       "duplicate " ^ source ^ " parameter " ^ name ^ ": " ^ meth ^ " " ^ path
     | Duplicate_response_status { meth; path; status } ->
@@ -301,6 +328,26 @@ module Compile_error = struct
       "204 response must use an empty payload: " ^ meth ^ " " ^ path
     | Invalid_body_limit { meth; path; max_body_bytes } ->
       "invalid body limit " ^ Int.to_string max_body_bytes ^ ": " ^ meth ^ " " ^ path
+    | Invalid_header_name { meth; path; name } ->
+      "invalid header name " ^ name ^ ": " ^ meth ^ " " ^ path
+    | Duplicate_response_header { meth; path; status; name } ->
+      "duplicate response header "
+      ^ name
+      ^ " for status "
+      ^ Int.to_string status
+      ^ ": "
+      ^ meth
+      ^ " "
+      ^ path
+    | Conflicting_response_header { meth; path; status; name } ->
+      "conflicting response header "
+      ^ name
+      ^ " for status "
+      ^ Int.to_string status
+      ^ ": "
+      ^ meth
+      ^ " "
+      ^ path
     | Invalid_schema_name name -> "invalid OpenAPI schema name: " ^ name
     | Conflicting_schema name -> "conflicting OpenAPI schema: " ^ name
     | Invalid_security_scheme_name name -> "invalid security scheme name: " ^ name
@@ -394,12 +441,13 @@ let duplicate_statuses statuses =
 let duplicate_parameters params =
   let seen = Hash_set.create (module String) in
   List.filter params ~f:(fun param ->
-    let kind =
+    let kind, name =
       match param.kind with
-      | `Path -> "path"
-      | `Query -> "query"
+      | `Path -> "path", param.name
+      | `Query -> "query", param.name
+      | `Header -> "header", String.lowercase param.name
     in
-    let key = kind ^ "\000" ^ param.name in
+    let key = kind ^ "\000" ^ name in
     if Hash_set.mem seen key then
       true
     else (
@@ -418,6 +466,30 @@ let route_shape path =
 ;;
 
 let valid_http_status status = status >= 100 && status <= 599
+
+let valid_header_name name =
+  (not (String.is_empty name))
+  && String.for_all name ~f:(fun char ->
+    Char.is_alphanum char || String.mem "!#$%&'*+-.^_`|~" char)
+;;
+
+let response_header_equal left right =
+  String.Caseless.equal left.name right.name
+  && Bool.equal left.required right.required
+  && Schema.equal left.schema right.schema
+  && Poly.equal left.metadata right.metadata
+;;
+
+let duplicate_response_headers headers =
+  let seen = Hash_set.create (module String) in
+  List.filter headers ~f:(fun header ->
+    let name = String.lowercase header.name in
+    if Hash_set.mem seen name then
+      true
+    else (
+      Hash_set.add seen name;
+      false))
+;;
 
 let deduplicate_schemas schemas =
   List.fold schemas ~init:[] ~f:(fun unique schema ->
@@ -446,8 +518,17 @@ let merge_payloads primary secondary =
     else
       [ Json schemas ]
   in
+  let headers =
+    List.fold secondary.headers ~init:primary.headers ~f:(fun headers header ->
+      if List.exists headers ~f:(fun existing -> response_header_equal existing header)
+      then
+        headers
+      else
+        headers @ [ header ])
+  in
   { primary with
-    content =
+    headers
+  ; content =
       (if has_text then
          [ Text ]
        else
@@ -497,7 +578,8 @@ let schemas_of_endpoint (endpoint : endpoint) =
   in
   let responses =
     List.concat_map endpoint.responses ~f:(fun response ->
-      List.concat_map response.payload.content ~f:(function
+      List.map response.payload.headers ~f:(fun header -> header.schema)
+      @ List.concat_map response.payload.content ~f:(function
         | Text -> []
         | Json schemas -> schemas))
   in
@@ -579,7 +661,7 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                   List.filter_map endpoint.params ~f:(fun parameter ->
                     match parameter.kind with
                     | `Path -> Some parameter.name
-                    | `Query -> None)
+                    | `Query | `Header -> None)
                 in
                 let captures = path_captures path in
                 if not (List.equal String.equal declared captures) then
@@ -612,6 +694,36 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                      ; kind = parameter.kind
                      ; name = parameter.name
                      }));
+              List.iter endpoint.params ~f:(fun parameter ->
+                match parameter.kind with
+                | `Header when not (valid_header_name parameter.name) ->
+                  add_error
+                    (Compile_error.Invalid_header_name
+                       { meth = route.meth; path; name = parameter.name })
+                | `Path | `Query | `Header -> ());
+              let declared_responses =
+                endpoint.responses @ endpoint.decode_error_responses
+                @ endpoint.context_responses
+              in
+              let duplicate_response_header_keys = Hash_set.create (module String) in
+              List.iter declared_responses ~f:(fun response ->
+                List.iter response.payload.headers ~f:(fun header ->
+                  if not (valid_header_name header.name) then
+                    add_error
+                      (Compile_error.Invalid_header_name
+                         { meth = route.meth; path; name = header.name }));
+                duplicate_response_headers response.payload.headers
+                |> List.iter ~f:(fun header ->
+                  Hash_set.add
+                    duplicate_response_header_keys
+                    (Int.to_string response.status ^ "\000" ^ String.lowercase header.name);
+                  add_error
+                    (Compile_error.Duplicate_response_header
+                       { meth = route.meth
+                       ; path
+                       ; status = response.status
+                       ; name = header.name
+                       })));
               List.iter endpoint.responses ~f:(fun response ->
                 if not (valid_http_status response.status) then
                   add_error
@@ -629,6 +741,20 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                   (Compile_error.Duplicate_response_status
                      { meth = route.meth; path; status }));
               let endpoint = add_implicit_responses endpoint in
+              List.iter endpoint.responses ~f:(fun response ->
+                duplicate_response_headers response.payload.headers
+                |> List.iter ~f:(fun header ->
+                  let key =
+                    Int.to_string response.status ^ "\000" ^ String.lowercase header.name
+                  in
+                  if not (Hash_set.mem duplicate_response_header_keys key) then
+                    add_error
+                      (Compile_error.Conflicting_response_header
+                         { meth = route.meth
+                         ; path
+                         ; status = response.status
+                         ; name = header.name
+                         })));
               List.iter (schemas_of_endpoint endpoint) ~f:register_schema;
               List.iter endpoint.security ~f:(fun requirement ->
                 List.iter requirement ~f:(fun (scheme, scopes) ->

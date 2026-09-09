@@ -82,7 +82,15 @@ let param (request : req) name =
   List.Assoc.find_exn request.params name ~equal:String.equal
 ;;
 
-let query (request : req) name = Uri.get_query_param request.uri name
+let query (request : req) name =
+  Uri.query request.uri
+  |> List.filter_map ~f:(fun (candidate, values) ->
+    if String.equal candidate name then
+      Some (String.concat values ~sep:",")
+    else
+      None)
+;;
+
 let header request name = Http.Header.get (Http.Request.headers request.request) name
 
 let body_to_string ~max_bytes (request : req) =
@@ -104,29 +112,26 @@ let body_to_string ~max_bytes (request : req) =
      | Error _ -> Error `Too_large)
 ;;
 
-let respond_empty ?(status = `OK) () =
-  { status; headers = Http.Header.init (); body = "" }
+let respond ?(status = `OK) ~headers ~body () =
+  { status; headers = Http.Header.of_list headers; body }
 ;;
 
-let respond_string ?(status = `OK) body =
-  { status
-  ; headers = Http.Header.init_with "content-type" "text/plain; charset=utf-8"
-  ; body
-  }
+let respond_empty ?status () = respond ?status ~headers:[] ~body:"" ()
+
+let respond_string ?status body =
+  respond ?status ~headers:[ "content-type", "text/plain; charset=utf-8" ] ~body ()
 ;;
 
-let respond_html ?(status = `OK) body =
-  { status
-  ; headers = Http.Header.init_with "content-type" "text/html; charset=utf-8"
-  ; body
-  }
+let respond_html ?status body =
+  respond ?status ~headers:[ "content-type", "text/html; charset=utf-8" ] ~body ()
 ;;
 
-let respond_json ?(status = `OK) json =
-  { status
-  ; headers = Http.Header.init_with "content-type" "application/json"
-  ; body = Yojson.Safe.to_string json
-  }
+let respond_json ?status json =
+  respond
+    ?status
+    ~headers:[ "content-type", "application/json" ]
+    ~body:(Yojson.Safe.to_string json)
+    ()
 ;;
 
 let dispatch_with_body routes ~request ~body =
@@ -151,7 +156,12 @@ let dispatch_with_body routes ~request ~body =
     let headers = Http.Header.init_with "allow" allow in
     let headers = Http.Header.add headers "content-type" "text/plain; charset=utf-8" in
     { status = `Method_not_allowed; headers; body = "Method not allowed" }
-  | None -> respond_string ~status:`Not_found "Not found"
+  | None ->
+    respond
+      ~status:`Not_found
+      ~headers:[ "content-type", "text/plain; charset=utf-8" ]
+      ~body:"Not found"
+      ()
 ;;
 
 let apply_middlewares middlewares ~request ~next =

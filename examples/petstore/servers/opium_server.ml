@@ -67,7 +67,7 @@ let () =
       ()
   in
   Opium.App.empty
-  |> Dsl.Compiled.app compiled
+  |> Backend.mount (Dsl.Compiled.app compiled)
   |> Opium.App.middleware request_id
   |> Opium.App.port 8080
   |> Opium.App.run_command

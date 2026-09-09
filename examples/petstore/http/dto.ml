@@ -495,6 +495,7 @@ module Api_response = struct
       match error with
       | Decode_error.Invalid_parameter { name; error; _ } -> 400, name ^ ": " ^ error
       | Missing_parameter { name; _ } -> 400, "missing parameter: " ^ name
+      | Duplicate_parameter { name; _ } -> 400, "duplicate parameter: " ^ name
       | Invalid_json { error } -> 400, "invalid JSON: " ^ error
       | Invalid_body { error } -> 400, "invalid request body: " ^ error
       | Unsupported_media_type { actual; _ } ->

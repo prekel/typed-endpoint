@@ -193,9 +193,17 @@ module Backend = struct
     val patch : meth
     val route : meth -> string -> (req -> resp io) -> app_builder
     val param : req -> string -> string
-    val query : req -> string -> string option
+    val query : req -> string -> string list
     val header : req -> string -> string option
     val body_to_string : max_bytes:int -> req -> (string, body_read_error) Result.t io
+
+    val respond
+      :  ?status:status_code
+      -> headers:(string * string) list
+      -> body:string
+      -> unit
+      -> resp io
+
     val respond_empty : ?status:status_code -> unit -> resp io
     val respond_string : ?status:status_code -> string -> resp io
     val respond_html : ?status:status_code -> string -> resp io
@@ -213,6 +221,10 @@ module Runtime_error = struct
         ; status : int
         ; declared : int list
         }
+    | Invalid_response_header of
+        { name : string
+        ; reason : string
+        }
 
   let to_string = function
     | Undeclared_status { meth; path; status; declared } ->
@@ -226,6 +238,8 @@ module Runtime_error = struct
       ^ "; declared: ["
       ^ declared
       ^ "]"
+    | Invalid_response_header { name; reason } ->
+      "invalid response header " ^ name ^ ": " ^ reason
   ;;
 end
 
@@ -325,6 +339,100 @@ module Parameter = struct
   ;;
 end
 
+module Header = struct
+  module type S = sig
+    type t
+
+    val of_string : string -> (t, string) Result.t
+    val to_string : t -> string
+
+    include Metadatable with type t := t
+  end
+
+  let v
+        (type a)
+        ~schema
+        ?schema_name
+        ?tags
+        ~description
+        ~(of_string : string -> (a, string) Result.t)
+        ~(to_string : a -> string)
+        ()
+    : (module S with type t = a)
+    =
+    (module struct
+      type t = a
+
+      let of_string = of_string
+      let to_string = to_string
+      let metadata : t Metadata.t = Metadata.v ~schema ?schema_name ?tags ~description ()
+    end)
+  ;;
+
+  let string ?schema_name ?tags ~description () =
+    v
+      ~schema:(`Assoc [ "type", `String "string" ])
+      ?schema_name
+      ?tags
+      ~description
+      ~of_string:(fun value -> Ok value)
+      ~to_string:Fn.id
+      ()
+  ;;
+
+  let int ?schema_name ?tags ~description () =
+    v
+      ~schema:(`Assoc [ "type", `String "integer" ])
+      ?schema_name
+      ?tags
+      ~description
+      ~of_string:(fun value ->
+        match Int.of_string_opt value with
+        | Some value -> Ok value
+        | None -> Error "expected an integer")
+      ~to_string:Int.to_string
+      ()
+  ;;
+
+  let int64 ?schema_name ?tags ~description () =
+    v
+      ~schema:(`Assoc [ "type", `String "integer"; "format", `String "int64" ])
+      ?schema_name
+      ?tags
+      ~description
+      ~of_string:(fun value ->
+        try Ok (Int64.of_string value) with
+        | _ -> Error "expected a 64-bit integer")
+      ~to_string:Int64.to_string
+      ()
+  ;;
+
+  let bool ?schema_name ?tags ~description () =
+    v
+      ~schema:(`Assoc [ "type", `String "boolean" ])
+      ?schema_name
+      ?tags
+      ~description
+      ~of_string:(function
+        | "true" -> Ok true
+        | "false" -> Ok false
+        | _ -> Error "expected true or false")
+      ~to_string:Bool.to_string
+      ()
+  ;;
+
+  type _ t =
+    | Required : string * (module S with type t = 'a) -> 'a t
+    | Optional : string * (module S with type t = 'a) -> 'a option t
+
+  let required name codec = Required (name, codec)
+  let optional name codec = Optional (name, codec)
+
+  let name : type a. a t -> string = function
+    | Required (name, _) | Optional (name, _) -> name
+  ;;
+end
+
 module Request_payload = struct
   module type S = sig
     type t
@@ -359,13 +467,17 @@ end
 module Decode_error = struct
   type t =
     | Invalid_parameter of
-        { source : [ `Path | `Query ]
+        { source : [ `Path | `Query | `Header ]
         ; name : string
         ; value : string
         ; error : string
         }
     | Missing_parameter of
-        { source : [ `Path | `Query ]
+        { source : [ `Path | `Query | `Header ]
+        ; name : string
+        }
+    | Duplicate_parameter of
+        { source : [ `Query ]
         ; name : string
         }
     | Invalid_json of { error : string }
@@ -405,6 +517,7 @@ module Default_decode_error_payload = struct
   let source = function
     | `Path -> "path"
     | `Query -> "query"
+    | `Header -> "header"
   ;;
 
   let of_decode_error : Decode_error.t -> t = function
@@ -415,6 +528,10 @@ module Default_decode_error_payload = struct
     | Missing_parameter { source = parameter_source; name } ->
       { code = "missing_parameter"
       ; message = "missing " ^ source parameter_source ^ " parameter " ^ name
+      }
+    | Duplicate_parameter { source = parameter_source; name } ->
+      { code = "duplicate_parameter"
+      ; message = "duplicate " ^ source parameter_source ^ " parameter " ^ name
       }
     | Invalid_json _ ->
       { code = "invalid_json"; message = "request body is not valid JSON" }
@@ -519,27 +636,33 @@ module Make (B : Backend.S) = struct
         | PlainText : string payload
         | Empty : unit payload
 
-      type 'a t =
-        { payload : 'a payload
-        ; metadata : Documentation.t
-        }
+      type _ t =
+        | Payload :
+            { payload : 'a payload
+            ; metadata : Documentation.t
+            }
+            -> 'a t
+        | With_header : 'header Header.t * 'body t -> ('header * 'body) t
 
       let json : type a. (module Response_payload.S with type t = a) -> a t =
         fun (module P : Response_payload.S with type t = a) ->
-        { payload = Json (module P); metadata = documentation_of_metadata P.metadata }
+        Payload
+          { payload = Json (module P); metadata = documentation_of_metadata P.metadata }
       ;;
 
       let text ~description () : string t =
-        { payload = PlainText; metadata = Documentation.v ~description () }
+        Payload { payload = PlainText; metadata = Documentation.v ~description () }
       ;;
 
       let json_raw ~description () : Yojson.Safe.t t =
-        { payload = JsonRaw; metadata = Documentation.v ~description () }
+        Payload { payload = JsonRaw; metadata = Documentation.v ~description () }
       ;;
 
       let empty ~description () : unit t =
-        { payload = Empty; metadata = Documentation.v ~description () }
+        Payload { payload = Empty; metadata = Documentation.v ~description () }
       ;;
+
+      let with_header header response = With_header (header, response)
     end
 
     module Context = struct
@@ -691,6 +814,7 @@ module Make (B : Backend.S) = struct
       | QueryReq :
           string * (module Parameter.S with type t = 'q) * ('h, 'f) path
           -> ('q -> 'h, 'f) path
+      | Request_header : 'header Header.t * ('h, 'f) path -> ('header -> 'h, 'f) path
 
     let path_to_string : type h f. (h, f) path -> string =
       fun p ->
@@ -703,6 +827,7 @@ module Make (B : Backend.S) = struct
           collect rest ((":" ^ name) :: acc)
         | Query (_, _, rest) -> collect rest acc
         | QueryReq (_, _, rest) -> collect rest acc
+        | Request_header (_, rest) -> collect rest acc
       in
       let segments = List.rev (collect p []) in
       match segments with
@@ -753,37 +878,78 @@ module Make (B : Backend.S) = struct
            let handler' = handler v in
            apply_path rest handler' req0)
       | Query (name, (module Q : Parameter.S with type t = _), rest) ->
-        let raw_opt = B.query req0 name in
+        let raw_values = B.query req0 name in
         let parsed =
-          match raw_opt with
-          | None -> Ok None
-          | Some s -> Result.map (Q.of_string s) ~f:Option.some
+          match raw_values with
+          | [] -> Ok None
+          | [ value ] ->
+            Q.of_string value
+            |> Result.map ~f:Option.some
+            |> Result.map_error ~f:(fun error -> `Parse error)
+          | _ -> Error `Duplicate
         in
         (match parsed with
-         | Error error ->
+         | Error `Duplicate ->
+           Error (Decode_error.Duplicate_parameter { source = `Query; name })
+         | Error (`Parse error) ->
            Error
              (Decode_error.Invalid_parameter
-                { source = `Query; name; value = Option.value raw_opt ~default:""; error })
+                { source = `Query
+                ; name
+                ; value = List.hd raw_values |> Option.value ~default:""
+                ; error
+                })
          | Ok v_opt ->
            let handler' = handler v_opt in
            apply_path rest handler' req0)
       | QueryReq (name, (module Q : Parameter.S with type t = _), rest) ->
-        let raw_opt = B.query req0 name in
+        let raw_values = B.query req0 name in
         let parsed =
-          match raw_opt with
-          | None -> Error (`Missing : [ `Missing | `Invalid of string ])
-          | Some s -> Result.map_error (Q.of_string s) ~f:(fun error -> `Invalid error)
+          match raw_values with
+          | [] -> Error (`Missing : [ `Missing | `Duplicate | `Invalid of string ])
+          | [ value ] ->
+            Result.map_error (Q.of_string value) ~f:(fun error -> `Invalid error)
+          | _ -> Error `Duplicate
         in
         (match parsed with
          | Error `Missing ->
            Error (Decode_error.Missing_parameter { source = `Query; name })
+         | Error `Duplicate ->
+           Error (Decode_error.Duplicate_parameter { source = `Query; name })
          | Error (`Invalid error) ->
            Error
              (Decode_error.Invalid_parameter
-                { source = `Query; name; value = Option.value raw_opt ~default:""; error })
+                { source = `Query
+                ; name
+                ; value = List.hd raw_values |> Option.value ~default:""
+                ; error
+                })
          | Ok v_opt ->
            let handler' = handler v_opt in
            apply_path rest handler' req0)
+      | Request_header (header, rest) ->
+        let name = Header.name header in
+        (match header with
+         | Header.Required (_, (module H)) ->
+           (match B.header req0 name with
+            | None -> Error (Decode_error.Missing_parameter { source = `Header; name })
+            | Some raw ->
+              (match H.of_string raw with
+               | Error error ->
+                 Error
+                   (Decode_error.Invalid_parameter
+                      { source = `Header; name; value = raw; error })
+               | Ok value -> apply_path rest (handler value) req0))
+         | Header.Optional (_, (module H)) ->
+           (match B.header req0 name with
+            | None -> apply_path rest (handler None) req0
+            | Some raw ->
+              (match H.of_string raw with
+               | Error error ->
+                 Error
+                   (Decode_error.Invalid_parameter
+                      { source = `Header; name; value = raw; error })
+               | Ok value -> apply_path rest (handler (Some value)) req0)))
     ;;
 
     let media_type request =
@@ -863,20 +1029,68 @@ module Make (B : Backend.S) = struct
                 | Error error -> return (Error (Decode_error.Invalid_body { error })))))
     ;;
 
+    let validate_response_header name value =
+      if String.mem value '\r' || String.mem value '\n' then
+        raise
+          (Runtime_error
+             (Invalid_response_header
+                { name; reason = "value contains a carriage return or line feed" }))
+      else
+        name, value
+    ;;
+
+    let encode_response_header : type a. a Header.t -> a -> (string * string) option =
+      fun header value ->
+      match header with
+      | Header.Required (name, (module H)) ->
+        Some (validate_response_header name (H.to_string value))
+      | Header.Optional (name, (module H)) ->
+        Option.map value ~f:(fun value ->
+          validate_response_header name (H.to_string value))
+    ;;
+
     let respond_ok_with_status
       : type a. status:B.status_code -> a Response.t -> a -> B.resp B.io
       =
-      fun ~status spec v ->
-      match spec.payload with
-      | Response.Empty -> B.respond_empty ~status ()
-      | Response.PlainText -> B.respond_string ~status v
-      | Response.JsonRaw -> B.respond_json ~status v
-      | Response.Json (module P) -> B.respond_json ~status (P.to_yojson v)
+      fun ~status spec value ->
+      let rec render : type a. (string * string) list -> a Response.t -> a -> B.resp B.io =
+        fun headers spec value ->
+        match spec with
+        | Response.With_header (header, response) ->
+          let header = encode_response_header header (fst value) in
+          let headers = Option.to_list header @ headers in
+          render headers response (snd value)
+        | Response.Payload { payload; _ } ->
+          (match payload with
+           | Response.Empty -> B.respond ~status ~headers ~body:"" ()
+           | Response.PlainText ->
+             B.respond
+               ~status
+               ~headers:(("content-type", "text/plain; charset=utf-8") :: headers)
+               ~body:value
+               ()
+           | Response.JsonRaw ->
+             B.respond
+               ~status
+               ~headers:(("content-type", "application/json") :: headers)
+               ~body:(Yojson.Safe.to_string value)
+               ()
+           | Response.Json (module P) ->
+             B.respond
+               ~status
+               ~headers:(("content-type", "application/json") :: headers)
+               ~body:(P.to_yojson value |> Yojson.Safe.to_string)
+               ())
+      in
+      render [] spec value
     ;;
 
     let status_of_decode_error : Decode_error.t -> B.client_error_status = function
-      | Invalid_parameter _ | Missing_parameter _ | Invalid_json _ | Invalid_body _ ->
-        `Bad_request
+      | Invalid_parameter _
+      | Missing_parameter _
+      | Duplicate_parameter _
+      | Invalid_json _
+      | Invalid_body _ -> `Bad_request
       | Unsupported_media_type _ -> `Unsupported_media_type
       | Body_too_large _ -> `Request_entity_too_large
     ;;
@@ -1343,17 +1557,43 @@ module Make (B : Backend.S) = struct
             }
       ;;
 
-      let response_payload_spec_of_response
+      let rec response_payload_spec_of_response
         : type a. a Response.t -> Contract.response_payload
         =
         fun r ->
-        match r.payload with
-        | Response.Empty -> { metadata = r.metadata; content = [] }
-        | Response.PlainText -> { metadata = r.metadata; content = [ Text ] }
-        | Response.JsonRaw ->
-          { metadata = r.metadata; content = [ Json [ Contract.Schema.v (`Bool true) ] ] }
-        | Response.Json (module P) ->
-          { metadata = r.metadata; content = [ Json [ schema_of_metadata P.metadata ] ] }
+        match r with
+        | Response.With_header (header, response) ->
+          let name, required, schema, metadata =
+            match header with
+            | Header.Required (name, (module H)) ->
+              ( name
+              , true
+              , schema_of_metadata H.metadata
+              , documentation_of_metadata H.metadata )
+            | Header.Optional (name, (module H)) ->
+              ( name
+              , false
+              , schema_of_metadata H.metadata
+              , documentation_of_metadata H.metadata )
+          in
+          let payload = response_payload_spec_of_response response in
+          { payload with
+            headers = { Contract.name; required; schema; metadata } :: payload.headers
+          }
+        | Response.Payload { payload; metadata } ->
+          (match payload with
+           | Response.Empty -> { metadata; content = []; headers = [] }
+           | Response.PlainText -> { metadata; content = [ Text ]; headers = [] }
+           | Response.JsonRaw ->
+             { metadata
+             ; content = [ Json [ Contract.Schema.v (`Bool true) ] ]
+             ; headers = []
+             }
+           | Response.Json (module P) ->
+             { metadata
+             ; content = [ Json [ schema_of_metadata P.metadata ] ]
+             ; headers = []
+             })
       ;;
 
       let response_specs_of_decode_error
@@ -1402,6 +1642,22 @@ module Make (B : Backend.S) = struct
           ; schema = schema_of_metadata Q.metadata
           ; metadata = documentation_of_metadata Q.metadata
           }
+          :: path_params rest
+        | Request_header (header, rest) ->
+          let name, required, schema, metadata =
+            match header with
+            | Header.Required (name, (module H)) ->
+              ( name
+              , true
+              , schema_of_metadata H.metadata
+              , documentation_of_metadata H.metadata )
+            | Header.Optional (name, (module H)) ->
+              ( name
+              , false
+              , schema_of_metadata H.metadata
+              , documentation_of_metadata H.metadata )
+          in
+          { Contract.name; kind = `Header; required; schema; metadata }
           :: path_params rest
       ;;
 
@@ -1496,7 +1752,7 @@ module Make (B : Backend.S) = struct
       let rec path_has_parsers : type h f. (h, f) path -> bool = function
         | End -> false
         | Static (_, tail) -> path_has_parsers tail
-        | Param _ | Query _ | QueryReq _ -> true
+        | Param _ | Query _ | QueryReq _ | Request_header _ -> true
       ;;
 
       let request_decode_statuses
@@ -1756,6 +2012,23 @@ module Make (B : Backend.S) = struct
             ; path : string
             ; max_body_bytes : int
             }
+        | Invalid_header_name of
+            { meth : string
+            ; path : string
+            ; name : string
+            }
+        | Duplicate_response_header of
+            { meth : string
+            ; path : string
+            ; status : int
+            ; name : string
+            }
+        | Conflicting_response_header of
+            { meth : string
+            ; path : string
+            ; status : int
+            ; name : string
+            }
         | Invalid_schema_name of string
         | Conflicting_schema of string
         | Invalid_security_scheme_name of string
@@ -1909,6 +2182,7 @@ module Make (B : Backend.S) = struct
         | Required_query_segment :
             string * (module Parameter.S with type t = 'a)
             -> ('a -> 'tail, 'tail) segment
+        | Header_segment : 'a Header.t -> ('a -> 'tail, 'tail) segment
 
       let prepend_segment
         : type before after final.
@@ -1920,6 +2194,7 @@ module Make (B : Backend.S) = struct
         | Path_segment (name, codec) -> Param (name, codec, tail)
         | Optional_query_segment (name, codec) -> Query (name, codec, tail)
         | Required_query_segment (name, codec) -> QueryReq (name, codec, tail)
+        | Header_segment header -> Request_header (header, tail)
       ;;
 
       let rec append_segment
@@ -1934,6 +2209,8 @@ module Make (B : Backend.S) = struct
         | Query (name, codec, tail) -> Query (name, codec, append_segment tail segment)
         | QueryReq (name, codec, tail) ->
           QueryReq (name, codec, append_segment tail segment)
+        | Request_header (header, tail) ->
+          Request_header (header, append_segment tail segment)
       ;;
 
       let meth meth = { meth; path = End }
@@ -1977,6 +2254,17 @@ module Make (B : Backend.S) = struct
         =
         { meth = builder.meth
         ; path = append_segment builder.path (Required_query_segment (name, codec))
+        }
+      ;;
+
+      let header
+            (type phase handler value terminal)
+            (declaration : value Header.t)
+            (builder : (phase, handler, value -> terminal) uri)
+        : ([ `Header ], handler, terminal) uri
+        =
+        { meth = builder.meth
+        ; path = append_segment builder.path (Header_segment declaration)
         }
       ;;
 

@@ -64,6 +64,15 @@ let () =
   let login = send `GET "/user/login?username=alice&password=secret" in
   check_json_response login 200;
   check (String.equal (body login) {|"alice-session-token"|}) "login token encoding";
+  check
+    (Option.equal String.equal (header login "x-rate-limit") (Some "1000"))
+    "login rate-limit header";
+  check
+    (Option.equal
+       String.equal
+       (header login "X-Expires-After")
+       (Some "2030-01-01T00:00:00Z"))
+    "login expiration header";
   let invalid_path = send `GET "/user/%20" in
   check_json_response invalid_path 400;
   let invalid_json = Yojson.Safe.from_string (body invalid_path) in

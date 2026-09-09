@@ -360,8 +360,10 @@ module Backend : sig
     (** Retrieves a router-decoded path capture. *)
     val param : req -> string -> string
 
-    (** Retrieves one optional query value. *)
-    val query : req -> string -> string option
+    (** Retrieves all values for one query name in wire order. Scalar DSL
+        parameters reject more than one value instead of inheriting a
+        framework-specific first/last-value policy. *)
+    val query : req -> string -> string list
 
     (** Header lookup is case-insensitive in HTTP backends. *)
     val header : req -> string -> string option
@@ -370,17 +372,23 @@ module Backend : sig
         is exceeded and return [`Too_large]. *)
     val body_to_string : max_bytes:int -> req -> (string, body_read_error) Result.t io
 
-    (** Creates a response without a representation or [Content-Type]. An
-        omitted status means HTTP 200. *)
+    (** Creates one buffered response. The caller supplies the complete header
+        list, including [Content-Type] when the body has a representation. An
+        omitted status means HTTP 200. Duplicate header names are preserved. *)
+    val respond
+      :  ?status:status_code
+      -> headers:(string * string) list
+      -> body:string
+      -> unit
+      -> resp io
+
+    (** Convenience constructors with fixed representation semantics. Empty
+        responses have no [Content-Type]; string, HTML, and JSON responses use
+        their canonical media types. *)
     val respond_empty : ?status:status_code -> unit -> resp io
 
-    (** Creates a [text/plain; charset=utf-8] response. An omitted status means
-        HTTP 200. *)
     val respond_string : ?status:status_code -> string -> resp io
-
-    (** Creates [text/html; charset=utf-8] and [application/json] responses. *)
     val respond_html : ?status:status_code -> string -> resp io
-
     val respond_json : ?status:status_code -> Yojson.Safe.t -> resp io
 
     (** Combines routers while preserving declaration order. Runtime assembly
@@ -401,8 +409,12 @@ module Runtime_error : sig
         ; status : int
         ; declared : int list
         }
+    | Invalid_response_header of
+        { name : string
+        ; reason : string
+        }
 
-  (** Includes the method, path, actual status, and declared status set. *)
+  (** Produces a stable diagnostic without including a rejected header value. *)
   val to_string : t -> string
 end
 
@@ -470,6 +482,69 @@ module Parameter : sig
     -> (module S with type t = bool)
 end
 
+(** Bidirectional codecs and declarations for scalar HTTP headers. Header names
+    are validated during compilation; values emitted by responses are rejected
+    at runtime if they contain CR or LF. *)
+module Header : sig
+  module type S = sig
+    type t
+
+    val of_string : string -> (t, string) Result.t
+    val to_string : t -> string
+
+    include Metadatable with type t := t
+  end
+
+  val v
+    :  schema:Ppx_deriving_jsonschema_runtime.t
+    -> ?schema_name:string
+    -> ?tags:string list
+    -> description:string
+    -> of_string:(string -> ('a, string) Result.t)
+    -> to_string:('a -> string)
+    -> unit
+    -> (module S with type t = 'a)
+
+  val string
+    :  ?schema_name:string
+    -> ?tags:string list
+    -> description:string
+    -> unit
+    -> (module S with type t = string)
+
+  val int
+    :  ?schema_name:string
+    -> ?tags:string list
+    -> description:string
+    -> unit
+    -> (module S with type t = int)
+
+  val int64
+    :  ?schema_name:string
+    -> ?tags:string list
+    -> description:string
+    -> unit
+    -> (module S with type t = int64)
+
+  val bool
+    :  ?schema_name:string
+    -> ?tags:string list
+    -> description:string
+    -> unit
+    -> (module S with type t = bool)
+
+  (** A required header contributes ['a] to the handler argument list. *)
+  type 'a t
+
+  val required : string -> (module S with type t = 'a) -> 'a t
+
+  (** An optional header contributes ['a option] to the handler argument list
+      and is omitted from a response when its value is [None]. *)
+  val optional : string -> (module S with type t = 'a) -> 'a option t
+
+  val name : _ t -> string
+end
+
 module Request_payload : sig
   (** A JSON request DTO. [of_yojson] runs only after media type, size, and JSON
       syntax checks have succeeded. *)
@@ -512,13 +587,17 @@ module Decode_error : sig
       payload through {!Make.Dsl.Decode_error_response}. *)
   type t =
     | Invalid_parameter of
-        { source : [ `Path | `Query ]
+        { source : [ `Path | `Query | `Header ]
         ; name : string
         ; value : string
         ; error : string
         }
     | Missing_parameter of
-        { source : [ `Path | `Query ]
+        { source : [ `Path | `Query | `Header ]
+        ; name : string
+        }
+    | Duplicate_parameter of
+        { source : [ `Query ]
         ; name : string
         }
     | Invalid_json of { error : string }
@@ -627,6 +706,11 @@ module Make
         (** Declares a body-less response. This is normally used with
             {!no_content}. *)
         val empty : description:string -> unit -> unit t
+
+        (** Adds one required or optional typed header. The resulting response
+            value is [(header, body)]; multiple calls nest pairs from the
+            outside in and preserve declaration order on the wire. *)
+        val with_header : 'header Header.t -> 'body t -> ('header * 'body) t
       end
 
       module Context : sig
@@ -938,8 +1022,8 @@ module Make
       end
 
       (** The URI-first endpoint DSL. Its abstract phase types enforce the
-          declaration order path -> query -> documentation -> request ->
-          responses -> handler. *)
+          declaration order path -> query -> headers -> documentation ->
+          request -> responses -> handler. *)
       module Staged : sig
         (** A named typed path or query argument. The operator determines its
             location and whether it is optional. *)
@@ -999,6 +1083,13 @@ module Make
           -> 'value argument
           -> ([ `Query ], 'handler, 'terminal) uri
 
+        (** Appends a required or optional typed request header. Path and query
+            operators are no longer available after this stage. *)
+        val header
+          :  'value Header.t
+          -> ([< `Path | `Query | `Header ], 'handler, 'value -> 'terminal) uri
+          -> ([ `Header ], 'handler, 'terminal) uri
+
         (** Closes URI construction and records endpoint metadata. *)
         val documented
           :  ?summary:string
@@ -1008,7 +1099,7 @@ module Make
           -> ?description:string
           -> ?decode_error:Decode_error_response.t
           -> unit
-          -> ([< `Path | `Query ], 'handler, 'terminal) uri
+          -> ([< `Path | `Query | `Header ], 'handler, 'terminal) uri
           -> ('handler, 'terminal) documented
 
         (** Adds the only request-body declaration and advances to responses. *)
@@ -1202,7 +1293,7 @@ module Make
           | Duplicate_parameter of
               { meth : string
               ; path : string
-              ; kind : [ `Path | `Query ]
+              ; kind : [ `Path | `Query | `Header ]
               ; name : string
               } (** One endpoint repeats a parameter name in the same location. *)
           | Duplicate_response_status of
@@ -1227,6 +1318,23 @@ module Make
               { meth : string
               ; path : string
               ; max_body_bytes : int
+              }
+          | Invalid_header_name of
+              { meth : string
+              ; path : string
+              ; name : string
+              }
+          | Duplicate_response_header of
+              { meth : string
+              ; path : string
+              ; status : int
+              ; name : string
+              }
+          | Conflicting_response_header of
+              { meth : string
+              ; path : string
+              ; status : int
+              ; name : string
               }
           | Invalid_schema_name of string
           | Conflicting_schema of string

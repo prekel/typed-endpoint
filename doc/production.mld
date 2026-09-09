@@ -7,6 +7,21 @@ JSON принимается для [application/json] и [application/*+json] с
 [max_body_bytes]; декларация нулевого или отрицательного лимита не компилируется.
 Multipart, form data и streaming response пока не входят в API.
 
+{1 URI и query}
+
+Backend передаёт path capture и query value в codec уже после percent-decoding.
+Параметр [/?] или [/!] является scalar: отсутствие обрабатывается согласно его
+optional/required типу, одно вхождение декодируется, а два и более вхождения
+одного имени возвращают 400 [Duplicate_parameter]. Библиотека не выбирает
+молча первое или последнее значение, поэтому поведение одинаково у Opium,
+Dream, Eio и testing. Запятая внутри одного query value остаётся частью строки;
+например [tags=a,b] не считается двумя вхождениями.
+
+[Accept] пока не используется для server-side content negotiation. Endpoint
+возвращает representation, указанное выбранным response constructor. Если API
+требует несколько representations одного ресурса, их следует оформить
+разными endpoint или выполнить negotiation до handler через явный context.
+
 {1 Ошибки}
 
 [Decode_error] не включает исходное тело запроса, чтобы случайно не записать в
@@ -17,8 +32,30 @@ JSON с полями [code] и [message] и также не отражает о�
 Приложение может перевести ошибку в собственный JSON DTO через
 [Decode_error_response.json]. Endpoint-политика имеет приоритет над групповой,
 групповая — над переданной в [compile], а встроенная используется последней.
-Ошибки параметров/JSON получают 400, превышение лимита — 413,
+Ошибки path/query/header параметров и JSON получают 400, превышение лимита — 413,
 неподдерживаемый media type — 415.
+
+{1 Типизированные request и response headers}
+
+[Header.required] и [Header.optional] связывают имя header, JSON Schema,
+документацию, decoder и encoder. [Staged.header] разрешён после path/query и до
+[documented]; его значение добавляется к curried аргументам handler в порядке
+декларации. Поиск имени регистронезависим. Отсутствующий required header и
+ошибка codec получают тот же настраиваемый decode-error response со статусом
+400, что path/query.
+
+[Response.with_header] добавляет header к конкретному response payload и
+меняет его OCaml-тип на [(header, body)]. Optional header имеет тип
+['a option] и при [None] не отправляется. Для двух деклараций результат имеет
+вид [(outer, (inner, body))]. OpenAPI получает [headers] с required,
+description и schema из той же декларации.
+
+Имена request/response headers проверяются как HTTP token во время [compile].
+Имена сравниваются регистронезависимо; повтор в одном response отклоняется.
+Закодированное runtime-значение не может содержать CR или LF: вместо отправки
+потенциально инъецированного ответа выбрасывается [Runtime_error] без включения
+самого значения в diagnostic. Исключение должно попасть во внешний application
+error boundary.
 
 {1 OpenAPI}
 
@@ -27,7 +64,8 @@ JSON с полями [code] и [message] и также не отражает о�
 маршруты, operationId и response status являются ошибками [compile]. Маршруты
 вида [/pets/:id] и [/pets/:name] также конфликтуют: их runtime-shape совпадает,
 даже если имена capture различаются. В одном endpoint нельзя повторять имя
-path- или query-параметра, а явный status должен лежать в диапазоне 100--599.
+path-, query- или header-параметра, а явный status должен лежать в диапазоне
+100--599.
 При допустимом пересечении [/pets/find] имеет приоритет над [/pets/:id]
 независимо от порядка объявления; маршруты одинаковой специфичности сохраняют
 исходный порядок.
@@ -41,7 +79,40 @@ description и servers.
 Backend возвращает текст с [Content-Type: text/plain; charset=utf-8], HTML с
 [text/html; charset=utf-8], JSON с [application/json], а body-less response без
 [Content-Type]. Встроенные роутеры Dream, Eio и testing добавляют [Allow] к
-ответу 405.
+ответу 405; Opium adapter обеспечивает ту же семантику одним mount-level
+middleware.
+
+{1 Opium mount и постепенная миграция}
+
+Opium [app_builder] является immutable-коллекцией маршрутов, а не функцией
+[App.t -> App.t]. Приложение вызывает
+[Typed_endpoint_opium.mount (Compiled.app compiled) app] один раз. Mount
+регистрирует все routes и один общий middleware для 405/[Allow]; количество
+middleware больше не растёт с количеством endpoint.
+
+Существующее Opium приложение можно мигрировать по одному endpoint: старые
+routes остаются в [app], новые собираются typed-endpoint и монтируются рядом.
+Typed mount не запускает сервер, не меняет port/TLS и не владеет middleware
+lifecycle. Если приложение компилирует несколько независимых route collection,
+каждую можно mount отдельно, но предпочтительно объединить их одним [compile].
+
+{1 Исключения и cancellation}
+
+Ядро намеренно не превращает произвольное исключение handler в не объявленный
+500: такой ответ расходился бы с типизированными responses и OpenAPI. Внешний
+framework middleware является последней границей для logging и generic 500.
+Route-aware interceptor можно использовать для timing и записи ошибки вместе с
+[Route_info], после чего исключение следует пробросить дальше.
+
+В Lwt middleware не перехватывайте [Lwt.Canceled] как application error. В Eio
+не используйте безусловный [with _] вокруг request: cancellation и shutdown
+должны дойти до runtime. Текст generic 500 не должен включать exception,
+request body, Authorization, Cookie или raw query. Ожидаемые domain failures
+возвращаются только объявленными response constructors.
+
+Timeout, CORS, compression, trusted-proxy policy и request ID остаются внешними
+framework middleware. Это сохраняет typed-endpoint библиотекой: она не владеет
+server lifecycle и не вводит собственный application runtime.
 
 {1 Тестирование}
 
@@ -53,8 +124,9 @@ adapter tests оставляйте преобразование request/response
 заголовка.
 
 [Typed_endpoint_testing.Backend_conformance] задаёт единый black-box suite для
-всех backend: bounded body, response representations, case-insensitive headers,
-404/405 с [Allow], статический приоритет, path capture, decode errors и порядок
+всех backend: bounded body, response representations, typed и raw
+case-insensitive headers, duplicate scalar query, 404/405 с [Allow], статический
+приоритет, path capture, decode errors и порядок
 [Backend.S.combine]. Каждый adapter test предоставляет только harness для
 создания request и чтения response. Прохождение suite является обязательной
 частью готовности нового backend.
@@ -64,3 +136,33 @@ codec в setup и assertions. В Petstore такой тест отправляе
 проверяет сырой status, headers, content type, body и имена полей через
 независимый разбор [Yojson.Safe]. Это ловит симметричные ошибки encoder/decoder,
 которые не видны при round trip одним codec.
+
+Property tests на QCheck дополнительно генерируют percent-encoded path segments,
+повторные scalar query, разные регистры header names и порядок объявления
+пересекающихся static/capture routes. Негейтящий benchmark router запускается
+отдельно:
+
+{[
+opam exec -- dune exec benchmark/router_bench.exe -- 1000 100000
+]}
+
+Benchmark нужен для сравнения изменений на одном окружении; абсолютное время не
+является test threshold. Opium adapter test отдельно проверяет структурный
+инвариант: один mount добавляет ровно один middleware независимо от route count.
+
+{1 Поддержка и release gate}
+
+Проверенная матрица первого релиза: OCaml >= 5.1, Opium 0.18.0, Dream
+1.0.0~alpha8 и cohttp-eio 6.3. Версия конкретного adapter меняется отдельной
+migration с повторным запуском общего conformance suite. Ядро не обещает
+совместимость с framework API вне соответствующего adapter package.
+
+Перед тегом выполняется [make release-check]: форматирование, build, tests,
+odoc, package smoke tests, install targets, opam lint и проверка whitespace.
+Изменения публичного API фиксируются в [CHANGES.md] и migration guide. Правила
+private security reporting описаны в [SECURITY.md]. CI не добавляется этой
+задачей.
+
+Разделение чистого контракта и server handler, а также сетевой typed client
+сознательно отложены. Текущий production-hardening не вводит параллельный DSL и
+не меняет ownership приложения.

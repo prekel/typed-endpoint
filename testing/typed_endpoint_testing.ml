@@ -81,7 +81,15 @@ let rec match_path pattern path params =
 ;;
 
 let param request name = List.Assoc.find_exn request.params name ~equal:String.equal
-let query request name = Uri.get_query_param request.uri name
+
+let query request name =
+  Uri.query request.uri
+  |> List.filter_map ~f:(fun (candidate, values) ->
+    if String.equal candidate name then
+      Some (String.concat values ~sep:",")
+    else
+      None)
+;;
 
 let header (request : request) name =
   List.find_map request.headers ~f:(fun (candidate, value) ->
@@ -98,29 +106,26 @@ let body_to_string ~max_bytes (request : request) =
     Ok request.body
 ;;
 
-let respond_empty ?(status = `OK) () =
-  { status = code_of_status status; headers = []; body = "" }
+let respond ?(status = `OK) ~headers ~body () =
+  { status = code_of_status status; headers; body }
 ;;
 
-let respond_string ?(status = `OK) body =
-  { status = code_of_status status
-  ; headers = [ "content-type", "text/plain; charset=utf-8" ]
-  ; body
-  }
+let respond_empty ?status () = respond ?status ~headers:[] ~body:"" ()
+
+let respond_string ?status body =
+  respond ?status ~headers:[ "content-type", "text/plain; charset=utf-8" ] ~body ()
 ;;
 
-let respond_html ?(status = `OK) body =
-  { status = code_of_status status
-  ; headers = [ "content-type", "text/html; charset=utf-8" ]
-  ; body
-  }
+let respond_html ?status body =
+  respond ?status ~headers:[ "content-type", "text/html; charset=utf-8" ] ~body ()
 ;;
 
-let respond_json ?(status = `OK) json =
-  { status = code_of_status status
-  ; headers = [ "content-type", "application/json" ]
-  ; body = Yojson.Safe.to_string json
-  }
+let respond_json ?status json =
+  respond
+    ?status
+    ~headers:[ "content-type", "application/json" ]
+    ~body:(Yojson.Safe.to_string json)
+    ()
 ;;
 
 module Request = struct
@@ -169,9 +174,20 @@ let dispatch routes request =
       |> List.dedup_and_sort ~compare:String.compare
       |> String.concat ~sep:", "
     in
-    let response = respond_string ~status:`Method_not_allowed "Method not allowed" in
+    let response =
+      respond
+        ~status:`Method_not_allowed
+        ~headers:[ "content-type", "text/plain; charset=utf-8" ]
+        ~body:"Method not allowed"
+        ()
+    in
     { response with headers = ("allow", allow) :: response.headers }
-  | None -> respond_string ~status:`Not_found "Not found"
+  | None ->
+    respond
+      ~status:`Not_found
+      ~headers:[ "content-type", "text/plain; charset=utf-8" ]
+      ~body:"Not found"
+      ()
 ;;
 
 module Client = struct
@@ -240,6 +256,29 @@ module Backend_conformance = struct
              (OK (Option.value (B.header request "x-conformance") ~default:"none")))
     ;;
 
+    let typed_request_header =
+      Typed_endpoint.Header.required
+        "X-Conformance-Version"
+        (Typed_endpoint.Header.int ~description:"Protocol version" ())
+    ;;
+
+    let typed_response_header =
+      Typed_endpoint.Header.required
+        "X-Conformance-Result"
+        (Typed_endpoint.Header.string ~description:"Conformance marker" ())
+    ;;
+
+    let typed_headers =
+      endpoint
+        (get / "typed-headers" |> header typed_request_header)
+        Request.empty
+        (ok
+           (Response.text ~description:"Typed headers" ()
+            |> Response.with_header typed_response_header))
+        (fun version () ->
+           B.Io.return (OK ("present", "version:" ^ Int.to_string version)))
+    ;;
+
     let empty_route =
       endpoint
         (get / "empty")
@@ -300,6 +339,7 @@ module Backend_conformance = struct
             ~description:"Backend conformance"
             [ bounded
             ; header_route
+            ; typed_headers
             ; empty_route
             ; decoded
             ; captured
@@ -365,6 +405,27 @@ module Backend_conformance = struct
       in
       let%bind reflected_body = body reflected in
       check (String.equal reflected_body "present") "case-insensitive request header";
+      let%bind typed_headers =
+        H.call app ~headers:[ "x-conformance-version", "7" ] B.get "/typed-headers"
+      in
+      check_response
+        typed_headers
+        ~status:200
+        ~content_type:(Some "text/plain; charset=utf-8");
+      check
+        (Option.equal
+           String.equal
+           (H.header typed_headers "X-Conformance-Result")
+           (Some "present"))
+        "typed response header";
+      let%bind typed_headers_body = body typed_headers in
+      check (String.equal typed_headers_body "version:7") "typed request header";
+      let%bind missing_header = H.call app B.get "/typed-headers" in
+      check (Int.equal (H.status missing_header) 400) "missing typed header status";
+      let%bind invalid_header =
+        H.call app ~headers:[ "X-Conformance-Version", "invalid" ] B.get "/typed-headers"
+      in
+      check (Int.equal (H.status invalid_header) 400) "invalid typed header status";
       let%bind empty = H.call app B.get "/empty" in
       check_response empty ~status:200 ~content_type:None;
       let%bind empty_body = body empty in
@@ -393,10 +454,24 @@ module Backend_conformance = struct
         "invalid parameter error shape";
       let%bind absent = H.call app B.get "/decoded/42" in
       check (Int.equal (H.status absent) 400) "missing query status";
+      let%bind duplicate = H.call app B.get "/decoded/42?enabled=true&enabled=false" in
+      check (Int.equal (H.status duplicate) 400) "duplicate scalar query status";
+      let%bind duplicate_body = body duplicate in
+      check
+        (String.is_substring duplicate_body ~substring:"duplicate_parameter")
+        "duplicate scalar query shape";
       let ordered =
         B.combine
-          (B.route B.get "/ordered/:first" (fun _request -> B.respond_string "first"))
-          (B.route B.get "/ordered/:second" (fun _request -> B.respond_string "second"))
+          (B.route B.get "/ordered/:first" (fun _request ->
+             B.respond
+               ~headers:[ "content-type", "text/plain; charset=utf-8" ]
+               ~body:"first"
+               ()))
+          (B.route B.get "/ordered/:second" (fun _request ->
+             B.respond
+               ~headers:[ "content-type", "text/plain; charset=utf-8" ]
+               ~body:"second"
+               ()))
       in
       let%bind ordered_response = H.call ordered B.get "/ordered/value" in
       let%map ordered_body = body ordered_response in

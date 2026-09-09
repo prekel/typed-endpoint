@@ -101,8 +101,8 @@ module Backend_conformance : sig
   end
 
   module Make (H : Harness) : sig
-    (** Runs bounded-body, representation, routing, decode-error, header, and
-        declaration-order checks. *)
+    (** Runs bounded-body, representation, routing, decode-error, typed-header,
+        duplicate-query, and declaration-order checks. *)
     val run : unit -> unit H.Backend.io
   end
 end

@@ -37,8 +37,8 @@ let metadata : t Typed_endpoint.Metadata.t =
 {1 Staged URI DSL}
 
 [Dsl.Staged] является URI-first DSL объявления endpoint. Phantom phase
-заставляет соблюдать порядок: path, затем query, metadata, request, responses и
-handler. После первого query type checker больше не принимает [/] и [/:];
+заставляет соблюдать порядок: path, затем query, headers, metadata, request,
+responses и handler. После первого query type checker больше не принимает [/] и [/:];
 [accepts] и [returns] также нельзя переставить местами.
 
 {[
@@ -88,6 +88,41 @@ testing и Eio. Благодаря этому handler не вызывает back
 низкокардинальный template вроде [/pet/{petId}], а не raw target. Framework
 middleware по-прежнему отвечает за request ID, CORS, compression и timeout;
 [Context]/[Guard] — за request-scoped typed значения и авторизацию.
+
+{1 Типизированные headers}
+
+[Header.required] и [Header.optional] используют двунаправленный codec:
+[of_string] декодирует request, [to_string] кодирует response. Готовые codecs
+[Header.string], [Header.int], [Header.int64] и [Header.bool] покрывают обычные
+scalar headers. Request headers добавляются после path/query через
+[Staged.header] и становятся следующими аргументами handler.
+
+{[
+let version =
+  Header.required "X-Api-Version" (Header.int ~description:"API version" ())
+
+let result =
+  Header.required "X-Result" (Header.string ~description:"Result marker" ())
+
+let ready =
+  get / "versioned"
+  |> Staged.header version
+  |> documented ()
+  |> accepts Request.empty
+  |> returns
+       (ok
+          (Response.text ~description:"Version" ()
+           |> Response.with_header result))
+
+let route =
+  handle ready @@ fun version () ->
+  return (OK ("accepted", Int.to_string version))
+]}
+
+[Response.with_header] меняет payload type на [(header, body)]. Несколько
+headers образуют вложенные пары в порядке декларации. Имя проверяется при
+[compile], а CR/LF в runtime-значении отклоняется через [Runtime_error], чтобы
+не допустить header injection. Та же декларация попадает в OpenAPI.
 
 В framework-free тесте request можно выполнить одной функцией:
 

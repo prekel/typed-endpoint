@@ -180,6 +180,11 @@ let test_user_api () =
   let logged_in = request `GET "/user/login?username=alice&password=secret" in
   assert_status 200 logged_in;
   assert (Yojson.Safe.equal (response_json logged_in) (`String "alice-session-token"));
+  assert (
+    Option.equal
+      String.equal
+      (Typed_endpoint_testing.Response.header logged_in "X-Rate-Limit")
+      (Some "1000"));
   let update =
     user_json ~username:"ignored" ~first_name:"Alicia" ~password:"new-secret" ()
   in

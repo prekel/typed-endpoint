@@ -10,6 +10,23 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   open Dsl
   open Staged
 
+  let rate_limit_header =
+    Header.required
+      "X-Rate-Limit"
+      (Header.int ~description:"Maximum requests allowed during the current window" ())
+  ;;
+
+  let expires_after_header =
+    Header.required
+      "X-Expires-After"
+      (Header.v
+         ~schema:(`Assoc [ "type", `String "string"; "format", `String "date-time" ])
+         ~description:"UTC time at which the current rate-limit window expires"
+         ~of_string:(fun value -> Ok value)
+         ~to_string:Fn.id
+         ())
+  ;;
+
   let unavailable error =
     Code_5xx (`Service_unavailable, Dto.Api_response.persistence_error error)
   ;;
@@ -80,7 +97,10 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
          ()
     |> accepts Request.empty
     |> returns
-         (JSON.ok (module Dto.Login_token)
+         (ok
+            (Response.json (module Dto.Login_token)
+             |> Response.with_header expires_after_header
+             |> Response.with_header rate_limit_header)
           <|> JSON.bad_request (module Dto.Api_response)
           <|> JSON.server_errors [ `Service_unavailable ] (module Dto.Api_response))
     ==> fun username password database () ->
@@ -88,7 +108,7 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
     | Some username, Some password ->
       let%map result = Users.authenticate ~database ~username ~password in
       (match result with
-       | Ok true -> OK (username ^ "-session-token")
+       | Ok true -> OK (1000, ("2030-01-01T00:00:00Z", username ^ "-session-token"))
        | Ok false ->
          Bad_request (Dto.Api_response.bad_request "invalid username or password")
        | Error error -> unavailable error)

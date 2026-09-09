@@ -131,8 +131,8 @@ GET /pet/search?status=available&page=2&limit=20
 Структурированные request/response body представлены JSON. XML и
 `application/x-www-form-urlencoded` варианты официальной декларации намеренно
 не дублируются. `uploadFile` использует настоящий
-`application/octet-stream`; login возвращает JSON-строку, но демонстрационные
-rate-limit response headers пока не моделируются. Поэтому пример повторяет
+`application/octet-stream`; login возвращает JSON-строку и типизированные
+`X-Rate-Limit`/`X-Expires-After` response headers. Поэтому пример повторяет
 route surface и основные схемы, но не заявляет побайтную идентичность исходному
 OpenAPI 3.0.4. Генерируемый документ остаётся OpenAPI 3.1.
 

@@ -187,11 +187,12 @@ end
 type param_kind =
   [ `Path
   | `Query
+  | `Header
   ]
 
-(** The documentation contract for a path or query parameter. Path parameters
-    are required by construction; query parameters may be optional. [schema]
-    describes the value after decoding. *)
+(** The documentation contract for a path, query, or header parameter. Path
+    parameters are required by construction; query and header parameters may
+    be optional. [schema] describes the value after decoding. *)
 type param =
   { name : string
   ; kind : param_kind
@@ -230,11 +231,22 @@ type response_content =
   | Text
   | Json of Schema.t list
 
+(** One response header declared for a status. Header names are compared
+    case-insensitively during validation, while [name] is retained for OpenAPI
+    rendering. *)
+type response_header =
+  { name : string
+  ; required : bool
+  ; schema : Schema.t
+  ; metadata : Documentation.t
+  }
+
 (** Documentation and all media representations for one response status. An
     empty [content] denotes a response without a body, as required for 204. *)
 type response_payload =
   { metadata : Documentation.t
   ; content : response_content list
+  ; headers : response_header list
   }
 
 (** A concrete HTTP status and its wire payload contract. A status may occur at
@@ -345,6 +357,23 @@ module Compile_error : sig
         ; path : string
         ; max_body_bytes : int
         } (** A JSON or text request-body limit is zero or negative. *)
+    | Invalid_header_name of
+        { meth : string
+        ; path : string
+        ; name : string
+        } (** A request or response header name is not an RFC token. *)
+    | Duplicate_response_header of
+        { meth : string
+        ; path : string
+        ; status : int
+        ; name : string
+        } (** One response declares the same case-insensitive header name twice. *)
+    | Conflicting_response_header of
+        { meth : string
+        ; path : string
+        ; status : int
+        ; name : string
+        } (** Explicit and implicit responses for one status disagree about a header. *)
     | Invalid_schema_name of string
     (** A schema component name is empty or contains an unsupported character. *)
     | Conflicting_schema of string

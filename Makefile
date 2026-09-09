@@ -48,6 +48,10 @@ smoke:
 .PHONY: check
 check: fmt build test doc package
 
+.PHONY: release-check
+release-check: check
+	git diff --check
+
 .PHONY: clean
 clean:
 	opam exec -- dune clean --root .

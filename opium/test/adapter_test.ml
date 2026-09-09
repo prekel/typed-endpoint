@@ -11,7 +11,7 @@ module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
     module Backend = Typed_endpoint_opium
 
     let handler app =
-      let app = app Opium.App.empty |> Opium.App.to_rock in
+      let app = Typed_endpoint_opium.mount app Opium.App.empty |> Opium.App.to_rock in
       let filters =
         Opium.Std.Rock.App.middlewares app |> List.map ~f:Opium.Std.Rock.Middleware.filter
       in
@@ -87,7 +87,7 @@ let app =
         [ route; captured; fixed ]
     ]
   |> Compiled.app
-  |> fun build -> build Opium.App.empty |> Opium.App.to_rock
+  |> fun routes -> Typed_endpoint_opium.mount routes Opium.App.empty |> Opium.App.to_rock
 ;;
 
 let handler =
@@ -98,6 +98,13 @@ let handler =
 ;;
 
 let () =
+  let empty_middleware_count =
+    Opium.App.empty |> Opium.App.to_rock |> Opium.Std.Rock.App.middlewares |> List.length
+  in
+  assert (
+    Int.equal
+      (List.length (Opium.Std.Rock.App.middlewares app))
+      (empty_middleware_count + 1));
   let headers = Cohttp.Header.init_with "content-type" "text/plain" in
   let request =
     Cohttp.Request.make ~meth:`POST ~headers (Uri.of_string "/echo")

@@ -12,3 +12,9 @@
  (inline_tests)
  (preprocess
   (pps ppx_let ppx_deriving_yojson ppx_deriving_jsonschema ppx_expect)))
+
+(test
+ (name property_test)
+ (modules property_test)
+ (package typed-endpoint-testing)
+ (libraries base cohttp qcheck typed-endpoint typed-endpoint-testing uri))

@@ -19,9 +19,11 @@ Servant, Tapir, Smithy4s, http4s и ZIO. Это backlog, а не описани�
 
 ## Согласованные задачи
 
-### Пункты 1 и 13: контракт отдельно от server logic и typed client
+### Пункты 1 и 13: контракт отдельно от server logic и typed client — отложено
 
-Нужно разделить чистое описание HTTP-контракта и его серверную реализацию:
+По текущему решению это направление не входит в ближайший release. Возможная
+форма сохранена здесь, чтобы production-hardening текущего server DSL не закрыл
+путь к будущему разделению:
 
 ```ocaml
 let get_pet =
@@ -40,6 +42,32 @@ let get_pet_server =
 client function. Текущие curried path/query/body arguments следует сохранить:
 обязательный input record и `map_input` не нужны. Record остаётся локальным
 выбором приложения, когда параметров действительно много.
+
+### Этап 3: production HTTP semantics и адаптеры — реализовано
+
+- Добавлены типизированные required/optional request и response headers с общей
+  runtime/OpenAPI декларацией, проверкой имён и защитой от CR/LF injection.
+- Scalar query больше не зависит от first/last policy framework: повтор имени
+  получает предсказуемую decode error 400, а запятая внутри одного value
+  сохраняется.
+- `Backend.S.respond` принимает готовые headers/body; convenience responders
+  сохраняют канонические content types и поведение body-less ответа.
+- Opium `app_builder` стал immutable route collection. `mount` регистрирует один
+  общий 405/`Allow` middleware и позволяет заменять старые Opium routes по одному.
+- Exception boundary, cancellation, timeout, CORS и compression остаются
+  ответственностью framework middleware; typed-endpoint не владеет lifecycle.
+
+### Этап 4: проверки и release hardening — реализовано
+
+- Backend conformance расширен typed headers и duplicate scalar query.
+- Добавлены QCheck properties для percent-decoding, регистра headers, повторных
+  query values и приоритета static route, а также отдельный негейтящий router
+  benchmark.
+- Petstore login публикует и возвращает `X-Rate-Limit` и `X-Expires-After`; wire
+  tests проверяют значения без повторного использования application codecs.
+- Добавлены changelog, security policy, migration guide и `make release-check`.
+- Матрица поддерживаемых adapter versions и эксплуатационные границы подробно
+  описаны в `doc/production.mld`.
 
 ### Пункт 6: backend conformance suite — реализовано
 

@@ -29,7 +29,8 @@ let render_param (param : Contract.param) =
       , yo_str
           (match param.kind with
            | `Path -> "path"
-           | `Query -> "query") )
+           | `Query -> "query"
+           | `Header -> "header") )
     ; "required", yo_bool param.required
     ; "description", yo_str param.metadata.description
     ; "schema", render_schema param.schema
@@ -86,8 +87,24 @@ let render_response_payload (payload : Contract.response_payload) =
       | Json schemas ->
         Some ("application/json", yo_obj [ "schema", render_json_schemas schemas ]))
   in
+  let headers =
+    payload.headers
+    |> List.sort ~compare:(fun (left : Contract.response_header) right ->
+      String.Caseless.compare left.name right.name)
+    |> List.map ~f:(fun (header : Contract.response_header) ->
+      ( header.name
+      , yo_obj
+          [ "required", yo_bool header.required
+          ; "description", yo_str header.metadata.description
+          ; "schema", render_schema header.schema
+          ] ))
+  in
   yo_obj
     ([ "description", yo_str payload.metadata.description ]
+     @ (if List.is_empty headers then
+          []
+        else
+          [ "headers", yo_obj headers ])
      @
      if List.is_empty content then
        []
