@@ -854,6 +854,13 @@ module Make
           -> ('ok, never, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
           -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
 
+        (** JSON shorthand for a set of successful statuses. *)
+        val successes
+          :  B.success_status list
+          -> (module Response_payload.S with type t = 'code2xx)
+          -> ('ok, 'created, never, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
+
         val bad_request
           :  (module Response_payload.S with type t = 'bad)
           -> ('ok, 'created, 'code2xx, 'nf, never, 'code4xx, 'ise, 'code5xx, 'code) rb
@@ -882,11 +889,18 @@ module Make
           -> (module Response_payload.S with type t = 'code5xx)
           -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, never, 'code) rb
           -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
+
+        (** JSON shorthand for arbitrary explicit statuses. *)
+        val statuses
+          :  B.status_code list
+          -> (module Response_payload.S with type t = 'code)
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, never) rb
+          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
       end
 
       (** Declares a non-empty set of successful statuses sharing one payload.
           The selected {!Code_2xx} status is checked at runtime. *)
-      val code2xx
+      val successes
         :  B.success_status list
         -> 'code2xx Response.t
         -> ('ok, 'created, never, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
@@ -899,21 +913,23 @@ module Make
         -> ('ok, 'created, unit, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
 
       (** Declares a non-empty set of client-error statuses sharing one payload. *)
-      val code4xx
+      val client_errors
         :  B.client_error_status list
         -> 'code4xx Response.t
         -> ('ok, 'created, 'code2xx, 'nf, 'bad, never, 'ise, 'code5xx, 'code) rb
         -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
 
       (** Declares a non-empty set of server-error statuses sharing one payload. *)
-      val code5xx
+      val server_errors
         :  B.server_error_status list
         -> 'code5xx Response.t
         -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, never, 'code) rb
         -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
 
-      (** Declares arbitrary explicit status codes sharing one payload. *)
-      val code
+      (** Declares arbitrary explicit status codes sharing one payload. This is
+          the universal form for informational and redirection responses,
+          extension codes, or a mixed set of status classes. *)
+      val statuses
         :  B.status_code list
         -> 'code Response.t
         -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, never) rb

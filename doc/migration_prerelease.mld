@@ -42,6 +42,14 @@ Json_schema.integer_exn ~minimum:1 ()
 [ppx_deriving_yojson]: текущий [ppx_deriving_jsonschema] использует её для той
 же required/key семантики.
 
+{1 Имена групп status codes}
+
+Combinators, принимающие несколько кодов с одним payload, теперь названы по
+семантике HTTP-класса: [successes], [client_errors], [server_errors] и
+[statuses] вместо [code2xx], [code4xx], [code5xx] и [code]. Модуль [JSON]
+предоставляет те же четыре shorthand. [statuses] покрывает в том числе 1xx,
+3xx, extension-коды и смешанный список классов.
+
 {1 Opium}
 
 Раньше [Compiled.app] для Opium был функцией [Opium.App.t -> Opium.App.t]:

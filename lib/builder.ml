@@ -1154,14 +1154,16 @@ module Make (B : Backend.S) = struct
       fun tail -> R_Created (spec, tail)
     ;;
 
-    let code2xx (codes : B.success_status list) (spec : 'c2 Response.t)
+    let successes (codes : B.success_status list) (spec : 'c2 Response.t)
       :  ('ok, 'created, never, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
       -> ('ok, 'created, 'c2, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
       =
       fun tail -> R_Code2xx (codes, spec, tail)
     ;;
 
-    let no_content ~description = code2xx [ `No_content ] (Response.empty ~description ())
+    let no_content ~description =
+      successes [ `No_content ] (Response.empty ~description ())
+    ;;
 
     let not_found (spec : 'nf Response.t)
       :  ('ok, 'created, 'code2xx, never, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
@@ -1177,7 +1179,7 @@ module Make (B : Backend.S) = struct
       fun tail -> R_Bad_request (spec, tail)
     ;;
 
-    let code4xx (codes : B.client_error_status list) (spec : 'c4 Response.t)
+    let client_errors (codes : B.client_error_status list) (spec : 'c4 Response.t)
       :  ('ok, 'created, 'code2xx, 'nf, 'bad, never, 'ise, 'code5xx, 'code) rb
       -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'c4, 'ise, 'code5xx, 'code) rb
       =
@@ -1191,14 +1193,14 @@ module Make (B : Backend.S) = struct
       fun tail -> R_Internal_server_error (spec, tail)
     ;;
 
-    let code5xx (codes : B.server_error_status list) (spec : 'c5 Response.t)
+    let server_errors (codes : B.server_error_status list) (spec : 'c5 Response.t)
       :  ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, never, 'code) rb
       -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'c5, 'code) rb
       =
       fun tail -> R_Code5xx (codes, spec, tail)
     ;;
 
-    let code (codes : B.status_code list) (spec : 'code Response.t)
+    let statuses (codes : B.status_code list) (spec : 'code Response.t)
       :  ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, never) rb
       -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
       =
@@ -1211,11 +1213,13 @@ module Make (B : Backend.S) = struct
     module JSON = struct
       let ok m = ok (Response.json m)
       let created m = created (Response.json m)
+      let successes status_values m = successes status_values (Response.json m)
       let bad_request m = bad_request (Response.json m)
       let not_found m = not_found (Response.json m)
       let internal_server_error m = internal_server_error (Response.json m)
-      let client_errors statuses m = code4xx statuses (Response.json m)
-      let server_errors statuses m = code5xx statuses (Response.json m)
+      let client_errors status_values m = client_errors status_values (Response.json m)
+      let server_errors status_values m = server_errors status_values (Response.json m)
+      let statuses status_values m = statuses status_values (Response.json m)
     end
 
     let rec get_ok

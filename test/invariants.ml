@@ -859,12 +859,51 @@ let%expect_test "response status must be a valid HTTP status" =
       get / "invalid-status"
       |> documented ()
       |> accepts Request.empty
-      |> returns (code [ `Code 99 ] (Response.text ~description:"Invalid" ()))
+      |> returns (statuses [ `Code 99 ] (Response.text ~description:"Invalid" ()))
     in
     handle ready @@ fun () -> return (Code (`Code 99, "invalid"))
   in
   print_compile_errors [ group [ route ] ];
   [%expect {| invalid response status 99: get /invalid-status |}]
+;;
+
+let%expect_test "named status-family combinators cover arbitrary responses" =
+  let route =
+    let ready =
+      get / "status-families"
+      |> documented ()
+      |> accepts Request.empty
+      |> returns
+           (JSON.successes [ `Accepted ] (module Item)
+            <|> client_errors [ `Conflict ] (Response.json (module Error_payload))
+            <|> server_errors
+                  [ `Service_unavailable ]
+                  (Response.json (module Error_payload))
+            <|> JSON.statuses [ `Temporary_redirect ] (module Item))
+    in
+    handle ready @@ fun () ->
+    return (Code_2xx (`Accepted, Item.{ id = 202; name = "accepted" }))
+  in
+  let compiled = compile_exn [ group [ route ] ] in
+  let response = call (Compiled.app compiled) `GET "/status-families" in
+  Stdlib.Printf.printf
+    "%d %s\n"
+    (Typed_endpoint_testing.Response.status response)
+    (Typed_endpoint_testing.Response.body response);
+  [%expect {| 202 {"id":202,"name":"accepted"} |}];
+  let response_codes =
+    let open Yojson.Safe.Util in
+    Compiled.openapi compiled
+    |> member "paths"
+    |> member "/status-families"
+    |> member "get"
+    |> member "responses"
+    |> to_assoc
+    |> List.map ~f:fst
+    |> List.sort ~compare:String.compare
+  in
+  Stdlib.print_endline (String.concat ~sep:"," response_codes);
+  [%expect {| 202,307,409,503 |}]
 ;;
 
 let%expect_test "invalid body limits are rejected" =
