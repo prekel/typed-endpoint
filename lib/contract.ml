@@ -25,7 +25,7 @@ end
 
 module Schema = struct
   type t =
-    { value : Ppx_deriving_jsonschema_runtime.t
+    { value : Json_schema.t
     ; name : string option
     }
 
@@ -33,7 +33,7 @@ module Schema = struct
 
   let equal left right =
     Option.equal String.equal left.name right.name
-    && Yojson.Safe.equal (left.value :> Yojson.Safe.t) (right.value :> Yojson.Safe.t)
+    && Json_schema.equal left.value right.value
   ;;
 end
 

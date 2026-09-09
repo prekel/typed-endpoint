@@ -64,6 +64,7 @@
   cohttp
   uri
   yojson
+  (jsonschema (and (>= 0.1.0) :with-test))
   (qcheck :with-test)
   (ppx_let (>= v0.17.1))
   (ppx_deriving_yojson :with-test)

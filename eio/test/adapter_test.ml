@@ -32,10 +32,7 @@ module String_param = struct
   let of_string value = Ok value
 
   let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(`Assoc [ "type", `String "string" ])
-      ~description:"String parameter"
-      ()
+    Metadata.v ~schema:(Json_schema.string_exn ()) ~description:"String parameter" ()
   ;;
 end
 
@@ -45,10 +42,11 @@ module Error_payload = struct
   let metadata : t Metadata.t =
     Metadata.v
       ~schema:
-        (`Assoc
-            [ "type", `String "object"
-            ; "properties", `Assoc [ "message", `Assoc [ "type", `String "string" ] ]
-            ])
+        (Json_schema.Unsafe.of_yojson
+           (`Assoc
+               [ "type", `String "object"
+               ; "properties", `Assoc [ "message", `Assoc [ "type", `String "string" ] ]
+               ]))
       ~description:"Error"
       ()
   ;;

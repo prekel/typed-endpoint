@@ -3,6 +3,45 @@
 Релиза до этих изменений не было, поэтому compatibility aliases намеренно не
 добавлены. Этот документ нужен пользователям текущей ветки разработки.
 
+{1 JSON Schema}
+
+[Metadata.v], [Parameter.v], [Header.v] и внутренний контракт теперь принимают
+[Json_schema.t], а не открытый [Ppx_deriving_jsonschema_runtime.t]. Схему из
+PPX нужно импортировать явно:
+
+{[
+Metadata.v
+  ~schema:(Json_schema.of_ppx t_jsonschema)
+  ~description:"Pet"
+  ()
+]}
+
+Простые ручные деревья заменяются конструкторами:
+
+{[
+(* раньше *)
+`Assoc [ "type", `String "integer"; "minimum", `Int 1 ]
+
+(* теперь *)
+Json_schema.integer_exn ~minimum:1 ()
+]}
+
+Аргумент [format] больше не является произвольной строкой. Стандартные форматы
+записываются полиморфными вариантами: [~format:`Date_time], [~format:`Int64],
+[~format:`Double]. Для vendor-specific значения используйте
+[~format:(`Custom "vendor-format")].
+
+Обратный мост [Json_schema.to_ppx] нужен custom scalar-модулю, чей
+[t_jsonschema] читает PPX родительского DTO. Произвольное JSON-представление
+доступно только как явно небезопасный [Json_schema.Unsafe.of_yojson]; обычный
+код metadata не должен зависеть от него. При сравнении именованных schemas
+порядок полей JSON object больше не создаёт ложный конфликт.
+
+В record DTO удалите пары [@default None] + [@jsonschema.option] и
+[@key "..."] + [@jsonschema.key "..."]. Оставьте общую аннотацию
+[ppx_deriving_yojson]: текущий [ppx_deriving_jsonschema] использует её для той
+же required/key семантики.
+
 {1 Opium}
 
 Раньше [Compiled.app] для Opium был функцией [Opium.App.t -> Opium.App.t]:

@@ -1,9 +1,6 @@
 open! Base
 open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
-
-module Json_schema = struct
-  type t = Ppx_deriving_jsonschema_runtime.t
-end
+module Json_schema = Json_schema
 
 module Metadata = struct
   type 'a t =
@@ -274,7 +271,7 @@ module Parameter = struct
 
   let string ?schema_name ?tags ~description () =
     v
-      ~schema:(`Assoc [ "type", `String "string" ])
+      ~schema:(Json_schema.string_exn ())
       ?schema_name
       ?tags
       ~description
@@ -284,7 +281,7 @@ module Parameter = struct
 
   let int ?schema_name ?tags ~description () =
     v
-      ~schema:(`Assoc [ "type", `String "integer" ])
+      ~schema:(Json_schema.integer_exn ())
       ?schema_name
       ?tags
       ~description
@@ -297,7 +294,7 @@ module Parameter = struct
 
   let int64 ?schema_name ?tags ~description () =
     v
-      ~schema:(`Assoc [ "type", `String "integer"; "format", `String "int64" ])
+      ~schema:(Json_schema.integer_exn ~format:`Int64 ())
       ?schema_name
       ?tags
       ~description
@@ -309,7 +306,7 @@ module Parameter = struct
 
   let float ?schema_name ?tags ~description () =
     v
-      ~schema:(`Assoc [ "type", `String "number"; "format", `String "double" ])
+      ~schema:(Json_schema.number_exn ~format:`Double ())
       ?schema_name
       ?tags
       ~description
@@ -327,7 +324,7 @@ module Parameter = struct
 
   let bool ?schema_name ?tags ~description () =
     v
-      ~schema:(`Assoc [ "type", `String "boolean" ])
+      ~schema:(Json_schema.boolean ())
       ?schema_name
       ?tags
       ~description
@@ -371,7 +368,7 @@ module Header = struct
 
   let string ?schema_name ?tags ~description () =
     v
-      ~schema:(`Assoc [ "type", `String "string" ])
+      ~schema:(Json_schema.string_exn ())
       ?schema_name
       ?tags
       ~description
@@ -382,7 +379,7 @@ module Header = struct
 
   let int ?schema_name ?tags ~description () =
     v
-      ~schema:(`Assoc [ "type", `String "integer" ])
+      ~schema:(Json_schema.integer_exn ())
       ?schema_name
       ?tags
       ~description
@@ -396,7 +393,7 @@ module Header = struct
 
   let int64 ?schema_name ?tags ~description () =
     v
-      ~schema:(`Assoc [ "type", `String "integer"; "format", `String "int64" ])
+      ~schema:(Json_schema.integer_exn ~format:`Int64 ())
       ?schema_name
       ?tags
       ~description
@@ -409,7 +406,7 @@ module Header = struct
 
   let bool ?schema_name ?tags ~description () =
     v
-      ~schema:(`Assoc [ "type", `String "boolean" ])
+      ~schema:(Json_schema.boolean ())
       ?schema_name
       ?tags
       ~description
@@ -491,7 +488,7 @@ module Decode_error = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:t_jsonschema
+      ~schema:(Json_schema.of_ppx t_jsonschema)
       ~schema_name:"DecodeError"
       ~description:"Request decoding error"
       ~tags:[ "errors" ]
@@ -508,7 +505,7 @@ module Default_decode_error_payload = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:t_jsonschema
+      ~schema:(Json_schema.of_ppx t_jsonschema)
       ~schema_name:"TypedEndpointDecodeError"
       ~description:"A request rejected before the endpoint handler runs"
       ()
@@ -1586,7 +1583,7 @@ module Make (B : Backend.S) = struct
            | Response.PlainText -> { metadata; content = [ Text ]; headers = [] }
            | Response.JsonRaw ->
              { metadata
-             ; content = [ Json [ Contract.Schema.v (`Bool true) ] ]
+             ; content = [ Json [ Contract.Schema.v Json_schema.any ] ]
              ; headers = []
              }
            | Response.Json (module P) ->

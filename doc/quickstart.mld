@@ -19,11 +19,38 @@ JSON-модуль реализует [Request_payload.S] и/или [Response_pay
 {[
 let metadata : t Typed_endpoint.Metadata.t =
   Metadata.v
-    ~schema:t_jsonschema
+    ~schema:(Json_schema.of_ppx t_jsonschema)
     ~schema_name:"Pet"
     ~description:"A pet"
     ()
 ]}
+
+[Json_schema.t] скрывает представление схемы от публичного HTTP API. Для DTO,
+полученного через [[@@deriving yojson, jsonschema]], используйте
+[Json_schema.of_ppx]. Общие аннотации codec являются приоритетными: например,
+поле [name : string option [@key "displayName"] [@default None]] одновременно
+задаёт wire key, отсутствие поля по умолчанию и соответствующую PPX-схему.
+Дублировать их через [@jsonschema.key] и [@jsonschema.option] не требуется.
+
+Схему значения без DTO можно собрать безопасными конструкторами:
+
+{[
+let page =
+  Parameter.v
+    ~schema:(Json_schema.integer_exn ~format:`Int32 ~minimum:1 ~maximum:100 ~default:1 ())
+    ~description:"One-based page number"
+    ~of_string:parse_page
+    ~to_string:Int.to_string
+    ()
+]}
+
+Функции без суффикса [_exn] возвращают [Result] и подходят для динамической
+конфигурации; варианты [_exn] удобны для статической декларации модуля. Для
+custom scalar, который должна использовать PPX-схема родительского DTO,
+экспортируйте [Json_schema.to_ppx schema] как [t_jsonschema].
+Известные форматы типизированы: используйте [~format:`Date_time],
+[~format:`Int64] или [~format:`Double]. Нестандартное расширение записывается
+явно как [~format:(`Custom "vendor-format")].
 
 [Request.json] принимает [max_body_bytes], по умолчанию 1 МиБ. Runtime сам
 выбирает 400, 413 или 415 и применяет безопасный [Decode_error_response.default].

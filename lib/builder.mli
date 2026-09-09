@@ -1,11 +1,12 @@
 open! Base
+module Json_schema : module type of Json_schema
 
 module Metadata : sig
   (** Metadata keeps a schema tied to the OCaml wire type. [schema_name], when
       present, registers the schema in OpenAPI [components/schemas] and renders
       references to it. Reusing a name for a different schema is a compile error. *)
   type 'a t = private
-    { schema : Ppx_deriving_jsonschema_runtime.t
+    { schema : Json_schema.t
     ; schema_name : string option
     ; description : string
     ; tags : string list
@@ -14,7 +15,7 @@ module Metadata : sig
   (** Creates metadata for exactly ['a]. [schema_name] opts into a reusable
       OpenAPI component; names are validated during compilation. *)
   val v
-    :  schema:Ppx_deriving_jsonschema_runtime.t
+    :  schema:Json_schema.t
     -> ?schema_name:string
     -> ?tags:string list
     -> description:string
@@ -436,7 +437,7 @@ module Parameter : sig
 
   (** Builds a first-class codec without requiring a named module. *)
   val v
-    :  schema:Ppx_deriving_jsonschema_runtime.t
+    :  schema:Json_schema.t
     -> ?schema_name:string
     -> ?tags:string list
     -> description:string
@@ -496,7 +497,7 @@ module Header : sig
   end
 
   val v
-    :  schema:Ppx_deriving_jsonschema_runtime.t
+    :  schema:Json_schema.t
     -> ?schema_name:string
     -> ?tags:string list
     -> description:string

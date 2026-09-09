@@ -2,23 +2,53 @@ open! Base
 open Typed_endpoint
 open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 
-let replace_schema_properties schema replacements =
-  match schema with
-  | `Assoc fields ->
-    `Assoc
-      (List.map fields ~f:(fun (key, value) ->
-         match key, value with
-         | "properties", `Assoc properties ->
-           ( key
-           , `Assoc
-               (List.map properties ~f:(fun (name, schema) ->
-                  ( name
-                  , Option.value
-                      (List.Assoc.find replacements ~equal:String.equal name)
-                      ~default:schema ))) )
-         | _ -> key, value))
-  | schema -> schema
-;;
+module Schema_scalar = struct
+  module Int64 = struct
+    type t = int [@@deriving yojson]
+
+    let t_jsonschema = Json_schema.integer_exn ~format:`Int64 () |> Json_schema.to_ppx
+  end
+
+  module Int32 = struct
+    type t = int [@@deriving yojson]
+
+    let t_jsonschema = Json_schema.integer_exn ~format:`Int32 () |> Json_schema.to_ppx
+  end
+
+  module Positive_int64 = struct
+    type t = int [@@deriving yojson]
+
+    let t_jsonschema =
+      Json_schema.integer_exn ~format:`Int64 ~minimum:1 () |> Json_schema.to_ppx
+    ;;
+  end
+
+  module Positive_int32 = struct
+    type t = int [@@deriving yojson]
+
+    let t_jsonschema =
+      Json_schema.integer_exn ~format:`Int32 ~minimum:1 () |> Json_schema.to_ppx
+    ;;
+  end
+
+  module Pet_status = struct
+    type t = string [@@deriving yojson]
+
+    let t_jsonschema =
+      Json_schema.string_exn ~enum:[ "available"; "pending"; "sold" ] ()
+      |> Json_schema.to_ppx
+    ;;
+  end
+
+  module Order_status = struct
+    type t = string [@@deriving yojson]
+
+    let t_jsonschema =
+      Json_schema.string_exn ~enum:[ "placed"; "approved"; "delivered" ] ()
+      |> Json_schema.to_ppx
+    ;;
+  end
+end
 
 module Status = struct
   type t = Domain.Status.t
@@ -38,11 +68,7 @@ module Status = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:
-        (`Assoc
-            [ "type", `String "string"
-            ; "enum", `List [ `String "available"; `String "pending"; `String "sold" ]
-            ])
+      ~schema:(Json_schema.string_exn ~enum:[ "available"; "pending"; "sold" ] ())
       ~description:"Pet status"
       ()
   ;;
@@ -50,17 +76,14 @@ end
 
 module Category = struct
   type t =
-    { id : int option [@default None] [@jsonschema.option]
-    ; name : string option [@default None] [@jsonschema.option]
+    { id : Schema_scalar.Int64.t option [@default None]
+    ; name : string option [@default None]
     }
   [@@deriving yojson, jsonschema]
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:
-        (replace_schema_properties
-           t_jsonschema
-           [ "id", `Assoc [ "type", `String "integer"; "format", `String "int64" ] ])
+      ~schema:(Json_schema.of_ppx t_jsonschema)
       ~schema_name:"Category"
       ~description:"A pet category"
       ()
@@ -72,17 +95,14 @@ end
 
 module Tag = struct
   type t =
-    { id : int option [@default None] [@jsonschema.option]
-    ; name : string option [@default None] [@jsonschema.option]
+    { id : Schema_scalar.Int64.t option [@default None]
+    ; name : string option [@default None]
     }
   [@@deriving yojson, jsonschema]
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:
-        (replace_schema_properties
-           t_jsonschema
-           [ "id", `Assoc [ "type", `String "integer"; "format", `String "int64" ] ])
+      ~schema:(Json_schema.of_ppx t_jsonschema)
       ~schema_name:"Tag"
       ~description:"A pet tag"
       ()
@@ -94,12 +114,12 @@ end
 
 module Pet = struct
   type t =
-    { id : int option [@default None] [@jsonschema.option]
+    { id : Schema_scalar.Positive_int64.t option [@default None]
     ; name : string
-    ; category : Category.t option [@default None] [@jsonschema.option]
-    ; photo_urls : string list [@key "photoUrls"] [@jsonschema.key "photoUrls"]
-    ; tags : Tag.t list option [@default None] [@jsonschema.option]
-    ; status : string option [@default None] [@jsonschema.option]
+    ; category : Category.t option [@default None]
+    ; photo_urls : string list [@key "photoUrls"]
+    ; tags : Tag.t list option [@default None]
+    ; status : Schema_scalar.Pet_status.t option [@default None]
     }
   [@@deriving yojson, jsonschema]
 
@@ -118,21 +138,12 @@ module Pet = struct
     | Some _ -> Error "status must be available, pending, or sold"
   ;;
 
-  let schema =
-    let id_schema =
-      `Assoc [ "type", `String "integer"; "format", `String "int64"; "minimum", `Int 1 ]
-    in
-    let status_schema =
-      `Assoc
-        [ "type", `String "string"
-        ; "enum", `List [ `String "available"; `String "pending"; `String "sold" ]
-        ]
-    in
-    replace_schema_properties t_jsonschema [ "id", id_schema; "status", status_schema ]
-  ;;
-
   let metadata : t Metadata.t =
-    Metadata.v ~schema ~schema_name:"Pet" ~description:"A pet in the store" ()
+    Metadata.v
+      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~schema_name:"Pet"
+      ~description:"A pet in the store"
+      ()
   ;;
 
   let to_domain pet =
@@ -185,12 +196,7 @@ module Tags = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:
-        (`Assoc
-            [ "type", `String "array"
-            ; "items", `Assoc [ "type", `String "string" ]
-            ; "minItems", `Int 1
-            ])
+      ~schema:(Json_schema.array_exn ~min_items:1 ~items:(Json_schema.string_exn ()) ())
       ~description:"Comma-separated tags to filter by"
       ()
   ;;
@@ -200,7 +206,10 @@ module Pet_list = struct
   type t = Pet.t list [@@deriving to_yojson, jsonschema]
 
   let metadata : t Metadata.t =
-    Metadata.v ~schema:t_jsonschema ~description:"Pets matching the filter" ()
+    Metadata.v
+      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~description:"Pets matching the filter"
+      ()
   ;;
 
   let of_domain pets = List.map pets ~f:Pet.of_domain
@@ -211,13 +220,13 @@ module Pagination = struct
     { page : int
     ; limit : int
     ; total : int
-    ; total_pages : int [@key "totalPages"] [@jsonschema.key "totalPages"]
+    ; total_pages : int [@key "totalPages"]
     }
   [@@deriving to_yojson, jsonschema]
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:t_jsonschema
+      ~schema:(Json_schema.of_ppx t_jsonschema)
       ~schema_name:"Pagination"
       ~description:"Pagination metadata"
       ()
@@ -237,7 +246,7 @@ module Pet_page = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:t_jsonschema
+      ~schema:(Json_schema.of_ppx t_jsonschema)
       ~schema_name:"PetPage"
       ~description:"One page of pets matching the query"
       ()
@@ -259,12 +268,7 @@ module Inventory = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:
-        (`Assoc
-            [ "type", `String "object"
-            ; ( "additionalProperties"
-              , `Assoc [ "type", `String "integer"; "format", `String "int32" ] )
-            ])
+      ~schema:(Json_schema.dictionary ~values:(Json_schema.integer_exn ~format:`Int32 ()))
       ~description:"Pet quantities keyed by lifecycle status"
       ()
   ;;
@@ -291,52 +295,19 @@ end
 
 module Order = struct
   type t =
-    { id : int option [@default None] [@jsonschema.option]
-    ; pet_id : int option
-          [@key "petId"] [@jsonschema.key "petId"] [@default None] [@jsonschema.option]
-    ; quantity : int option [@default None] [@jsonschema.option]
+    { id : Schema_scalar.Positive_int64.t option [@default None]
+    ; pet_id : Schema_scalar.Positive_int64.t option [@key "petId"] [@default None]
+    ; quantity : Schema_scalar.Positive_int32.t option [@default None]
     ; ship_date : string option
-          [@key "shipDate"]
-          [@jsonschema.key "shipDate"]
-          [@default None]
-          [@jsonschema.option]
-    ; status : string option [@default None] [@jsonschema.option]
-    ; complete : bool option [@default None] [@jsonschema.option]
+          [@key "shipDate"] [@jsonschema.format "date-time"] [@default None]
+    ; status : Schema_scalar.Order_status.t option [@default None]
+    ; complete : bool option [@default None]
     }
   [@@deriving yojson, jsonschema]
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:
-        (replace_schema_properties
-           t_jsonschema
-           [ ( "id"
-             , `Assoc
-                 [ "type", `String "integer"
-                 ; "format", `String "int64"
-                 ; "minimum", `Int 1
-                 ] )
-           ; ( "petId"
-             , `Assoc
-                 [ "type", `String "integer"
-                 ; "format", `String "int64"
-                 ; "minimum", `Int 1
-                 ] )
-           ; ( "quantity"
-             , `Assoc
-                 [ "type", `String "integer"
-                 ; "format", `String "int32"
-                 ; "minimum", `Int 1
-                 ] )
-           ; ( "shipDate"
-             , `Assoc [ "type", `String "string"; "format", `String "date-time" ] )
-           ; ( "status"
-             , `Assoc
-                 [ "type", `String "string"
-                 ; ( "enum"
-                   , `List [ `String "placed"; `String "approved"; `String "delivered" ] )
-                 ] )
-           ])
+      ~schema:(Json_schema.of_ppx t_jsonschema)
       ~schema_name:"Order"
       ~description:"A store order for a pet"
       ()
@@ -383,37 +354,20 @@ end
 
 module User = struct
   type t =
-    { id : int option [@default None] [@jsonschema.option]
-    ; username : string option [@default None] [@jsonschema.option]
-    ; first_name : string option
-          [@key "firstName"]
-          [@jsonschema.key "firstName"]
-          [@default None]
-          [@jsonschema.option]
-    ; last_name : string option
-          [@key "lastName"]
-          [@jsonschema.key "lastName"]
-          [@default None]
-          [@jsonschema.option]
-    ; email : string option [@default None] [@jsonschema.option]
-    ; password : string option [@default None] [@jsonschema.option]
-    ; phone : string option [@default None] [@jsonschema.option]
-    ; user_status : int option
-          [@key "userStatus"]
-          [@jsonschema.key "userStatus"]
-          [@default None]
-          [@jsonschema.option]
+    { id : Schema_scalar.Int64.t option [@default None]
+    ; username : string option [@default None]
+    ; first_name : string option [@key "firstName"] [@default None]
+    ; last_name : string option [@key "lastName"] [@default None]
+    ; email : string option [@default None]
+    ; password : string option [@default None]
+    ; phone : string option [@default None]
+    ; user_status : Schema_scalar.Int32.t option [@key "userStatus"] [@default None]
     }
   [@@deriving yojson, jsonschema]
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:
-        (replace_schema_properties
-           t_jsonschema
-           [ "id", `Assoc [ "type", `String "integer"; "format", `String "int64" ]
-           ; "userStatus", `Assoc [ "type", `String "integer"; "format", `String "int32" ]
-           ])
+      ~schema:(Json_schema.of_ppx t_jsonschema)
       ~schema_name:"User"
       ~description:"A Petstore user"
       ()
@@ -457,7 +411,10 @@ module User_list = struct
   type t = User.t list [@@deriving yojson, jsonschema]
 
   let metadata : t Metadata.t =
-    Metadata.v ~schema:t_jsonschema ~description:"Users to create atomically" ()
+    Metadata.v
+      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~description:"Users to create atomically"
+      ()
   ;;
 
   let to_domain users = users |> List.map ~f:User.to_domain |> Result.all
@@ -467,24 +424,24 @@ module Login_token = struct
   type t = string [@@deriving to_yojson, jsonschema]
 
   let metadata : t Metadata.t =
-    Metadata.v ~schema:t_jsonschema ~description:"Authenticated session token" ()
+    Metadata.v
+      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~description:"Authenticated session token"
+      ()
   ;;
 end
 
 module Api_response = struct
   type t =
-    { code : int
-    ; type_ : string [@key "type"] [@jsonschema.key "type"]
+    { code : Schema_scalar.Int32.t
+    ; type_ : string [@key "type"]
     ; message : string
     }
   [@@deriving yojson, jsonschema]
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:
-        (replace_schema_properties
-           t_jsonschema
-           [ "code", `Assoc [ "type", `String "integer"; "format", `String "int32" ] ])
+      ~schema:(Json_schema.of_ppx t_jsonschema)
       ~schema_name:"ApiResponse"
       ~description:"An API error"
       ()

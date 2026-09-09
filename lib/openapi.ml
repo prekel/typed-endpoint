@@ -15,11 +15,13 @@ let yo_bool value = `Bool value
 let yo_list values = `List values
 let yo_obj fields = `Assoc fields
 let schema_ref name = yo_obj [ "$ref", yo_str ("#/components/schemas/" ^ name) ]
+let text_schema = Json_schema.string_exn () |> Json_schema.to_yojson
+let binary_schema = Json_schema.string_exn ~format:`Binary () |> Json_schema.to_yojson
 
 let render_schema (schema : Contract.Schema.t) =
   match schema.name with
   | Some name -> schema_ref name
-  | None -> (schema.value :> Yojson.Safe.t)
+  | None -> Json_schema.to_yojson schema.value
 ;;
 
 let render_param (param : Contract.param) =
@@ -44,9 +46,7 @@ let render_request_body = function
       (yo_obj
          [ "required", yo_bool true
          ; "description", yo_str metadata.description
-         ; ( "content"
-           , yo_obj
-               [ "text/plain", yo_obj [ "schema", yo_obj [ "type", yo_str "string" ] ] ] )
+         ; "content", yo_obj [ "text/plain", yo_obj [ "schema", text_schema ] ]
          ])
   | Binary_body { metadata; _ } ->
     Some
@@ -54,13 +54,7 @@ let render_request_body = function
          [ "required", yo_bool true
          ; "description", yo_str metadata.description
          ; ( "content"
-           , yo_obj
-               [ ( "application/octet-stream"
-                 , yo_obj
-                     [ ( "schema"
-                       , yo_obj [ "type", yo_str "string"; "format", yo_str "binary" ] )
-                     ] )
-               ] )
+           , yo_obj [ "application/octet-stream", yo_obj [ "schema", binary_schema ] ] )
          ])
   | Json_body { schema; metadata; _ } ->
     Some
@@ -82,8 +76,7 @@ let render_json_schemas schemas =
 let render_response_payload (payload : Contract.response_payload) =
   let content =
     List.filter_map payload.content ~f:(function
-      | Text ->
-        Some ("text/plain", yo_obj [ "schema", yo_obj [ "type", yo_str "string" ] ])
+      | Text -> Some ("text/plain", yo_obj [ "schema", text_schema ])
       | Json schemas ->
         Some ("application/json", yo_obj [ "schema", render_json_schemas schemas ]))
   in
@@ -227,7 +220,7 @@ let render_components compiled =
     Contract.Compiled.schemas compiled
     |> List.filter_map ~f:(fun schema ->
       Option.map schema.Contract.Schema.name ~f:(fun name ->
-        name, (schema.value :> Yojson.Safe.t)))
+        name, Json_schema.to_yojson schema.value))
   in
   let security_schemes =
     Contract.Compiled.security_schemes compiled

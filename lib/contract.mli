@@ -48,12 +48,12 @@ module Schema : sig
       digits, dots, underscores, or hyphens. Reusing a name with a different
       schema is rejected by {!compile}. An unnamed schema is rendered inline. *)
   type t =
-    { value : Ppx_deriving_jsonschema_runtime.t
+    { value : Json_schema.t
     ; name : string option
     }
 
   (** Associates an optional component [name] with a JSON Schema value. *)
-  val v : ?name:string -> Ppx_deriving_jsonschema_runtime.t -> t
+  val v : ?name:string -> Json_schema.t -> t
 
   (** Structural equality of both the optional name and JSON Schema value. *)
   val equal : t -> t -> bool

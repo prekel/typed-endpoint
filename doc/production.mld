@@ -59,6 +59,34 @@ error boundary.
 
 {1 OpenAPI}
 
+Публичные metadata принимают абстрактный [Json_schema.t], поэтому прикладной
+код не зависит от внутреннего представления PPX или [Yojson.Safe]. Источник
+схемы выбирается в следующем порядке:
+
+- DTO и его wire shape описываются [[@@deriving yojson, jsonschema]]; общие
+  [@default], [@key] и [@name] не дублируются schema-specific аннотациями;
+- ограничения поля, которые знает [ppx_deriving_jsonschema], задаются
+  [@jsonschema.format], [@jsonschema.minimum] и аналогичными аннотациями;
+- standalone параметры, headers, enum, массивы и dictionaries собираются
+  конструкторами [Json_schema];
+- отсутствующий у PPX scalar format оформляется manifest type с явным
+  [t_jsonschema = Json_schema.to_ppx schema].
+
+[Json_schema.Unsafe.of_yojson] является локальным escape hatch для keyword,
+которого ещё нет в DSL. Его нельзя использовать для постобработки
+сгенерированной схемы: такая правка расходится с типом DTO и легко ломается при
+обновлении PPX. Конструкторы без [_exn] проверяют противоречивые bounds,
+отрицательные длины, пустые format/enum, дубликаты enum и default вне
+объявленного диапазона. Стандартный format в DSL задаётся типизированным
+вариантом, например [`Date_time], [`Int64] или [`Double]; [`Custom name]
+остаётся явной точкой расширения.
+
+Тесты библиотеки сравнивают схемы smart constructors с PPX структурно, не
+учитывая порядок полей JSON object. Все standalone и встроенные в Petstore
+OpenAPI schema fragments дополнительно проверяются Draft 2020-12
+meta-schema-валидатором. Валидатор остаётся test dependency и не попадает в
+runtime ядра.
+
 [Metadata.schema_name] включает components и [$ref]. Одинаковое имя с разными
 схемами, конфликтующие security schemes, неизвестные OAuth scopes, повторные
 маршруты, operationId и response status являются ошибками [compile]. Маршруты

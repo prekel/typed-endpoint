@@ -1,7 +1,7 @@
 (library
  (name typed_endpoint)
  (public_name typed-endpoint)
- (private_modules builder contract openapi runtime)
+ (private_modules builder contract json_schema openapi runtime)
  (libraries base ppx_deriving_jsonschema.runtime yojson)
  (preprocess
   (pps ppx_let ppx_deriving_yojson ppx_deriving_jsonschema)))

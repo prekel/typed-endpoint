@@ -38,6 +38,34 @@ let response_json response =
   Typed_endpoint_testing.Response.json response |> Result.ok_or_failwith
 ;;
 
+let validate_schema_fragment ~location schema =
+  let schema = Yojson.Safe.to_basic schema in
+  match Jsonschema.validate Jsonschema.draft2020_12_validator schema with
+  | Ok () -> ()
+  | Error error ->
+    Stdlib.failwith (location ^ ": " ^ Jsonschema.Validation_error.to_string_verbose error)
+;;
+
+let validate_openapi_schemas document =
+  let open Yojson.Safe.Util in
+  let components = document |> member "components" |> member "schemas" |> to_assoc in
+  List.iter components ~f:(fun (name, schema) ->
+    validate_schema_fragment ~location:("#/components/schemas/" ^ name) schema);
+  let rec visit path = function
+    | `Assoc fields ->
+      List.iter fields ~f:(fun (name, value) ->
+        let path = path ^ "/" ^ name in
+        if String.equal name "schema" then
+          validate_schema_fragment ~location:path value;
+        visit path value)
+    | `List values ->
+      List.iteri values ~f:(fun index value ->
+        visit (path ^ "/" ^ Int.to_string index) value)
+    | `Null | `Bool _ | `Int _ | `Intlit _ | `Float _ | `String _ -> ()
+  in
+  visit "#" document
+;;
+
 let create_pet ~name ~status ~tags =
   let tags = List.map tags ~f:(fun tag -> `Assoc [ "name", `String tag ]) in
   let body =
@@ -225,6 +253,7 @@ let test_openapi () =
   let response = request `GET "/openapi.json" in
   assert_status 200 response;
   let document = response_json response in
+  validate_openapi_schemas document;
   let open Yojson.Safe.Util in
   assert (
     String.equal

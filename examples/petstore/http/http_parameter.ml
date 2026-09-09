@@ -12,9 +12,7 @@ module Pet_id = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:
-        (`Assoc
-            [ "type", `String "integer"; "format", `String "int64"; "minimum", `Int 1 ])
+      ~schema:(Json_schema.integer_exn ~format:`Int64 ~minimum:1 ())
       ~description:"ID of the pet"
       ()
   ;;
@@ -31,9 +29,7 @@ module Order_id = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:
-        (`Assoc
-            [ "type", `String "integer"; "format", `String "int64"; "minimum", `Int 1 ])
+      ~schema:(Json_schema.integer_exn ~format:`Int64 ~minimum:1 ())
       ~description:"ID of the order"
       ()
   ;;
@@ -51,7 +47,7 @@ module Username = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:(`Assoc [ "type", `String "string"; "minLength", `Int 1 ])
+      ~schema:(Json_schema.string_exn ~min_length:1 ())
       ~description:"Petstore username"
       ()
   ;;
@@ -69,7 +65,7 @@ module Password = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:(`Assoc [ "type", `String "string"; "minLength", `Int 1 ])
+      ~schema:(Json_schema.string_exn ~min_length:1 ())
       ~description:"Password in clear text for this demo"
       ()
   ;;
@@ -87,19 +83,14 @@ module Pet_name = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:(`Assoc [ "type", `String "string"; "minLength", `Int 1 ])
+      ~schema:(Json_schema.string_exn ~min_length:1 ())
       ~description:"Updated pet name"
       ()
   ;;
 end
 
 let bounded_integer_schema ~maximum ~default =
-  `Assoc
-    [ "type", `String "integer"
-    ; "minimum", `Int 1
-    ; "maximum", `Int maximum
-    ; "default", `Int default
-    ]
+  Json_schema.integer_exn ~minimum:1 ~maximum ~default ()
 ;;
 
 module Page = struct

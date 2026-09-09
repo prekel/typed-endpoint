@@ -20,7 +20,7 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
     Header.required
       "X-Expires-After"
       (Header.v
-         ~schema:(`Assoc [ "type", `String "string"; "format", `String "date-time" ])
+         ~schema:(Json_schema.string_exn ~format:`Date_time ())
          ~description:"UTC time at which the current rate-limit window expires"
          ~of_string:(fun value -> Ok value)
          ~to_string:Fn.id

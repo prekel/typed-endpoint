@@ -1,10 +1,11 @@
 (library
  (name typed_endpoint_test)
  (package typed-endpoint-testing)
- (modules invariants)
+ (modules invariants json_schema_test)
  (libraries
   base
   cohttp
+  jsonschema
   ppx_deriving_jsonschema.runtime
   typed-endpoint
   typed-endpoint-testing
