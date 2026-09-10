@@ -199,7 +199,6 @@ type endpoint =
   ; decode_error_responses : response list
   ; context_responses : response list
   ; security : Security.requirement list
-  ; response_families : int list list
   }
 
 type route =
@@ -252,10 +251,6 @@ module Compile_error = struct
         { meth : string
         ; path : string
         ; status : int
-        }
-    | Empty_response_family of
-        { meth : string
-        ; path : string
         }
     | Invalid_no_content_response of
         { meth : string
@@ -322,8 +317,6 @@ module Compile_error = struct
       "duplicate response status " ^ Int.to_string status ^ ": " ^ meth ^ " " ^ path
     | Invalid_response_status { meth; path; status } ->
       "invalid response status " ^ Int.to_string status ^ ": " ^ meth ^ " " ^ path
-    | Empty_response_family { meth; path } ->
-      "empty response status family: " ^ meth ^ " " ^ path
     | Invalid_no_content_response { meth; path } ->
       "204 response must use an empty payload: " ^ meth ^ " " ^ path
     | Invalid_body_limit { meth; path; max_body_bytes } ->
@@ -679,9 +672,6 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                   add_error
                     (Compile_error.Invalid_body_limit
                        { meth = route.meth; path; max_body_bytes }));
-              if List.exists endpoint.response_families ~f:List.is_empty then
-                add_error
-                  (Compile_error.Empty_response_family { meth = route.meth; path });
               let statuses =
                 List.map endpoint.responses ~f:(fun response -> response.status)
               in

@@ -40,13 +40,13 @@ open Endpoint
 open Dsl
 open Staged
 
-let ready =
+let route =
+  let ok = Response.case `OK (Response.text ~description:"Health status" ()) in
   get / "health"
-  |> documented ~operation_id:"health" ()
+  |> documented ~operation_id:"health"
   |> accepts Request.empty
-  |> returns (ok (Response.text ~description:"Health status" ()))
-
-let route = handle ready @@ fun () -> return (OK "ok")
+  |> returns ok
+  |> handle @@ fun () -> respond ok "ok"
 
 let compiled =
   compile_exn
@@ -61,20 +61,20 @@ staged DSL не позволяют добавить path segment после quer
 ```ocaml
 let get_pet =
   let open Staged in
-  let ready =
-    get
-    / "pet"
-    /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
-    |> documented ~operation_id:"getPetById" ()
-    |> accepts Request.empty
-    |> returns (ok (Response.text ~description:"Pet name" ()))
-  in
-  handle ready @@ fun pet_id () -> return (OK (Int64.to_string pet_id))
+  let ok = Response.case `OK (Response.text ~description:"Pet name" ()) in
+  get
+  / "pet"
+  /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
+  |> documented ~operation_id:"getPetById"
+  |> accepts Request.empty
+  |> returns ok
+  |> handle @@ fun pet_id () -> respond ok (Int64.to_string pet_id)
 ```
 
 `/?` добавляет optional query, `/!` — required query, `Staged.header` —
-required или optional typed header, `<|>` соединяет
-альтернативные responses, а `==>` завершает route для typed group. Исходные
+required или optional typed header, `Response.case` связывает status с codec,
+`<|>` соединяет альтернативные responses, а `respond case value` формирует
+типизированный ответ. `==>` завершает route для typed group. Исходные
 path/query-параметры передаются handler слева направо, затем следуют context и
 body. Standalone route завершается `handle`, route со своим контекстом —
 `handle_with ~context`, а grouped route — `==>`. Сырой request можно запросить

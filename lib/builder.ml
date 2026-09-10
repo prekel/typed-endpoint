@@ -212,7 +212,7 @@ end
 
 module Runtime_error = struct
   type t =
-    | Undeclared_status of
+    | Undeclared_response_case of
         { meth : string
         ; path : string
         ; status : int
@@ -224,9 +224,9 @@ module Runtime_error = struct
         }
 
   let to_string = function
-    | Undeclared_status { meth; path; status; declared } ->
+    | Undeclared_response_case { meth; path; status; declared } ->
       let declared = declared |> List.map ~f:Int.to_string |> String.concat ~sep:", " in
-      "handler returned undeclared status "
+      "handler returned undeclared response case for status "
       ^ Int.to_string status
       ^ " for "
       ^ meth
@@ -552,36 +552,6 @@ module Make (B : Backend.S) = struct
   module Io = B.Io
   open Io.Let_syntax
 
-  type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp =
-    | OK :
-        'ok
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-    | Created :
-        'created
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-    | No_content : ('ok, 'created, unit, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-    | Code_2xx :
-        B.success_status * 'code2xx
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-    | Not_found :
-        'nf
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-    | Bad_request :
-        'bad
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-    | Code_4xx :
-        B.client_error_status * 'code4xx
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-    | Internal_server_error :
-        'ise
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-    | Code_5xx :
-        B.server_error_status * 'code5xx
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-    | Code :
-        B.status_code * 'code
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-
   module Dsl = struct
     type never = |
 
@@ -660,7 +630,53 @@ module Make (B : Backend.S) = struct
       ;;
 
       let with_header header response = With_header (header, response)
+
+      type 'a case_data =
+        { id : int
+        ; status : B.status_code
+        ; response : 'a t
+        }
+
+      type declared_case = Declared_case : 'a case_data -> declared_case
+
+      type cases =
+        | One_case of declared_case
+        | Both_cases of cases * cases
+
+      type reply = Reply : 'a case_data * 'a -> reply
+
+      type 'a case =
+        { cases : cases
+        ; make_reply : 'a -> reply
+        }
+
+      let fresh_case_id =
+        let next = Stdlib.Atomic.make 0 in
+        fun () -> Stdlib.Atomic.fetch_and_add next 1
+      ;;
+
+      let case status response =
+        let data = { id = fresh_case_id (); status; response } in
+        { cases = One_case (Declared_case data)
+        ; make_reply = (fun value -> Reply (data, value))
+        }
+      ;;
+
+      let combine (type a b) (left : a case) (right : b case) : never case =
+        { cases = Both_cases (left.cases, right.cases)
+        ; make_reply =
+            (fun impossible ->
+              match impossible with
+              | _ -> .)
+        }
+      ;;
     end
+
+    type reply = Response.reply
+    type response_cases = Response.cases
+
+    let ( <|> ) = Response.combine
+    let respond case value = Io.return (case.Response.make_reply value)
 
     module Context = struct
       type rejection =
@@ -1097,315 +1113,19 @@ module Make (B : Backend.S) = struct
       respond_ok_with_status ~status policy.response (policy.map error)
     ;;
 
-    type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb =
-      | RNil : (never, never, never, never, never, never, never, never, never) rb
-      | R_OK :
-          'ok Response.t
-          * (never, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      | R_Created :
-          'created Response.t
-          * ('ok, never, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      | R_Code2xx :
-          B.success_status list
-          * 'code2xx Response.t
-          * ('ok, 'created, never, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      | R_Not_found :
-          'nf Response.t
-          * ('ok, 'created, 'code2xx, never, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      | R_Bad_request :
-          'bad Response.t
-          * ('ok, 'created, 'code2xx, 'nf, never, 'code4xx, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      | R_Code4xx :
-          B.client_error_status list
-          * 'code4xx Response.t
-          * ('ok, 'created, 'code2xx, 'nf, 'bad, never, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      | R_Internal_server_error :
-          'ise Response.t
-          * ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, never, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      | R_Code5xx :
-          B.server_error_status list
-          * 'code5xx Response.t
-          * ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, never, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      | R_Code :
-          B.status_code list
-          * 'code Response.t
-          * ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, never) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-    let ok (spec : 'ok Response.t)
-      :  (never, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      =
-      fun tail -> R_OK (spec, tail)
-    ;;
-
-    let created (spec : 'c Response.t)
-      :  ('ok, never, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      -> ('ok, 'c, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      =
-      fun tail -> R_Created (spec, tail)
-    ;;
-
-    let successes (codes : B.success_status list) (spec : 'c2 Response.t)
-      :  ('ok, 'created, never, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      -> ('ok, 'created, 'c2, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      =
-      fun tail -> R_Code2xx (codes, spec, tail)
-    ;;
-
-    let no_content ~description =
-      successes [ `No_content ] (Response.empty ~description ())
-    ;;
-
-    let not_found (spec : 'nf Response.t)
-      :  ('ok, 'created, 'code2xx, never, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      =
-      fun tail -> R_Not_found (spec, tail)
-    ;;
-
-    let bad_request (spec : 'bad Response.t)
-      :  ('ok, 'created, 'code2xx, 'nf, never, 'code4xx, 'ise, 'code5xx, 'code) rb
-      -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      =
-      fun tail -> R_Bad_request (spec, tail)
-    ;;
-
-    let client_errors (codes : B.client_error_status list) (spec : 'c4 Response.t)
-      :  ('ok, 'created, 'code2xx, 'nf, 'bad, never, 'ise, 'code5xx, 'code) rb
-      -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'c4, 'ise, 'code5xx, 'code) rb
-      =
-      fun tail -> R_Code4xx (codes, spec, tail)
-    ;;
-
-    let internal_server_error (spec : 'ise Response.t)
-      :  ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, never, 'code5xx, 'code) rb
-      -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      =
-      fun tail -> R_Internal_server_error (spec, tail)
-    ;;
-
-    let server_errors (codes : B.server_error_status list) (spec : 'c5 Response.t)
-      :  ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, never, 'code) rb
-      -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'c5, 'code) rb
-      =
-      fun tail -> R_Code5xx (codes, spec, tail)
-    ;;
-
-    let statuses (codes : B.status_code list) (spec : 'code Response.t)
-      :  ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, never) rb
-      -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      =
-      fun tail -> R_Code (codes, spec, tail)
-    ;;
-
-    let ( |+ ) f g x = f (g x)
-    let ( <|> ) = ( |+ )
-
-    module JSON = struct
-      let ok m = ok (Response.json m)
-      let created m = created (Response.json m)
-      let successes status_values m = successes status_values (Response.json m)
-      let bad_request m = bad_request (Response.json m)
-      let not_found m = not_found (Response.json m)
-      let internal_server_error m = internal_server_error (Response.json m)
-      let client_errors status_values m = client_errors status_values (Response.json m)
-      let server_errors status_values m = server_errors status_values (Response.json m)
-      let statuses status_values m = statuses status_values (Response.json m)
-    end
-
-    let rec get_ok
-      : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> ok Response.t
-      = function
-      | R_OK (spec, _) -> spec
-      | R_Created (_, tl) -> get_ok tl
-      | R_Code2xx (_, _, tl) -> get_ok tl
-      | R_Not_found (_, tl) -> get_ok tl
-      | R_Bad_request (_, tl) -> get_ok tl
-      | R_Code4xx (_, _, tl) -> get_ok tl
-      | R_Internal_server_error (_, tl) -> get_ok tl
-      | R_Code5xx (_, _, tl) -> get_ok tl
-      | R_Code (_, _, tl) -> get_ok tl
-      | RNil -> failwith "OK response not configured"
-    ;;
-
-    let rec get_created
-      : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> created Response.t
-      = function
-      | R_Created (spec, _) -> spec
-      | R_OK (_, tl) -> get_created tl
-      | R_Code2xx (_, _, tl) -> get_created tl
-      | R_Not_found (_, tl) -> get_created tl
-      | R_Bad_request (_, tl) -> get_created tl
-      | R_Code4xx (_, _, tl) -> get_created tl
-      | R_Internal_server_error (_, tl) -> get_created tl
-      | R_Code5xx (_, _, tl) -> get_created tl
-      | R_Code (_, _, tl) -> get_created tl
-      | RNil -> failwith "Created response not configured"
-    ;;
-
-    let rec get_not_found
-      : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> nf Response.t
-      = function
-      | R_Not_found (spec, _) -> spec
-      | R_OK (_, tl) -> get_not_found tl
-      | R_Created (_, tl) -> get_not_found tl
-      | R_Code2xx (_, _, tl) -> get_not_found tl
-      | R_Bad_request (_, tl) -> get_not_found tl
-      | R_Code4xx (_, _, tl) -> get_not_found tl
-      | R_Internal_server_error (_, tl) -> get_not_found tl
-      | R_Code5xx (_, _, tl) -> get_not_found tl
-      | R_Code (_, _, tl) -> get_not_found tl
-      | RNil -> failwith "Not_found response not configured"
-    ;;
-
-    let rec get_bad_request
-      : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> bad Response.t
-      = function
-      | R_Bad_request (spec, _) -> spec
-      | R_OK (_, tl) -> get_bad_request tl
-      | R_Created (_, tl) -> get_bad_request tl
-      | R_Code2xx (_, _, tl) -> get_bad_request tl
-      | R_Not_found (_, tl) -> get_bad_request tl
-      | R_Code4xx (_, _, tl) -> get_bad_request tl
-      | R_Internal_server_error (_, tl) -> get_bad_request tl
-      | R_Code5xx (_, _, tl) -> get_bad_request tl
-      | R_Code (_, _, tl) -> get_bad_request tl
-      | RNil -> failwith "Bad_request response not configured"
-    ;;
-
-    let rec get_internal_server_error
-      : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> ise Response.t
-      = function
-      | R_Internal_server_error (spec, _) -> spec
-      | R_OK (_, tl) -> get_internal_server_error tl
-      | R_Created (_, tl) -> get_internal_server_error tl
-      | R_Code2xx (_, _, tl) -> get_internal_server_error tl
-      | R_Not_found (_, tl) -> get_internal_server_error tl
-      | R_Bad_request (_, tl) -> get_internal_server_error tl
-      | R_Code4xx (_, _, tl) -> get_internal_server_error tl
-      | R_Code5xx (_, _, tl) -> get_internal_server_error tl
-      | R_Code (_, _, tl) -> get_internal_server_error tl
-      | RNil -> failwith "Internal_server_error response not configured"
-    ;;
-
-    let rec get_code2xx_any
-      : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb
-        -> B.success_status list * c2 Response.t
-      = function
-      | R_Code2xx (codes, spec, _) -> codes, spec
-      | R_OK (_, tl) -> get_code2xx_any tl
-      | R_Created (_, tl) -> get_code2xx_any tl
-      | R_Not_found (_, tl) -> get_code2xx_any tl
-      | R_Bad_request (_, tl) -> get_code2xx_any tl
-      | R_Code4xx (_, _, tl) -> get_code2xx_any tl
-      | R_Internal_server_error (_, tl) -> get_code2xx_any tl
-      | R_Code5xx (_, _, tl) -> get_code2xx_any tl
-      | R_Code (_, _, tl) -> get_code2xx_any tl
-      | RNil -> failwith "Code_2xx response not configured"
-    ;;
-
-    let rec get_code4xx_any
-      : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb
-        -> B.client_error_status list * c4 Response.t
-      = function
-      | R_Code4xx (codes, spec, _) -> codes, spec
-      | R_OK (_, tl) -> get_code4xx_any tl
-      | R_Created (_, tl) -> get_code4xx_any tl
-      | R_Code2xx (_, _, tl) -> get_code4xx_any tl
-      | R_Not_found (_, tl) -> get_code4xx_any tl
-      | R_Bad_request (_, tl) -> get_code4xx_any tl
-      | R_Internal_server_error (_, tl) -> get_code4xx_any tl
-      | R_Code5xx (_, _, tl) -> get_code4xx_any tl
-      | R_Code (_, _, tl) -> get_code4xx_any tl
-      | RNil -> failwith "Code_4xx response not configured"
-    ;;
-
-    let rec get_code5xx_any
-      : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb
-        -> B.server_error_status list * c5 Response.t
-      = function
-      | R_Code5xx (codes, spec, _) -> codes, spec
-      | R_OK (_, tl) -> get_code5xx_any tl
-      | R_Created (_, tl) -> get_code5xx_any tl
-      | R_Code2xx (_, _, tl) -> get_code5xx_any tl
-      | R_Not_found (_, tl) -> get_code5xx_any tl
-      | R_Bad_request (_, tl) -> get_code5xx_any tl
-      | R_Code4xx (_, _, tl) -> get_code5xx_any tl
-      | R_Internal_server_error (_, tl) -> get_code5xx_any tl
-      | R_Code (_, _, tl) -> get_code5xx_any tl
-      | RNil -> failwith "Code_5xx response not configured"
-    ;;
-
-    let rec get_code_any
-      : type ok created c2 nf bad c4 ise c5 code.
-        (ok, created, c2, nf, bad, c4, ise, c5, code) rb
-        -> B.status_code list * code Response.t
-      = function
-      | R_Code (codes, spec, _) -> codes, spec
-      | R_OK (_, tl) -> get_code_any tl
-      | R_Created (_, tl) -> get_code_any tl
-      | R_Code2xx (_, _, tl) -> get_code_any tl
-      | R_Not_found (_, tl) -> get_code_any tl
-      | R_Bad_request (_, tl) -> get_code_any tl
-      | R_Code4xx (_, _, tl) -> get_code_any tl
-      | R_Internal_server_error (_, tl) -> get_code_any tl
-      | R_Code5xx (_, _, tl) -> get_code_any tl
-      | RNil -> failwith "Code response not configured"
-    ;;
-
-    type ('h
-         , 'terminal
-         , 'context
-         , 'req
-         , 'ok
-         , 'created
-         , 'code2xx
-         , 'nf
-         , 'bad
-         , 'code4xx
-         , 'ise
-         , 'code5xx
-         , 'code)
-         builder =
+    type ('h, 'terminal, 'context, 'req) builder =
       { meth : B.meth
       ; pattern : ('h, 'terminal) path
-      ; invoke :
-          'terminal
-          -> 'context
-          -> 'req
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-               B.io
+      ; invoke : 'terminal -> 'context -> 'req -> reply B.io
       ; context : 'context Context.t
       ; request : 'req Request.t
-      ; responses :
-          ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
+      ; responses : response_cases
       ; metadata : Operation_metadata.t option
       ; decode_error : Decode_error_response.t option
       }
 
-    type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) responses =
-      (never, never, never, never, never, never, never, never, never) rb
-      -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
     let mk
-          (type h terminal context req ok created code2xx nf bad code4xx ise code5xx code)
+          (type h terminal context req)
           (meth : B.meth)
           ?summary
           ?tags
@@ -1413,125 +1133,54 @@ module Make (B : Backend.S) = struct
           ?operation_id
           ?description
           ?decode_error
-          ~(invoke :
-             terminal
-             -> context
-             -> req
-             -> (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) resp B.io)
+          ~(invoke : terminal -> context -> req -> reply B.io)
           ~(context : context Context.t)
           ~(request : req Request.t)
           ~(path : (h, terminal) path)
-          ~(responses :
-             (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) responses)
+          ~(responses : response_cases)
           ()
-      : ( h
-          , terminal
-          , context
-          , req
-          , ok
-          , created
-          , code2xx
-          , nf
-          , bad
-          , code4xx
-          , ise
-          , code5xx
-          , code )
-          builder
+      : (h, terminal, context, req) builder
       =
       { meth
       ; pattern = path
       ; invoke
       ; context
       ; request
-      ; responses = responses RNil
+      ; responses
       ; metadata =
           metadata_of_opts ?summary ?tags ?deprecated ?operation_id ?description ()
       ; decode_error
       }
     ;;
 
-    let render_resp
-      : type h terminal context req ok created code2xx nf bad code4xx ise code5xx code.
-        ( h
-          , terminal
-          , context
-          , req
-          , ok
-          , created
-          , code2xx
-          , nf
-          , bad
-          , code4xx
-          , ise
-          , code5xx
-          , code )
-          builder
-        -> (ok, created, code2xx, nf, bad, code4xx, ise, code5xx, code) resp
-        -> B.resp B.io
-      =
-      fun b r ->
-      let ensure_declared status declared =
-        let status = B.code_of_status status in
-        let declared = List.map declared ~f:(fun status -> B.code_of_status status) in
-        match
-          Runtime.ensure_declared
-            ~meth:(meth_to_string b.meth)
-            ~path:(path_to_string b.pattern)
-            ~status
-            ~declared
-        with
-        | Ok () -> ()
-        | Error { meth; path; status; declared } ->
-          raise (Runtime_error (Undeclared_status { meth; path; status; declared }))
+    let rec response_case_list = function
+      | Response.One_case declared -> [ declared ]
+      | Response.Both_cases (left, right) ->
+        response_case_list left @ response_case_list right
+    ;;
+
+    let render_reply b (Response.Reply (returned, value)) =
+      let declared = response_case_list b.responses in
+      let declared_ids, declared_statuses =
+        List.fold_right declared ~init:([], []) ~f:(fun declared (ids, statuses) ->
+          match declared with
+          | Response.Declared_case data ->
+            data.id :: ids, B.code_of_status data.status :: statuses)
       in
-      match r with
-      | OK v ->
-        let spec = get_ok b.responses in
-        respond_ok_with_status ~status:`OK spec v
-      | Created v ->
-        let spec = get_created b.responses in
-        respond_ok_with_status ~status:`Created spec v
-      | No_content ->
-        let statuses, spec = get_code2xx_any b.responses in
-        ensure_declared
-          (`No_content :> B.status_code)
-          (List.map statuses ~f:(fun status -> ((status :> B.status) :> B.status_code)));
-        respond_ok_with_status ~status:`No_content spec ()
-      | Code_2xx (st, v) ->
-        let statuses, spec = get_code2xx_any b.responses in
-        let status = ((st :> B.status) :> B.status_code) in
-        ensure_declared
-          status
-          (List.map statuses ~f:(fun status -> ((status :> B.status) :> B.status_code)));
-        respond_ok_with_status ~status spec v
-      | Not_found v ->
-        let spec = get_not_found b.responses in
-        respond_ok_with_status ~status:`Not_found spec v
-      | Bad_request v ->
-        let spec = get_bad_request b.responses in
-        respond_ok_with_status ~status:`Bad_request spec v
-      | Code_4xx (st, v) ->
-        let statuses, spec = get_code4xx_any b.responses in
-        let status = ((st :> B.status) :> B.status_code) in
-        ensure_declared
-          status
-          (List.map statuses ~f:(fun status -> ((status :> B.status) :> B.status_code)));
-        respond_ok_with_status ~status spec v
-      | Internal_server_error v ->
-        let spec = get_internal_server_error b.responses in
-        respond_ok_with_status ~status:`Internal_server_error spec v
-      | Code_5xx (st, v) ->
-        let statuses, spec = get_code5xx_any b.responses in
-        let status = ((st :> B.status) :> B.status_code) in
-        ensure_declared
-          status
-          (List.map statuses ~f:(fun status -> ((status :> B.status) :> B.status_code)));
-        respond_ok_with_status ~status spec v
-      | Code (st, v) ->
-        let statuses, spec = get_code_any b.responses in
-        ensure_declared st statuses;
-        respond_ok_with_status ~status:st spec v
+      let status = B.code_of_status returned.status in
+      (match
+         Runtime.ensure_declared_case
+           ~meth:(meth_to_string b.meth)
+           ~path:(path_to_string b.pattern)
+           ~case_id:returned.id
+           ~declared_case_ids:declared_ids
+           ~status
+           ~declared:declared_statuses
+       with
+       | Ok () -> ()
+       | Error { Runtime.meth; path; status; declared } ->
+         raise (Runtime_error (Undeclared_response_case { meth; path; status; declared })));
+      respond_ok_with_status ~status:returned.status returned.response value
     ;;
 
     let render_context_rejection (Context.Rejected { status; response; error })
@@ -1662,92 +1311,12 @@ module Make (B : Backend.S) = struct
           :: path_params rest
       ;;
 
-      let rec collect_responses
-        : type ok created c2 nf bad c4 ise c5 code.
-          (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> Contract.response list
-        = function
-        | RNil -> []
-        | R_OK (spec, tl) ->
-          { Contract.status = B.code_of_status (`OK :> B.status_code)
-          ; payload = response_payload_spec_of_response spec
-          }
-          :: collect_responses tl
-        | R_Created (spec, tl) ->
-          { Contract.status = B.code_of_status (`Created :> B.status_code)
-          ; payload = response_payload_spec_of_response spec
-          }
-          :: collect_responses tl
-        | R_Code2xx (codes, spec, tl) ->
-          List.map codes ~f:(fun st ->
-            { Contract.status = B.code_of_status ((st :> B.status) :> B.status_code)
-            ; payload = response_payload_spec_of_response spec
-            })
-          @ collect_responses tl
-        | R_Not_found (spec, tl) ->
-          { Contract.status = B.code_of_status (`Not_found :> B.status_code)
-          ; payload = response_payload_spec_of_response spec
-          }
-          :: collect_responses tl
-        | R_Bad_request (spec, tl) ->
-          { Contract.status = B.code_of_status (`Bad_request :> B.status_code)
-          ; payload = response_payload_spec_of_response spec
-          }
-          :: collect_responses tl
-        | R_Code4xx (codes, spec, tl) ->
-          List.map codes ~f:(fun st ->
-            { Contract.status = B.code_of_status ((st :> B.status) :> B.status_code)
-            ; payload = response_payload_spec_of_response spec
-            })
-          @ collect_responses tl
-        | R_Internal_server_error (spec, tl) ->
-          { Contract.status = B.code_of_status (`Internal_server_error :> B.status_code)
-          ; payload = response_payload_spec_of_response spec
-          }
-          :: collect_responses tl
-        | R_Code5xx (codes, spec, tl) ->
-          List.map codes ~f:(fun st ->
-            { Contract.status = B.code_of_status ((st :> B.status) :> B.status_code)
-            ; payload = response_payload_spec_of_response spec
-            })
-          @ collect_responses tl
-        | R_Code (codes, spec, tl) ->
-          List.map codes ~f:(fun st ->
-            { Contract.status = B.code_of_status st
-            ; payload = response_payload_spec_of_response spec
-            })
-          @ collect_responses tl
-      ;;
-
-      let rec response_families
-        : type ok created c2 nf bad c4 ise c5 code.
-          (ok, created, c2, nf, bad, c4, ise, c5, code) rb -> int list list
-        = function
-        | RNil -> []
-        | R_OK (_, tail) ->
-          [ B.code_of_status (`OK :> B.status_code) ] :: response_families tail
-        | R_Created (_, tail) ->
-          [ B.code_of_status (`Created :> B.status_code) ] :: response_families tail
-        | R_Code2xx (statuses, _, tail) ->
-          List.map statuses ~f:(fun status ->
-            B.code_of_status ((status :> B.status) :> B.status_code))
-          :: response_families tail
-        | R_Not_found (_, tail) ->
-          [ B.code_of_status (`Not_found :> B.status_code) ] :: response_families tail
-        | R_Bad_request (_, tail) ->
-          [ B.code_of_status (`Bad_request :> B.status_code) ] :: response_families tail
-        | R_Code4xx (statuses, _, tail) ->
-          List.map statuses ~f:(fun status ->
-            B.code_of_status ((status :> B.status) :> B.status_code))
-          :: response_families tail
-        | R_Internal_server_error (_, tail) ->
-          [ B.code_of_status (`Internal_server_error :> B.status_code) ]
-          :: response_families tail
-        | R_Code5xx (statuses, _, tail) ->
-          List.map statuses ~f:(fun status ->
-            B.code_of_status ((status :> B.status) :> B.status_code))
-          :: response_families tail
-        | R_Code (statuses, _, tail) ->
-          List.map statuses ~f:B.code_of_status :: response_families tail
+      let collect_responses cases =
+        response_case_list cases
+        |> List.map ~f:(fun (Response.Declared_case data) ->
+          { Contract.status = B.code_of_status data.status
+          ; payload = response_payload_spec_of_response data.response
+          })
       ;;
 
       let rec path_has_parsers : type h f. (h, f) path -> bool = function
@@ -2000,10 +1569,6 @@ module Make (B : Backend.S) = struct
             ; path : string
             ; status : int
             }
-        | Empty_response_family of
-            { meth : string
-            ; path : string
-            }
         | Invalid_no_content_response of
             { meth : string
             ; path : string
@@ -2123,7 +1688,7 @@ module Make (B : Backend.S) = struct
               | Error error -> render_decode_error inherited error
               | Ok body ->
                 let%bind r = b.invoke f' context body in
-                render_resp b r))
+                render_reply b r))
       in
       let decode_statuses = Openapi_adapter.decode_statuses b.pattern b.request in
       let contract inherited =
@@ -2142,7 +1707,6 @@ module Make (B : Backend.S) = struct
           ; decode_error_responses
           ; context_responses = Openapi_adapter.response_specs_of_context b.context
           ; security = b.context.security
-          ; response_families = Openapi_adapter.response_families b.responses
           }
         in
         { Contract.meth = meth_to_string b.meth
@@ -2288,7 +1852,6 @@ module Make (B : Backend.S) = struct
             ?operation_id
             ?description
             ?decode_error
-            ()
             (builder : (phase, handler, terminal) uri)
         : (handler, terminal) documented
         =
@@ -2310,36 +1873,16 @@ module Make (B : Backend.S) = struct
 
       let accepts request documented = { documented; request }
 
-      type ('handler
-           , 'terminal
-           , 'request
-           , 'ok
-           , 'created
-           , 'code2xx
-           , 'not_found
-           , 'bad_request
-           , 'code4xx
-           , 'internal_server_error
-           , 'code5xx
-           , 'code)
-           ready =
+      type ('handler, 'terminal, 'request) ready =
         { requested : ('handler, 'terminal, 'request) requested
-        ; responses :
-            ( 'ok
-              , 'created
-              , 'code2xx
-              , 'not_found
-              , 'bad_request
-              , 'code4xx
-              , 'internal_server_error
-              , 'code5xx
-              , 'code )
-              responses
+        ; responses : response_cases
         }
 
-      let returns responses requested = { requested; responses }
+      let returns responses requested =
+        { requested; responses = responses.Response.cases }
+      ;;
 
-      let handle ready handler =
+      let handle handler ready =
         let { requested = { documented; request }; responses } = ready in
         make_route
           ~context:Context.empty
@@ -2357,7 +1900,7 @@ module Make (B : Backend.S) = struct
           handler
       ;;
 
-      let handle_with ~context ready handler =
+      let handle_with ~context handler ready =
         let { requested = { documented; request }; responses } = ready in
         make_route
           ~context
@@ -2375,7 +1918,7 @@ module Make (B : Backend.S) = struct
           handler
       ;;
 
-      let handle_in_group ready handler =
+      let handle_in_group handler ready =
         let { requested = { documented; request }; responses } = ready in
         Group.Contextual_route
           (fun context ->
@@ -2395,7 +1938,7 @@ module Make (B : Backend.S) = struct
               handler)
       ;;
 
-      let ( ==> ) = handle_in_group
+      let ( ==> ) ready handler = handle_in_group handler ready
     end
   end
 end

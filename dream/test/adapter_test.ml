@@ -2,7 +2,6 @@ open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_dream)
 module Io = Endpoint.Io
-open Io.Let_syntax
 open Endpoint
 open Endpoint.Dsl
 open Staged
@@ -68,15 +67,14 @@ let decode_errors =
 ;;
 
 let route =
-  let ready =
-    post / "items" /: arg "id" (module String_param)
-    |> documented ()
-    |> accepts (Request.text ~description:"Body" ())
-    |> returns (ok (Response.text ~description:"OK" ()))
-  in
-  handle_with ~context:Context.request ready @@ fun id request body ->
-  let query = Dream.query request "q" |> Option.value ~default:"none" in
-  return (OK (String.concat ~sep:":" [ id; query; body ]))
+  let ok = Response.case `OK (Response.text ~description:"OK" ()) in
+  post / "items" /: arg "id" (module String_param)
+  |> documented
+  |> accepts (Request.text ~description:"Body" ())
+  |> returns ok
+  |> handle_with ~context:Context.request @@ fun id request body ->
+     let query = Dream.query request "q" |> Option.value ~default:"none" in
+     respond ok (String.concat ~sep:":" [ id; query; body ])
 ;;
 
 let custom =

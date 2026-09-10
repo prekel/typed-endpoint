@@ -260,9 +260,7 @@ type response =
 
     [decode_error_responses] and [context_responses] are implicit failure
     responses. Compilation merges them into [responses] by status and media
-    type. [security] is an OR-list of security requirements. Each entry of
-    [response_families] is the non-empty set of statuses represented by one
-    typed response constructor and is used to validate runtime handler output. *)
+    type. [security] is an OR-list of security requirements. *)
 type endpoint =
   { meth : string
   ; path : string
@@ -273,7 +271,6 @@ type endpoint =
   ; decode_error_responses : response list
   ; context_responses : response list
   ; security : Security.requirement list
-  ; response_families : int list list
   }
 
 (** A route before group compilation. [path] does not yet include the group's
@@ -344,10 +341,6 @@ module Compile_error : sig
         ; path : string
         ; status : int
         } (** An explicit response status is outside the HTTP range 100 through 599. *)
-    | Empty_response_family of
-        { meth : string
-        ; path : string
-        } (** A typed response constructor was declared with no possible statuses. *)
     | Invalid_no_content_response of
         { meth : string
         ; path : string

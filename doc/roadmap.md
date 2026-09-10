@@ -27,11 +27,13 @@ Servant, Tapir, Smithy4s, http4s и ZIO. Это backlog, а не описани�
 
 ```ocaml
 let get_pet =
+  let ok = Response.case `OK (Response.json Pet) in
+  let not_found = Response.case `Not_found (Response.json Api_response) in
   Contract.Staged.(
     get / "pet" /: arg "petId" Pet_id
-    |> documented ~operation_id:"getPetById" ()
+    |> documented ~operation_id:"getPetById"
     |> accepts Request.empty
-    |> returns (JSON.ok Pet <|> JSON.not_found Api_response))
+    |> returns (ok <|> not_found))
 
 let get_pet_server =
   Server_endpoint.handle get_pet @@ fun pet_id database () ->

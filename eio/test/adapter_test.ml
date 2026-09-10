@@ -72,18 +72,18 @@ let authenticated =
 ;;
 
 let route =
-  let context = Context.both authenticated (Dependency.value "items") in
-  let ready =
-    post / "items" /: arg "id" (module String_param) /? arg "q" (module String_param)
-    |> documented ()
-    |> accepts (Request.text ~description:"Body" ())
-    |> returns (ok (Response.text ~description:"OK" ()))
-  in
-  handle_with ~context ready @@ fun id query (user, service) body ->
-  OK
-    (String.concat
-       ~sep:":"
-       [ service; user; id; Option.value query ~default:"none"; body ])
+  let ok = Response.case `OK (Response.text ~description:"OK" ()) in
+  post / "items" /: arg "id" (module String_param) /? arg "q" (module String_param)
+  |> documented
+  |> accepts (Request.text ~description:"Body" ())
+  |> returns ok
+  |> handle_with ~context:(Context.both authenticated (Dependency.value "items"))
+     @@ fun id query (user, service) body ->
+     respond
+       ok
+       (String.concat
+          ~sep:":"
+          [ service; user; id; Option.value query ~default:"none"; body ])
 ;;
 
 let captured =

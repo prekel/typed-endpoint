@@ -9,23 +9,21 @@ let group routes = Group.make ~description:"Property tests" routes
 let call = Typed_endpoint_testing.Client.call
 
 let segment_route =
-  let ready =
-    get / "segment" /: arg "value" (Parameter.string ~description:"Segment" ())
-    |> documented ()
-    |> accepts Request.empty
-    |> returns (ok (Response.text ~description:"Echo" ()))
-  in
-  handle ready @@ fun value () -> Io.return (OK value)
+  let ok = Response.case `OK (Response.text ~description:"Echo" ()) in
+  get / "segment" /: arg "value" (Parameter.string ~description:"Segment" ())
+  |> documented
+  |> accepts Request.empty
+  |> returns ok
+  |> handle @@ fun value () -> respond ok value
 ;;
 
 let query_route =
-  let ready =
-    get / "query" /! arg "value" (Parameter.int ~description:"Scalar value" ())
-    |> documented ()
-    |> accepts Request.empty
-    |> returns (ok (Response.text ~description:"Value" ()))
-  in
-  handle ready @@ fun value () -> Io.return (OK (Int.to_string value))
+  let ok = Response.case `OK (Response.text ~description:"Value" ()) in
+  get / "query" /! arg "value" (Parameter.int ~description:"Scalar value" ())
+  |> documented
+  |> accepts Request.empty
+  |> returns ok
+  |> handle @@ fun value () -> respond ok (Int.to_string value)
 ;;
 
 let version_header =
@@ -33,34 +31,31 @@ let version_header =
 ;;
 
 let header_route =
-  let ready =
-    get / "header"
-    |> header version_header
-    |> documented ()
-    |> accepts Request.empty
-    |> returns (ok (Response.text ~description:"Version" ()))
-  in
-  handle ready @@ fun version () -> Io.return (OK (Int.to_string version))
+  let ok = Response.case `OK (Response.text ~description:"Version" ()) in
+  get / "header"
+  |> header version_header
+  |> documented
+  |> accepts Request.empty
+  |> returns ok
+  |> handle @@ fun version () -> respond ok (Int.to_string version)
 ;;
 
 let priority_dynamic_route =
-  let ready =
-    get / "priority" /: arg "value" (Parameter.string ~description:"Value" ())
-    |> documented ()
-    |> accepts Request.empty
-    |> returns (ok (Response.text ~description:"Route kind" ()))
-  in
-  handle ready @@ fun _value () -> Io.return (OK "dynamic")
+  let ok = Response.case `OK (Response.text ~description:"Route kind" ()) in
+  get / "priority" /: arg "value" (Parameter.string ~description:"Value" ())
+  |> documented
+  |> accepts Request.empty
+  |> returns ok
+  |> handle @@ fun _value () -> respond ok "dynamic"
 ;;
 
 let priority_static_route =
-  let ready =
-    get / "priority" / "fixed"
-    |> documented ()
-    |> accepts Request.empty
-    |> returns (ok (Response.text ~description:"Route kind" ()))
-  in
-  handle ready @@ fun () -> Io.return (OK "static")
+  let ok = Response.case `OK (Response.text ~description:"Route kind" ()) in
+  get / "priority" / "fixed"
+  |> documented
+  |> accepts Request.empty
+  |> returns ok
+  |> handle @@ fun () -> respond ok "static"
 ;;
 
 let app =

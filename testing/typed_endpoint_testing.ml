@@ -227,22 +227,26 @@ module Backend_conformance = struct
 
     let text description = Response.text ~description ()
 
-    let endpoint uri request responses handler =
-      let ready = uri |> documented () |> accepts request |> returns responses in
-      handle ready handler
+    let endpoint uri request response handler =
+      let ok = Response.case `OK response in
+      uri |> documented |> accepts request |> returns ok |> handle (handler ok)
     ;;
 
-    let endpoint_with ~context uri request responses handler =
-      let ready = uri |> documented () |> accepts request |> returns responses in
-      handle_with ~context ready handler
+    let endpoint_with ~context uri request response handler =
+      let ok = Response.case `OK response in
+      uri
+      |> documented
+      |> accepts request
+      |> returns ok
+      |> handle_with ~context (handler ok)
     ;;
 
     let bounded =
       endpoint
         (post / "bounded")
         (Request.text ~max_body_bytes:4 ~description:"Bounded body" ())
-        (ok (text "Echo"))
-        (fun body -> B.Io.return (OK body))
+        (text "Echo")
+        (fun ok body -> respond ok body)
     ;;
 
     let header_route =
@@ -250,10 +254,9 @@ module Backend_conformance = struct
         ~context:Context.request
         (get / "header")
         Request.empty
-        (ok (text "Header"))
-        (fun request () ->
-           B.Io.return
-             (OK (Option.value (B.header request "x-conformance") ~default:"none")))
+        (text "Header")
+        (fun ok request () ->
+           respond ok (Option.value (B.header request "x-conformance") ~default:"none"))
     ;;
 
     let typed_request_header =
@@ -272,19 +275,17 @@ module Backend_conformance = struct
       endpoint
         (get / "typed-headers" |> header typed_request_header)
         Request.empty
-        (ok
-           (Response.text ~description:"Typed headers" ()
-            |> Response.with_header typed_response_header))
-        (fun version () ->
-           B.Io.return (OK ("present", "version:" ^ Int.to_string version)))
+        (Response.text ~description:"Typed headers" ()
+         |> Response.with_header typed_response_header)
+        (fun ok version () -> respond ok ("present", "version:" ^ Int.to_string version))
     ;;
 
     let empty_route =
       endpoint
         (get / "empty")
         Request.empty
-        (ok (Response.empty ~description:"Empty" ()))
-        (fun () -> B.Io.return (OK ()))
+        (Response.empty ~description:"Empty" ())
+        (fun ok () -> respond ok ())
     ;;
 
     let decoded =
@@ -294,9 +295,9 @@ module Backend_conformance = struct
          /: arg "id" (Typed_endpoint.Parameter.int ~description:"Identifier" ())
          /! arg "enabled" (Typed_endpoint.Parameter.bool ~description:"Enabled" ()))
         Request.empty
-        (ok (text "Decoded"))
-        (fun id enabled () ->
-           B.Io.return (OK (Int.to_string id ^ ":" ^ Bool.to_string enabled)))
+        (text "Decoded")
+        (fun ok id enabled () ->
+           respond ok (Int.to_string id ^ ":" ^ Bool.to_string enabled))
     ;;
 
     let captured =
@@ -305,32 +306,26 @@ module Backend_conformance = struct
          / "priority"
          /: arg "value" (Typed_endpoint.Parameter.string ~description:"Value" ()))
         Request.empty
-        (ok (text "Captured"))
-        (fun value () -> B.Io.return (OK ("capture:" ^ value)))
+        (text "Captured")
+        (fun ok value () -> respond ok ("capture:" ^ value))
     ;;
 
     let fixed =
       endpoint
         (get / "priority" / "fixed")
         Request.empty
-        (ok (text "Static"))
-        (fun () -> B.Io.return (OK "static"))
+        (text "Static")
+        (fun ok () -> respond ok "static")
     ;;
 
     let method_get =
-      endpoint
-        (get / "methods")
-        Request.empty
-        (ok (text "GET"))
-        (fun () -> B.Io.return (OK "get"))
+      endpoint (get / "methods") Request.empty (text "GET") (fun ok () ->
+        respond ok "get")
     ;;
 
     let method_post =
-      endpoint
-        (post / "methods")
-        Request.empty
-        (ok (text "POST"))
-        (fun () -> B.Io.return (OK "post"))
+      endpoint (post / "methods") Request.empty (text "POST") (fun ok () ->
+        respond ok "post")
     ;;
 
     let app =

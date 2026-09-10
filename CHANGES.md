@@ -26,8 +26,9 @@
 - Metadata, parameters, headers и contract schema больше не публикуют
   представление `Ppx_deriving_jsonschema_runtime.t`; Petstore использует общие
   `[@default]`/`[@key]` без дублирующих schema-аннотаций.
-- Семейства response combinators переименованы в `successes`, `client_errors`,
-  `server_errors` и `statuses`; JSON shorthand теперь симметричны основному API.
+- Фиксированный response GADT заменён на масштабируемые typed
+  `Response.case` tokens. Каждый status получает собственный payload type,
+  декларации объединяются через `<|>`, а handlers отвечают через `respond`.
 
 ### Отложено
 

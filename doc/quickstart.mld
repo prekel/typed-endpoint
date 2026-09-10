@@ -22,7 +22,6 @@ let metadata : t Typed_endpoint.Metadata.t =
     ~schema:(Json_schema.of_ppx t_jsonschema)
     ~schema_name:"Pet"
     ~description:"A pet"
-    ()
 ]}
 
 [Json_schema.t] скрывает представление схемы от публичного HTTP API. Для DTO,
@@ -41,7 +40,6 @@ let page =
     ~description:"One-based page number"
     ~of_string:parse_page
     ~to_string:Int.to_string
-    ()
 ]}
 
 Функции без суффикса [_exn] возвращают [Result] и подходят для динамической
@@ -71,29 +69,32 @@ responses и handler. После первого query type checker больше 
 {[
 let get_pet =
   let open Staged in
-  let ready =
-    get
-    / "pet"
-    /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
-    /? arg "verbose" (Parameter.bool ~description:"Verbose response" ())
-    |> documented
-         ~operation_id:"getPetById"
-         ~summary:"Finds a pet"
-         ()
-    |> accepts Request.empty
-    |> returns
-         (JSON.ok (module Pet)
-          <|> JSON.not_found (module Api_response))
+  let ok = Response.case `OK (Response.json (module Pet)) in
+  let not_found =
+    Response.case `Not_found (Response.json (module Api_response))
   in
-  handle ready @@ fun pet_id verbose () ->
-  find_pet pet_id verbose
+  get
+  / "pet"
+  /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
+  /? arg "verbose" (Parameter.bool ~description:"Verbose response" ())
+  |> documented
+       ~operation_id:"getPetById"
+       ~summary:"Finds a pet"
+  |> accepts Request.empty
+  |> returns (ok <|> not_found)
+  |> handle @@ fun pet_id verbose () ->
+  match find_pet pet_id verbose with
+  | Some pet -> respond ok pet
+  | None -> respond not_found (Api_response.not_found pet_id)
 ]}
 
 [/] добавляет static segment, [/:] — required path capture, [/?] — optional
 query и [/!] — required query. Порядок операторов одновременно задаёт порядок
-curried аргументов handler. [<|>] является читаемым alias для [|+]. Для route,
+curried аргументов handler. Каждый [Response.case] сохраняется в локальной
+переменной: [<|>] объединяет декларации для [returns], а [respond] принимает
+исходный case и payload ровно его типа. Для route,
 который затем входит в [Group.make_with_context], последний шаг можно записать
-[ready ==> fun ...]; standalone route завершается [handle], а route со своим
+через [==>]; standalone route завершается [handle], а route со своим
 контекстом — [handle_with]. Backend request не добавляется неявно: при
 необходимости передайте [Context.request] в [handle_with]. [Dependency] и
 [Guard] добавляют остальные typed context values. Несколько контекстов удобно
@@ -131,19 +132,20 @@ let version =
 let result =
   Header.required "X-Result" (Header.string ~description:"Result marker" ())
 
-let ready =
-  get / "versioned"
-  |> Staged.header version
-  |> documented ()
-  |> accepts Request.empty
-  |> returns
-       (ok
-          (Response.text ~description:"Version" ()
-           |> Response.with_header result))
+let ok =
+  Response.case
+    `OK
+    (Response.text ~description:"Version" ()
+     |> Response.with_header result)
 
 let route =
-  handle ready @@ fun version () ->
-  return (OK ("accepted", Int.to_string version))
+  get / "versioned"
+  |> Staged.header version
+  |> documented
+  |> accepts Request.empty
+  |> returns ok
+  |> handle @@ fun version () ->
+  respond ok ("accepted", Int.to_string version)
 ]}
 
 [Response.with_header] меняет payload type на [(header, body)]. Несколько

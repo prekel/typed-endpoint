@@ -2,7 +2,6 @@ open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_opium)
 module Io = Endpoint.Io
-open Io.Let_syntax
 open Endpoint
 open Dsl
 open Staged
@@ -61,13 +60,12 @@ let decode_errors =
 ;;
 
 let route =
-  let ready =
-    post / "echo"
-    |> documented ()
-    |> accepts (Request.text ~description:"Body" ())
-    |> returns (ok (Response.text ~description:"Echo" ()))
-  in
-  handle ready @@ fun body -> return (OK body)
+  let ok = Response.case `OK (Response.text ~description:"Echo" ()) in
+  post / "echo"
+  |> documented
+  |> accepts (Request.text ~description:"Body" ())
+  |> returns ok
+  |> handle @@ fun body -> respond ok body
 ;;
 
 let captured =

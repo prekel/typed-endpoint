@@ -42,13 +42,32 @@ Json_schema.integer_exn ~minimum:1 ()
 [ppx_deriving_yojson]: текущий [ppx_deriving_jsonschema] использует её для той
 же required/key семантики.
 
-{1 Имена групп status codes}
+{1 Response cases}
 
-Combinators, принимающие несколько кодов с одним payload, теперь названы по
-семантике HTTP-класса: [successes], [client_errors], [server_errors] и
-[statuses] вместо [code2xx], [code4xx], [code5xx] и [code]. Модуль [JSON]
-предоставляет те же четыре shorthand. [statuses] покрывает в том числе 1xx,
-3xx, extension-коды и смешанный список классов.
+Фиксированный response GADT и status-specific combinators удалены. Каждый
+ответ теперь получает локальный typed token:
+
+{[
+let ok = Response.case `OK (Response.json (module Pet))
+let not_found =
+  Response.case `Not_found (Response.json (module Api_response))
+
+let route =
+  get / "pet" /: arg "petId" (module Pet_id)
+  |> documented
+  |> accepts Request.empty
+  |> returns (ok <|> not_found)
+  |> handle @@ fun id () ->
+  match find_pet id with
+  | Some pet -> respond ok pet
+  | None -> respond not_found (Api_response.not_found id)
+]}
+
+[respond] возвращает backend effect сразу. Тип payload проверяется статически;
+принадлежность case набору [returns] проверяется по непрозрачному identity перед
+рендерингом. Один [Response.case] описывает любой именованный status или
+extension-код вида [`Code n], поэтому отдельные семейства 2xx/4xx/5xx больше не
+нужны.
 
 {1 Opium}
 
@@ -89,7 +108,7 @@ let version =
 
 get / "items"
 |> Staged.header version
-|> documented ()
+|> documented
 ]}
 
 Response header оборачивает payload; handler возвращает пару:
@@ -102,7 +121,8 @@ let response =
   Response.json (module Item)
   |> Response.with_header location
 
-(* Created (location_value, item) *)
+let created = Response.case `Created response
+(* respond created (location_value, item) *)
 ]}
 
 Optional header использует ['a option] и при [None] отсутствует на wire.

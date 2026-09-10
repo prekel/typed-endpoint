@@ -404,7 +404,7 @@ end
 (** A response returned by a handler violates its declared status contract. *)
 module Runtime_error : sig
   type t =
-    | Undeclared_status of
+    | Undeclared_response_case of
         { meth : string
         ; path : string
         ; status : int
@@ -419,7 +419,7 @@ module Runtime_error : sig
   val to_string : t -> string
 end
 
-(** Raised when a handler returns a status absent from its response declaration. *)
+(** Raised when a handler returns a case token absent from its response declaration. *)
 exception Runtime_error of Runtime_error.t
 
 (** Codecs shared by path and query parameters. A codec is the single source
@@ -627,40 +627,6 @@ module Make
         services. Open [Io.Let_syntax] to use [ppx_let]. *)
     module Io : Base.Monad.S with type 'a t = 'a B.io
 
-    (** Typed handler result. Each constructor is available only when its
-        matching response was declared; dynamic family constructors are also
-        checked against their declared numeric status at runtime. *)
-    type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp =
-      | OK :
-          'ok
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-      | Created :
-          'created
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-      | No_content :
-          ('ok, 'created, unit, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-      | Code_2xx :
-          B.success_status * 'code2xx
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-      | Not_found :
-          'nf
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-      | Bad_request :
-          'bad
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-      | Code_4xx :
-          B.client_error_status * 'code4xx
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-      | Internal_server_error :
-          'ise
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-      | Code_5xx :
-          B.server_error_status * 'code5xx
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-      | Code :
-          B.status_code * 'code
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) resp
-
     module Dsl : sig
       type never = |
 
@@ -695,6 +661,11 @@ module Make
         (** Runtime response encoding paired with its OpenAPI content contract. *)
         type 'a t
 
+        (** A typed response declaration. A single value is both an OpenAPI
+            declaration for {!Staged.returns} and a capability accepted by
+            {!respond}; its payload type cannot be mixed with another case. *)
+        type 'a case
+
         (** Declares the exact JSON wire type returned by the handler. *)
         val json : (module Response_payload.S with type t = 'a) -> 'a t
 
@@ -704,15 +675,32 @@ module Make
         (** Declares arbitrary JSON when a statically typed DTO is impractical. *)
         val json_raw : description:string -> unit -> Yojson.Safe.t t
 
-        (** Declares a body-less response. This is normally used with
-            {!no_content}. *)
+        (** Declares a body-less response, for example a [`No_content] case. *)
         val empty : description:string -> unit -> unit t
 
         (** Adds one required or optional typed header. The resulting response
             value is [(header, body)]; multiple calls nest pairs from the
             outside in and preserve declaration order on the wire. *)
         val with_header : 'header Header.t -> 'body t -> ('header * 'body) t
+
+        (** Associates one arbitrary HTTP status with its payload codec. The
+            status range and duplicate declarations are validated when routes
+            are compiled. *)
+        val case : B.status_code -> 'a t -> 'a case
       end
+
+      (** Existential handler result retaining the exact case/payload pairing. *)
+      type reply
+
+      (** Combines declarations without erasing the individual case values used
+          by handlers. A combined declaration cannot itself be passed to
+          {!respond}, because its payload type is uninhabited. *)
+      val ( <|> ) : 'a Response.case -> 'b Response.case -> never Response.case
+
+      (** Returns a response through [case]. Case membership is verified before
+          rendering; the backend effect is returned directly for ergonomic
+          handler branches. *)
+      val respond : 'a Response.case -> 'a -> reply B.io
 
       module Context : sig
         (** A typed computation performed once before parameter and body
@@ -812,160 +800,6 @@ module Make
           -> t
       end
 
-      (** Internal response-list index exposed abstractly so declarations remain
-          type safe while response combinators compose. *)
-      type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** A response declaration function. Each phantom slot corresponds to one
-          handler-result constructor family. *)
-      type ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) responses =
-        (never, never, never, never, never, never, never, never, never) rb
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** Combines response declarations from left to right. Duplicate status
-          declarations are rejected during compilation. *)
-      val ( |+ )
-        :  (('a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i) rb
-            -> ('j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r) rb)
-        -> (('s, 't, 'u, 'v, 'w, 'x, 'y, 'z, 'a1) rb
-            -> ('a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i) rb)
-        -> ('s, 't, 'u, 'v, 'w, 'x, 'y, 'z, 'a1) rb
-        -> ('j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r) rb
-
-      (** Choice-shaped alias for [|+], intended for the staged DSL. *)
-      val ( <|> )
-        :  (('a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i) rb
-            -> ('j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r) rb)
-        -> (('s, 't, 'u, 'v, 'w, 'x, 'y, 'z, 'a1) rb
-            -> ('a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i) rb)
-        -> ('s, 't, 'u, 'v, 'w, 'x, 'y, 'z, 'a1) rb
-        -> ('j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r) rb
-
-      module JSON : sig
-        (** Shorthand response declarations equivalent to applying
-            {!Response.json} before the status-specific combinator. *)
-        val ok
-          :  (module Response_payload.S with type t = 'ok)
-          -> (never, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-        val created
-          :  (module Response_payload.S with type t = 'created)
-          -> ('ok, never, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-        (** JSON shorthand for a set of successful statuses. *)
-        val successes
-          :  B.success_status list
-          -> (module Response_payload.S with type t = 'code2xx)
-          -> ('ok, 'created, never, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-        val bad_request
-          :  (module Response_payload.S with type t = 'bad)
-          -> ('ok, 'created, 'code2xx, 'nf, never, 'code4xx, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-        val not_found
-          :  (module Response_payload.S with type t = 'nf)
-          -> ('ok, 'created, 'code2xx, never, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-        val internal_server_error
-          :  (module Response_payload.S with type t = 'ise)
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, never, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-        (** JSON shorthand for a set of client-error statuses. *)
-        val client_errors
-          :  B.client_error_status list
-          -> (module Response_payload.S with type t = 'code4xx)
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, never, 'ise, 'code5xx, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-        (** JSON shorthand for a set of server-error statuses. *)
-        val server_errors
-          :  B.server_error_status list
-          -> (module Response_payload.S with type t = 'code5xx)
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, never, 'code) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-        (** JSON shorthand for arbitrary explicit statuses. *)
-        val statuses
-          :  B.status_code list
-          -> (module Response_payload.S with type t = 'code)
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, never) rb
-          -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-      end
-
-      (** Declares a non-empty set of successful statuses sharing one payload.
-          The selected {!Code_2xx} status is checked at runtime. *)
-      val successes
-        :  B.success_status list
-        -> 'code2xx Response.t
-        -> ('ok, 'created, never, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** Declares the only body-less successful response, HTTP 204. *)
-      val no_content
-        :  description:string
-        -> ('ok, 'created, never, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-        -> ('ok, 'created, unit, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** Declares a non-empty set of client-error statuses sharing one payload. *)
-      val client_errors
-        :  B.client_error_status list
-        -> 'code4xx Response.t
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, never, 'ise, 'code5xx, 'code) rb
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** Declares a non-empty set of server-error statuses sharing one payload. *)
-      val server_errors
-        :  B.server_error_status list
-        -> 'code5xx Response.t
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, never, 'code) rb
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** Declares arbitrary explicit status codes sharing one payload. This is
-          the universal form for informational and redirection responses,
-          extension codes, or a mixed set of status classes. *)
-      val statuses
-        :  B.status_code list
-        -> 'code Response.t
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, never) rb
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** Declares HTTP 200 and enables the {!OK} result constructor. *)
-      val ok
-        :  'ok Response.t
-        -> (never, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** Declares HTTP 201 and enables the {!Created} result constructor. *)
-      val created
-        :  'created Response.t
-        -> ('ok, never, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** Declares HTTP 404 and enables the {!Not_found} result constructor. *)
-      val not_found
-        :  'nf Response.t
-        -> ('ok, 'created, 'code2xx, never, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** Declares HTTP 400 and enables the {!Bad_request} result constructor. *)
-      val bad_request
-        :  'bad Response.t
-        -> ('ok, 'created, 'code2xx, 'nf, never, 'code4xx, 'ise, 'code5xx, 'code) rb
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
-      (** Declares HTTP 500 and enables the {!Internal_server_error} result
-          constructor. *)
-      val internal_server_error
-        :  'ise Response.t
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, never, 'code5xx, 'code) rb
-        -> ('ok, 'created, 'code2xx, 'nf, 'bad, 'code4xx, 'ise, 'code5xx, 'code) rb
-
       module Route : sig
         (** An existential route whose handler types remain checked at creation. *)
         type t
@@ -1051,20 +885,7 @@ module Make
         type ('phase, 'handler, 'terminal) uri
         type ('handler, 'terminal) documented
         type ('handler, 'terminal, 'request) requested
-
-        type ('handler
-             , 'terminal
-             , 'request
-             , 'ok
-             , 'created
-             , 'code2xx
-             , 'not_found
-             , 'bad_request
-             , 'code4xx
-             , 'internal_server_error
-             , 'code5xx
-             , 'code)
-             ready
+        type ('handler, 'terminal, 'request) ready
 
         (** Starts a path for an arbitrary backend method. *)
         val meth : B.meth -> ([ `Path ], 'terminal, 'terminal) uri
@@ -1115,7 +936,6 @@ module Make
           -> ?operation_id:string
           -> ?description:string
           -> ?decode_error:Decode_error_response.t
-          -> unit
           -> ([< `Path | `Query | `Header ], 'handler, 'terminal) uri
           -> ('handler, 'terminal) documented
 
@@ -1125,147 +945,32 @@ module Make
           -> ('handler, 'terminal) documented
           -> ('handler, 'terminal, 'request) requested
 
-        (** Adds the response algebra and advances to a handler-ready route. *)
+        (** Adds one or more typed response cases and advances to a
+            handler-ready route. *)
         val returns
-          :  ( 'ok
-               , 'created
-               , 'code2xx
-               , 'not_found
-               , 'bad_request
-               , 'code4xx
-               , 'internal_server_error
-               , 'code5xx
-               , 'code )
-               responses
+          :  'response Response.case
           -> ('handler, 'terminal, 'request) requested
-          -> ( 'handler
-               , 'terminal
-               , 'request
-               , 'ok
-               , 'created
-               , 'code2xx
-               , 'not_found
-               , 'bad_request
-               , 'code4xx
-               , 'internal_server_error
-               , 'code5xx
-               , 'code )
-               ready
+          -> ('handler, 'terminal, 'request) ready
 
         val handle
-          :  ( 'handler
-               , 'request
-                 -> ( 'ok
-                      , 'created
-                      , 'code2xx
-                      , 'not_found
-                      , 'bad_request
-                      , 'code4xx
-                      , 'internal_server_error
-                      , 'code5xx
-                      , 'code )
-                      resp
-                      B.io
-               , 'request
-               , 'ok
-               , 'created
-               , 'code2xx
-               , 'not_found
-               , 'bad_request
-               , 'code4xx
-               , 'internal_server_error
-               , 'code5xx
-               , 'code )
-               ready
-          -> 'handler
+          :  'handler
+          -> ('handler, 'request -> reply B.io, 'request) ready
           -> Route.t
 
         val handle_with
           :  context:'context Context.t
-          -> ( 'handler
-               , 'context
-                 -> 'request
-                 -> ( 'ok
-                      , 'created
-                      , 'code2xx
-                      , 'not_found
-                      , 'bad_request
-                      , 'code4xx
-                      , 'internal_server_error
-                      , 'code5xx
-                      , 'code )
-                      resp
-                      B.io
-               , 'request
-               , 'ok
-               , 'created
-               , 'code2xx
-               , 'not_found
-               , 'bad_request
-               , 'code4xx
-               , 'internal_server_error
-               , 'code5xx
-               , 'code )
-               ready
           -> 'handler
+          -> ('handler, 'context -> 'request -> reply B.io, 'request) ready
           -> Route.t
 
         val handle_in_group
-          :  ( 'handler
-               , 'context
-                 -> 'request
-                 -> ( 'ok
-                      , 'created
-                      , 'code2xx
-                      , 'not_found
-                      , 'bad_request
-                      , 'code4xx
-                      , 'internal_server_error
-                      , 'code5xx
-                      , 'code )
-                      resp
-                      B.io
-               , 'request
-               , 'ok
-               , 'created
-               , 'code2xx
-               , 'not_found
-               , 'bad_request
-               , 'code4xx
-               , 'internal_server_error
-               , 'code5xx
-               , 'code )
-               ready
-          -> 'handler
+          :  'handler
+          -> ('handler, 'context -> 'request -> reply B.io, 'request) ready
           -> 'context Group.route
 
         (** Infix finalizer for grouped routes. *)
         val ( ==> )
-          :  ( 'handler
-               , 'context
-                 -> 'request
-                 -> ( 'ok
-                      , 'created
-                      , 'code2xx
-                      , 'not_found
-                      , 'bad_request
-                      , 'code4xx
-                      , 'internal_server_error
-                      , 'code5xx
-                      , 'code )
-                      resp
-                      B.io
-               , 'request
-               , 'ok
-               , 'created
-               , 'code2xx
-               , 'not_found
-               , 'bad_request
-               , 'code4xx
-               , 'internal_server_error
-               , 'code5xx
-               , 'code )
-               ready
+          :  ('handler, 'context -> 'request -> reply B.io, 'request) ready
           -> 'handler
           -> 'context Group.route
       end
@@ -1323,10 +1028,6 @@ module Make
               ; path : string
               ; status : int
               } (** A declared status is outside the HTTP range 100 through 599. *)
-          | Empty_response_family of
-              { meth : string
-              ; path : string
-              }
           | Invalid_no_content_response of
               { meth : string
               ; path : string

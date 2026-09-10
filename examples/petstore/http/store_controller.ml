@@ -14,97 +14,105 @@ struct
   open Dsl
   open Staged
 
-  let unavailable error =
-    Code_5xx (`Service_unavailable, Dto.Api_response.persistence_error error)
+  let unavailable response_case error =
+    respond response_case (Dto.Api_response.persistence_error error)
   ;;
 
   let get_inventory =
+    let ok = Response.case `OK (Response.json (module Dto.Inventory)) in
+    let service_unavailable =
+      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+    in
     get / "store" / "inventory"
     |> documented
          ~operation_id:"getInventory"
          ~summary:"Returns pet inventories by status."
          ~description:"Returns a map of status names to quantities."
-         ()
     |> accepts Request.empty
-    |> returns
-         (JSON.ok (module Dto.Inventory)
-          <|> JSON.server_errors [ `Service_unavailable ] (module Dto.Api_response))
+    |> returns (ok <|> service_unavailable)
     ==> fun context () ->
     let database = Common.Secured.dependency context in
-    let%map result = Pets.inventory ~database in
+    let%bind result = Pets.inventory ~database in
     match result with
-    | Ok inventory -> OK (Dto.Inventory.of_domain inventory)
-    | Error error -> unavailable error
+    | Ok inventory -> respond ok (Dto.Inventory.of_domain inventory)
+    | Error error -> unavailable service_unavailable error
   ;;
 
   let place_order =
+    let ok = Response.case `OK (Response.json (module Dto.Order)) in
+    let bad_request =
+      Response.case `Bad_request (Response.json (module Dto.Api_response))
+    in
+    let unprocessable_entity =
+      Response.case `Unprocessable_entity (Response.json (module Dto.Api_response))
+    in
+    let service_unavailable =
+      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+    in
     post / "store" / "order"
     |> documented
          ~operation_id:"placeOrder"
          ~summary:"Place an order for a pet."
          ~description:"Place a new order in the store."
-         ()
     |> accepts (Request.json (module Dto.Order))
-    |> returns
-         (JSON.ok (module Dto.Order)
-          <|> JSON.bad_request (module Dto.Api_response)
-          <|> JSON.client_errors [ `Unprocessable_entity ] (module Dto.Api_response)
-          <|> JSON.server_errors [ `Service_unavailable ] (module Dto.Api_response))
+    |> returns (ok <|> bad_request <|> unprocessable_entity <|> service_unavailable)
     ==> fun database order ->
     match Dto.Order.to_domain order with
-    | Error message -> Io.return (Bad_request (Dto.Api_response.bad_request message))
+    | Error message -> respond bad_request (Dto.Api_response.bad_request message)
     | Ok (id, attributes) ->
-      let%map result = Orders.place ~database ?id attributes in
+      let%bind result = Orders.place ~database ?id attributes in
       (match result with
-       | Ok order -> OK (Dto.Order.of_domain order)
+       | Ok order -> respond ok (Dto.Order.of_domain order)
        | Error (`Pet_not_found _) ->
-         Bad_request (Dto.Api_response.bad_request "ordered pet does not exist")
+         respond bad_request (Dto.Api_response.bad_request "ordered pet does not exist")
        | Error (`Already_exists id) ->
-         Code_4xx
-           ( `Unprocessable_entity
-           , Dto.Api_response.bad_request ("order " ^ Int.to_string id ^ " already exists")
-           )
-       | Error (`Persistence error) -> unavailable error)
+         respond
+           unprocessable_entity
+           (Dto.Api_response.bad_request
+              ("order " ^ Int.to_string id ^ " already exists"))
+       | Error (`Persistence error) -> unavailable service_unavailable error)
   ;;
 
   let get_order =
+    let ok = Response.case `OK (Response.json (module Dto.Order)) in
+    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let service_unavailable =
+      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+    in
     get / "store" / "order" /: arg "orderId" (module Http_parameter.Order_id)
     |> documented
          ~operation_id:"getOrderById"
          ~summary:"Find purchase order by ID."
          ~description:"Returns a stored purchase order."
-         ()
     |> accepts Request.empty
-    |> returns
-         (JSON.ok (module Dto.Order)
-          <|> JSON.not_found (module Dto.Api_response)
-          <|> JSON.server_errors [ `Service_unavailable ] (module Dto.Api_response))
+    |> returns (ok <|> not_found <|> service_unavailable)
     ==> fun id database () ->
-    let%map result = Orders.find ~database id in
+    let%bind result = Orders.find ~database id in
     match result with
-    | Ok (Some order) -> OK (Dto.Order.of_domain order)
-    | Ok None -> Not_found (Dto.Api_response.order_not_found id)
-    | Error error -> unavailable error
+    | Ok (Some order) -> respond ok (Dto.Order.of_domain order)
+    | Ok None -> respond not_found (Dto.Api_response.order_not_found id)
+    | Error error -> unavailable service_unavailable error
   ;;
 
   let delete_order =
+    let ok = Response.case `OK (Response.empty ~description:"Order deleted" ()) in
+    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let service_unavailable =
+      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+    in
     delete / "store" / "order" /: arg "orderId" (module Http_parameter.Order_id)
     |> documented
          ~operation_id:"deleteOrder"
          ~summary:"Delete purchase order by identifier."
          ~description:"Deletes a stored purchase order."
-         ()
     |> accepts Request.empty
-    |> returns
-         (ok (Response.empty ~description:"Order deleted" ())
-          <|> JSON.not_found (module Dto.Api_response)
-          <|> JSON.server_errors [ `Service_unavailable ] (module Dto.Api_response))
+    |> returns (ok <|> not_found <|> service_unavailable)
     ==> fun id database () ->
-    let%map result = Orders.delete ~database id in
+    let%bind result = Orders.delete ~database id in
     match result with
-    | Ok () -> OK ()
-    | Error (`Not_found id) -> Not_found (Dto.Api_response.order_not_found id)
-    | Error (`Persistence error) -> unavailable error
+    | Ok () -> respond ok ()
+    | Error (`Not_found id) -> respond not_found (Dto.Api_response.order_not_found id)
+    | Error (`Persistence error) -> unavailable service_unavailable error
   ;;
 
   let groups ~auth ~database =
