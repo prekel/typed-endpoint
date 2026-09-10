@@ -5,7 +5,6 @@ open Typed_endpoint
 module Make (B : Backend.S) = struct
   module Endpoint = Typed_endpoint.Make (B)
   open Endpoint
-  open Dsl
 
   module Secured = struct
     type 'a t =

@@ -3,13 +3,11 @@ open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_dream)
 module Io = Endpoint.Io
 open Endpoint
-open Endpoint.Dsl
-open Staged
 
 module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
     module Backend = Typed_endpoint_dream
 
-    let dream_method : Backend.meth -> Dream.method_ = function
+    let dream_method : Method.t -> Dream.method_ = function
       | `GET -> `GET
       | `POST -> `POST
       | `PUT -> `PUT
@@ -67,7 +65,7 @@ let decode_errors =
 ;;
 
 let route =
-  let ok = Response.case `OK (Response.text ~description:"OK" ()) in
+  let ok = case `OK (Response.text ~description:"OK" ()) in
   post / "items" /: arg "id" (module String_param)
   |> documented
   |> accepts (Request.text ~description:"Body" ())
@@ -83,21 +81,21 @@ let custom =
 ;;
 
 let captured =
-  Unsafe.route ~meth:B.get ~path:"/priority/:value" ~handler:(fun request ->
+  Unsafe.route ~meth:`GET ~path:"/priority/:value" ~handler:(fun request ->
     Dream.respond ("capture:" ^ Dream.param request "value"))
 ;;
 
 let fixed =
-  Unsafe.route ~meth:B.get ~path:"/priority/fixed" ~handler:(fun _request ->
+  Unsafe.route ~meth:`GET ~path:"/priority/fixed" ~handler:(fun _request ->
     Dream.respond "static")
 ;;
 
 let handler =
   compile_exn
     ~decode_error:decode_errors
-    [ Group.v
+    [ Group.make
         ~prefix:[ "v1" ]
-        ~metadata:(Operation_metadata.v ~description:"Dream test" ())
+        ~description:"Dream test"
         [ route; custom; captured; fixed ]
     ]
   |> Compiled.app

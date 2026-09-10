@@ -7,7 +7,7 @@ module App =
     (Database.Order_repository)
     (Database.User_repository)
 
-module Dsl = App.Endpoint.Dsl
+module Endpoint = App.Endpoint
 
 module Failing_pet_repository = struct
   include Database.Pet_repository
@@ -24,7 +24,7 @@ module Failing_app =
 
 let auth = Petstore_app.Routes.{ bearer_token = "test-token"; api_key = "test-key" }
 let compiled = App.compile ~auth ~database:(Database.create ()) ()
-let routes = Dsl.Compiled.app compiled
+let routes = Endpoint.Compiled.app compiled
 let request = Typed_endpoint_testing.Client.call routes
 let bearer_headers = [ "authorization", "Bearer test-token" ]
 let api_key_headers = [ "api_key", "test-key" ]
@@ -383,7 +383,7 @@ let test_openapi () =
 let test_static_repository_substitution () =
   let routes =
     Failing_app.compile ~auth ~database:(Database.create ()) ()
-    |> Failing_app.Endpoint.Dsl.Compiled.app
+    |> Failing_app.Endpoint.Compiled.app
   in
   let response =
     Typed_endpoint_testing.Client.call

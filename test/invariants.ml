@@ -5,8 +5,6 @@ module Endpoint = Make (Typed_endpoint_testing)
 module Io = Endpoint.Io
 open Io.Let_syntax
 open Endpoint
-open Dsl
-open Staged
 
 module Testing_conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
     module Backend = Typed_endpoint_testing
@@ -19,6 +17,84 @@ module Testing_conformance = Typed_endpoint_testing.Backend_conformance.Make (st
     let header = Typed_endpoint_testing.Response.header
     let body response = Typed_endpoint_testing.Response.body response
   end)
+
+let%test_unit "Status.code maps every named status" =
+  let statuses : (Status.t * int) list =
+    [ `Continue, 100
+    ; `Switching_protocols, 101
+    ; `Processing, 102
+    ; `Checkpoint, 103
+    ; `OK, 200
+    ; `Created, 201
+    ; `Accepted, 202
+    ; `Non_authoritative_information, 203
+    ; `No_content, 204
+    ; `Reset_content, 205
+    ; `Partial_content, 206
+    ; `Multi_status, 207
+    ; `Already_reported, 208
+    ; `Im_used, 226
+    ; `Multiple_choices, 300
+    ; `Moved_permanently, 301
+    ; `Found, 302
+    ; `See_other, 303
+    ; `Not_modified, 304
+    ; `Use_proxy, 305
+    ; `Switch_proxy, 306
+    ; `Temporary_redirect, 307
+    ; `Permanent_redirect, 308
+    ; `Bad_request, 400
+    ; `Unauthorized, 401
+    ; `Payment_required, 402
+    ; `Forbidden, 403
+    ; `Not_found, 404
+    ; `Method_not_allowed, 405
+    ; `Not_acceptable, 406
+    ; `Proxy_authentication_required, 407
+    ; `Request_timeout, 408
+    ; `Conflict, 409
+    ; `Gone, 410
+    ; `Length_required, 411
+    ; `Precondition_failed, 412
+    ; `Request_entity_too_large, 413
+    ; `Request_uri_too_long, 414
+    ; `Unsupported_media_type, 415
+    ; `Requested_range_not_satisfiable, 416
+    ; `Expectation_failed, 417
+    ; `I_m_a_teapot, 418
+    ; `Enhance_your_calm, 420
+    ; `Unprocessable_entity, 422
+    ; `Locked, 423
+    ; `Failed_dependency, 424
+    ; `Upgrade_required, 426
+    ; `Precondition_required, 428
+    ; `Too_many_requests, 429
+    ; `Request_header_fields_too_large, 431
+    ; `No_response, 444
+    ; `Retry_with, 449
+    ; `Blocked_by_windows_parental_controls, 450
+    ; `Wrong_exchange_server, 451
+    ; `Client_closed_request, 499
+    ; `Internal_server_error, 500
+    ; `Not_implemented, 501
+    ; `Bad_gateway, 502
+    ; `Service_unavailable, 503
+    ; `Gateway_timeout, 504
+    ; `Http_version_not_supported, 505
+    ; `Variant_also_negotiates, 506
+    ; `Insufficient_storage, 507
+    ; `Loop_detected, 508
+    ; `Bandwidth_limit_exceeded, 509
+    ; `Not_extended, 510
+    ; `Network_authentication_required, 511
+    ; `Network_read_timeout_error, 598
+    ; `Network_connect_timeout_error, 599
+    ; `Code 799, 799
+    ]
+  in
+  List.iter statuses ~f:(fun (status, expected) ->
+    assert (Int.equal (Status.code status) expected))
+;;
 
 module Item = struct
   type t =
@@ -83,7 +159,7 @@ let decode_error =
 let group ?decode_error routes = Group.make ?decode_error ~description:"Test API" routes
 
 let echo_route ?(max_body_bytes = 64) () =
-  let ok = Response.case `OK (Response.json (module Item)) in
+  let ok = case `OK (Response.json (module Item)) in
   post / "items"
   |> documented ~operation_id:"echoItem"
   |> accepts (Request.json ~max_body_bytes (module Item))
@@ -92,7 +168,7 @@ let echo_route ?(max_body_bytes = 64) () =
 ;;
 
 let binary_route =
-  let ok = Response.case `OK (Response.text ~description:"Byte length" ()) in
+  let ok = case `OK (Response.text ~description:"Byte length" ()) in
   post / "binary"
   |> documented ~operation_id:"uploadBinary"
   |> accepts (Request.binary ~max_body_bytes:4 ~description:"Opaque bytes" ())
@@ -269,7 +345,7 @@ let%expect_test "a safe decode-error policy is available by default" =
 ;;
 
 let primitive_route =
-  let ok = Response.case `OK (Response.text ~description:"Decoded values" ()) in
+  let ok = case `OK (Response.text ~description:"Decoded values" ()) in
   get
   / "primitive"
   /: arg "id" (Parameter.int ~description:"Integer identifier" ())
@@ -282,7 +358,7 @@ let primitive_route =
 ;;
 
 let staged_route =
-  let ok = Response.case `OK (Response.text ~description:"Decoded values" ()) in
+  let ok = case `OK (Response.text ~description:"Decoded values" ()) in
   get
   / "staged"
   /: arg "id" (Parameter.int ~description:"Identifier" ())
@@ -325,7 +401,7 @@ let%expect_test "typed request and response headers drive runtime and OpenAPI" =
   in
   let route =
     let ok =
-      Response.case
+      case
         `OK
         (Response.text ~description:"Header result" () |> Response.with_header result)
     in
@@ -378,9 +454,7 @@ let%expect_test "response header values reject line breaks without echoing the v
   in
   let route =
     let ok =
-      Response.case
-        `OK
-        (Response.text ~description:"Response" () |> Response.with_header unsafe)
+      case `OK (Response.text ~description:"Response" () |> Response.with_header unsafe)
     in
     get / "unsafe-header"
     |> documented
@@ -396,7 +470,7 @@ let%expect_test "response header values reject line breaks without echoing the v
 ;;
 
 let empty_response_route =
-  let ok = Response.case `OK (Response.empty ~description:"No representation" ()) in
+  let ok = case `OK (Response.empty ~description:"No representation" ()) in
   get / "empty"
   |> documented
   |> accepts Request.empty
@@ -427,7 +501,7 @@ let%expect_test "testing client exposes representation and routing headers" =
 
 let%expect_test "static routes take precedence over path captures" =
   let captured =
-    let ok = Response.case `OK (Response.text ~description:"Captured" ()) in
+    let ok = case `OK (Response.text ~description:"Captured" ()) in
     get / "priority" /: arg "value" (Parameter.string ~description:"Captured value" ())
     |> documented
     |> accepts Request.empty
@@ -435,7 +509,7 @@ let%expect_test "static routes take precedence over path captures" =
     |> handle @@ fun value () -> respond ok ("capture:" ^ value)
   in
   let fixed =
-    let ok = Response.case `OK (Response.text ~description:"Static" ()) in
+    let ok = case `OK (Response.text ~description:"Static" ()) in
     get / "priority" / "fixed"
     |> documented
     |> accepts Request.empty
@@ -500,7 +574,7 @@ let dependency_context =
 ;;
 
 let dependency_route =
-  let ok = Response.case `OK (Response.text ~description:"Injected value" ()) in
+  let ok = case `OK (Response.text ~description:"Injected value" ()) in
   get / "dependency"
   |> documented
   |> accepts Request.empty
@@ -545,7 +619,7 @@ let group_context =
       ~status:`Unauthorized
       ~response:(Response.json (module Error_payload))
       ~check:(fun request ->
-        match B.header request "authorization" with
+        match Typed_endpoint_testing.header request "authorization" with
         | Some "Bearer group-token" -> return (Ok ())
         | _ ->
           return
@@ -557,9 +631,7 @@ let group_context =
 ;;
 
 let grouped_route segment =
-  let ok =
-    Response.case `OK (Response.text ~description:"Injected group dependency" ())
-  in
+  let ok = case `OK (Response.text ~description:"Injected group dependency" ()) in
   get / segment |> documented |> accepts Request.empty |> returns ok
   ==> fun dependency () -> respond ok (dependency ^ ":" ^ segment)
 ;;
@@ -604,7 +676,7 @@ let%expect_test "a group context is typed, shared, and documented per route" =
 ;;
 
 let observed_route =
-  let ok = Response.case `OK (Response.text ~description:"Observed" ()) in
+  let ok = case `OK (Response.text ~description:"Observed" ()) in
   get / "observed" /: arg "id" (Parameter.int ~description:"Identifier" ())
   |> documented ~operation_id:"observedRoute" ~tags:[ "endpoint" ]
   |> accepts Request.empty
@@ -674,7 +746,7 @@ let secured_guard =
 ;;
 
 let secured_route =
-  let ok = Response.case `OK (Response.text ~description:"OK" ()) in
+  let ok = case `OK (Response.text ~description:"OK" ()) in
   get / "secure"
   |> documented
   |> accepts Request.empty
@@ -710,7 +782,7 @@ module Conflicting_item = struct
 end
 
 let conflict_route =
-  let ok = Response.case `OK (Response.json (module Conflicting_item)) in
+  let ok = case `OK (Response.json (module Conflicting_item)) in
   get / "conflict"
   |> documented
   |> accepts Request.empty
@@ -738,7 +810,7 @@ let print_compile_errors groups =
 let%expect_test "routes with indistinguishable capture shapes are rejected" =
   let string = Parameter.string ~description:"Identifier" () in
   let route name =
-    let ok = Response.case `OK (Response.text ~description:"Pet" ()) in
+    let ok = case `OK (Response.text ~description:"Pet" ()) in
     get / "pets" /: arg name string
     |> documented
     |> accepts Request.empty
@@ -757,7 +829,7 @@ let%expect_test "group prefixes must contain canonical static segments" =
 
 let%expect_test "typed routes reject wildcards and undeclared captures" =
   let route segment =
-    let ok = Response.case `OK (Response.text ~description:"Response" ()) in
+    let ok = case `OK (Response.text ~description:"Response" ()) in
     get / segment
     |> documented
     |> accepts Request.empty
@@ -773,7 +845,7 @@ let%expect_test "typed routes reject wildcards and undeclared captures" =
 
 let%expect_test "a root route is joined to its group prefix without a trailing slash" =
   let route =
-    let ok = Response.case `OK (Response.text ~description:"Root" ()) in
+    let ok = case `OK (Response.text ~description:"Root" ()) in
     get
     |> documented
     |> accepts Request.empty
@@ -798,7 +870,7 @@ let%expect_test "a root route is joined to its group prefix without a trailing s
 let%expect_test "duplicate parameters in one location are rejected" =
   let string = Parameter.string ~description:"Tag" () in
   let route =
-    let ok = Response.case `OK (Response.text ~description:"Search result" ()) in
+    let ok = case `OK (Response.text ~description:"Search result" ()) in
     get / "search" /? arg "tag" string /? arg "tag" string
     |> documented
     |> accepts Request.empty
@@ -814,7 +886,7 @@ let%expect_test "header declarations validate names and duplicates" =
   let invalid = Header.required "Bad Header" codec in
   let duplicate = Header.required "X-Value" codec in
   let invalid_route =
-    let ok = Response.case `OK (Response.text ~description:"Response" ()) in
+    let ok = case `OK (Response.text ~description:"Response" ()) in
     get / "invalid-header"
     |> header invalid
     |> documented
@@ -824,7 +896,7 @@ let%expect_test "header declarations validate names and duplicates" =
   in
   let duplicate_route =
     let ok =
-      Response.case
+      case
         `OK
         (Response.text ~description:"Response" ()
          |> Response.with_header duplicate
@@ -845,7 +917,7 @@ let%expect_test "header declarations validate names and duplicates" =
 
 let%expect_test "response status must be a valid HTTP status" =
   let route =
-    let invalid = Response.case (`Code 99) (Response.text ~description:"Invalid" ()) in
+    let invalid = case (`Code 99) (Response.text ~description:"Invalid" ()) in
     get / "invalid-status"
     |> documented
     |> accepts Request.empty
@@ -857,8 +929,8 @@ let%expect_test "response status must be a valid HTTP status" =
 ;;
 
 let%expect_test "duplicate response case statuses are rejected" =
-  let first = Response.case `OK (Response.text ~description:"First" ()) in
-  let second = Response.case `OK (Response.text ~description:"Second" ()) in
+  let first = case `OK (Response.text ~description:"First" ()) in
+  let second = case `OK (Response.text ~description:"Second" ()) in
   let route =
     get / "duplicate-response"
     |> documented
@@ -871,8 +943,8 @@ let%expect_test "duplicate response case statuses are rejected" =
 ;;
 
 let%expect_test "a handler must return a case from its endpoint" =
-  let declared = Response.case `OK (Response.text ~description:"Declared" ()) in
-  let other = Response.case `OK (Response.text ~description:"Other" ()) in
+  let declared = case `OK (Response.text ~description:"Declared" ()) in
+  let other = case `OK (Response.text ~description:"Other" ()) in
   let route =
     get / "undeclared-case"
     |> documented
@@ -889,8 +961,8 @@ let%expect_test "a handler must return a case from its endpoint" =
 ;;
 
 let%expect_test "each response case retains its own payload codec" =
-  let ok = Response.case `OK (Response.json (module Item)) in
-  let not_found = Response.case `Not_found (Response.json (module Error_payload)) in
+  let ok = case `OK (Response.json (module Item)) in
+  let not_found = case `Not_found (Response.json (module Error_payload)) in
   let route =
     get / "case-choice" /? arg "missing" (Parameter.bool ~description:"Missing" ())
     |> documented
@@ -919,12 +991,10 @@ let%expect_test "each response case retains its own payload codec" =
 
 let%expect_test "typed response cases cover arbitrary statuses" =
   let route =
-    let accepted = Response.case `Accepted (Response.json (module Item)) in
-    let conflict = Response.case `Conflict (Response.json (module Error_payload)) in
-    let unavailable =
-      Response.case `Service_unavailable (Response.json (module Error_payload))
-    in
-    let redirect = Response.case `Temporary_redirect (Response.json (module Item)) in
+    let accepted = case `Accepted (Response.json (module Item)) in
+    let conflict = case `Conflict (Response.json (module Error_payload)) in
+    let unavailable = case `Service_unavailable (Response.json (module Error_payload)) in
+    let redirect = case `Temporary_redirect (Response.json (module Item)) in
     get / "status-families"
     |> documented
     |> accepts Request.empty
@@ -976,7 +1046,7 @@ let%expect_test "unknown OAuth scopes are rejected" =
       ()
   in
   let route =
-    let ok = Response.case `OK (Response.text ~description:"OK" ()) in
+    let ok = case `OK (Response.text ~description:"OK" ()) in
     get / "scope"
     |> documented
     |> accepts Request.empty
@@ -1006,7 +1076,7 @@ let%expect_test "conflicting security scheme definitions are rejected" =
       ()
   in
   let route =
-    let ok = Response.case `OK (Response.text ~description:"OK" ()) in
+    let ok = case `OK (Response.text ~description:"OK" ()) in
     get / "scheme-conflict"
     |> documented
     |> accepts Request.empty

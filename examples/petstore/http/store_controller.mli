@@ -12,5 +12,5 @@ module Make
 
   (** Builds separate inventory and order groups because only inventory uses
       the API-key guard. Both groups inject the same database resource. *)
-  val groups : auth:Auth.t -> database:Pets.database -> Endpoint.Dsl.Group.t list
+  val groups : auth:Auth.t -> database:Pets.database -> Endpoint.Group.t list
 end

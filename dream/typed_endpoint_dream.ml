@@ -3,7 +3,6 @@ open! Base
 type req = Dream.request
 type resp = Dream.response
 type 'a io = 'a Lwt.t
-type body_read_error = [ `Too_large ]
 
 module Io = struct
   type 'a t = 'a io
@@ -17,21 +16,14 @@ module Io = struct
     end)
 end
 
-include Cohttp.Code
-
 type route =
-  { meth : meth
+  { meth : Typed_endpoint.Method.t
   ; path : string
   ; handler : req -> resp io
   }
 
 type app_builder = route list
 
-let get : meth = `GET
-let post : meth = `POST
-let put : meth = `PUT
-let delete : meth = `DELETE
-let patch : meth = `PATCH
 let empty = []
 let combine = List.append
 let route meth path handler = [ { meth; path; handler } ]
@@ -59,7 +51,7 @@ let body_to_string ~max_bytes request =
 ;;
 
 let respond ?status ~headers ~body () =
-  let code = Option.map status ~f:code_of_status in
+  let code = Option.map status ~f:Typed_endpoint.Status.code in
   Dream.respond ~headers ?code body
 ;;
 
@@ -81,7 +73,7 @@ let respond_json ?status json =
     ()
 ;;
 
-let dream_method : meth -> Dream.method_ = function
+let dream_method : Typed_endpoint.Method.t -> Dream.method_ = function
   | `GET -> `GET
   | `POST -> `POST
   | `PUT -> `PUT

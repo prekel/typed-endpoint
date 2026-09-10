@@ -3,7 +3,6 @@ open! Base
 type req = Opium.Std.Request.t
 type resp = Opium.Std.Response.t
 type 'a io = 'a Lwt.t
-type body_read_error = [ `Too_large ]
 
 module Io = struct
   type 'a t = 'a io
@@ -17,21 +16,14 @@ module Io = struct
     end)
 end
 
-include Cohttp.Code
-
 type route =
-  { meth : meth
+  { meth : Typed_endpoint.Method.t
   ; path : string
   ; handler : req -> resp io
   }
 
 type app_builder = route list
 
-let get : meth = `GET
-let post : meth = `POST
-let put : meth = `PUT
-let delete : meth = `DELETE
-let patch : meth = `PATCH
 let empty = []
 let combine = List.append
 
@@ -85,7 +77,9 @@ let method_not_allowed_middleware routes =
         response)
 ;;
 
-let route (m : meth) (path : string) (h : req -> resp Lwt.t) : app_builder =
+let route (m : Typed_endpoint.Method.t) (path : string) (h : req -> resp Lwt.t)
+  : app_builder
+  =
   [ { meth = m; path; handler = h } ]
 ;;
 
@@ -141,7 +135,11 @@ let body_to_string ~max_bytes (req : req) =
 ;;
 
 let respond ?status ~headers ~body () : resp Lwt.t =
-  Opium.Std.respond' ~headers:(Cohttp.Header.of_list headers) ?code:status (`String body)
+  let code =
+    Option.map status ~f:(fun status ->
+      Typed_endpoint.Status.code status |> Cohttp.Code.status_of_code)
+  in
+  Opium.Std.respond' ~headers:(Cohttp.Header.of_list headers) ?code (`String body)
 ;;
 
 let respond_empty ?status () = respond ?status ~headers:[] ~body:"" ()

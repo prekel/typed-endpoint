@@ -31,7 +31,8 @@ Petstore v3:
 `Pet_controller`, `Store_controller` и `User_controller`; `Routes` только
 собирает их группы и служебные endpoints.
 
-Все 20 публичных операций объявлены через `Dsl.Staged`: URI собирается
+Все 20 публичных операций объявлены через плоский staged DSL экземпляра
+`Endpoint`: URI собирается
 операторами `/`, `/:`, `/?` и `/!`, затем последовательно задаются
 `documented`, `accepts`, `returns` и grouped handler `==>`. Служебные
 `/health`, `/docs` и `/openapi.json` остаются `Unsafe.route`, поскольку они

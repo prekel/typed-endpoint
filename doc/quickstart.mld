@@ -8,7 +8,6 @@ module Io = Endpoint.Io
 
 open Io.Let_syntax
 open Endpoint
-open Dsl
 ]}
 
 JSON-модуль реализует [Request_payload.S] и/или [Response_payload.S], а DTO для
@@ -59,19 +58,19 @@ custom scalar, который должна использовать PPX-схем
 [Parameter.int], [Parameter.int64], [Parameter.float] и [Parameter.bool].
 [Parameter.v] создаёт локальный codec без отдельного именованного модуля.
 
-{1 Staged URI DSL}
+{1 URI DSL}
 
-[Dsl.Staged] является URI-first DSL объявления endpoint. Phantom phase
+Результат [Typed_endpoint.Make] напрямую предоставляет URI-first DSL объявления
+endpoint. Phantom phase
 заставляет соблюдать порядок: path, затем query, headers, metadata, request,
 responses и handler. После первого query type checker больше не принимает [/] и [/:];
 [accepts] и [returns] также нельзя переставить местами.
 
 {[
 let get_pet =
-  let open Staged in
-  let ok = Response.case `OK (Response.json (module Pet)) in
+  let ok = case `OK (Response.json (module Pet)) in
   let not_found =
-    Response.case `Not_found (Response.json (module Api_response))
+    case `Not_found (Response.json (module Api_response))
   in
   get
   / "pet"
@@ -90,7 +89,7 @@ let get_pet =
 
 [/] добавляет static segment, [/:] — required path capture, [/?] — optional
 query и [/!] — required query. Порядок операторов одновременно задаёт порядок
-curried аргументов handler. Каждый [Response.case] сохраняется в локальной
+curried аргументов handler. Каждый [case] сохраняется в локальной
 переменной: [<|>] объединяет декларации для [returns], а [respond] принимает
 исходный case и payload ровно его типа. Для route,
 который затем входит в [Group.make_with_context], последний шаг можно записать
@@ -123,7 +122,7 @@ middleware по-прежнему отвечает за request ID, CORS, compres
 [of_string] декодирует request, [to_string] кодирует response. Готовые codecs
 [Header.string], [Header.int], [Header.int64] и [Header.bool] покрывают обычные
 scalar headers. Request headers добавляются после path/query через
-[Staged.header] и становятся следующими аргументами handler.
+[header] и становятся следующими аргументами handler.
 
 {[
 let version =
@@ -133,14 +132,14 @@ let result =
   Header.required "X-Result" (Header.string ~description:"Result marker" ())
 
 let ok =
-  Response.case
+  case
     `OK
     (Response.text ~description:"Version" ()
      |> Response.with_header result)
 
 let route =
   get / "versioned"
-  |> Staged.header version
+  |> header version
   |> documented
   |> accepts Request.empty
   |> returns ok

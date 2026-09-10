@@ -7,7 +7,7 @@ module App =
     (Database.Order_repository)
     (Database.User_repository)
 
-module Dsl = App.Endpoint.Dsl
+module Endpoint = App.Endpoint
 module Access_log = Petstore_server_support.Access_log
 
 let logger = Access_log.create ()
@@ -55,7 +55,8 @@ let () =
       ()
   in
   let server =
-    Dsl.Compiled.app compiled |> Typed_endpoint_eio.server ~middlewares:[ request_id ]
+    Endpoint.Compiled.app compiled
+    |> Typed_endpoint_eio.server ~middlewares:[ request_id ]
   in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->

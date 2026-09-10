@@ -1,7 +1,7 @@
 open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_testing)
-open Endpoint.Dsl
+open Endpoint
 
 let int_arg argv index ~default =
   Array.get argv index |> Int.of_string_opt |> Option.value ~default
@@ -24,7 +24,7 @@ let () =
   let routes =
     List.init route_count ~f:(fun index ->
       Unsafe.route
-        ~meth:Typed_endpoint_testing.get
+        ~meth:`GET
         ~path:("/bench/" ^ Int.to_string index)
         ~handler:(fun _request -> Typed_endpoint_testing.respond_string "ok"))
   in

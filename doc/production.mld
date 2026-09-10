@@ -38,7 +38,7 @@ JSON с полями [code] и [message] и также не отражает о�
 {1 Типизированные request и response headers}
 
 [Header.required] и [Header.optional] связывают имя header, JSON Schema,
-документацию, decoder и encoder. [Staged.header] разрешён после path/query и до
+документацию, decoder и encoder. [header] разрешён после path/query и до
 [documented]; его значение добавляется к curried аргументам handler в порядке
 декларации. Поиск имени регистронезависим. Отсутствующий required header и
 ошибка codec получают тот же настраиваемый decode-error response со статусом

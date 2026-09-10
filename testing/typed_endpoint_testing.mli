@@ -28,13 +28,13 @@ module Request : sig
   val v
     :  ?headers:(string * string) list
     -> ?body:string
-    -> meth:meth
+    -> meth:Typed_endpoint.Method.t
     -> target:string
     -> unit
     -> request
 
   (** Returns the method supplied to {!v}. *)
-  val meth : request -> meth
+  val meth : request -> Typed_endpoint.Method.t
 
   (** Returns the target supplied to {!v}, before URI decomposition. *)
   val target : request -> string
@@ -76,7 +76,7 @@ module Client : sig
     :  app_builder
     -> ?headers:(string * string) list
     -> ?body:string
-    -> meth
+    -> Typed_endpoint.Method.t
     -> string
     -> response
 end
@@ -91,7 +91,7 @@ module Backend_conformance : sig
       :  Backend.app_builder
       -> ?headers:(string * string) list
       -> ?body:string
-      -> Backend.meth
+      -> Typed_endpoint.Method.t
       -> string
       -> Backend.resp Backend.io
 

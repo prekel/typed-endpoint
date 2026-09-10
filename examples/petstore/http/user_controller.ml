@@ -7,8 +7,6 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   module Io = B.Io
   open Io.Let_syntax
   open Endpoint
-  open Dsl
-  open Staged
 
   let rate_limit_header =
     Header.required
@@ -32,13 +30,11 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let create_user =
-    let ok = Response.case `OK (Response.json (module Dto.User)) in
-    let bad_request =
-      Response.case `Bad_request (Response.json (module Dto.Api_response))
-    in
-    let conflict = Response.case `Conflict (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.json (module Dto.User)) in
+    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
+    let conflict = case `Conflict (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     post / "user"
     |> documented
@@ -60,13 +56,11 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let create_users_with_list =
-    let ok = Response.case `OK (Response.json (module Dto.User)) in
-    let bad_request =
-      Response.case `Bad_request (Response.json (module Dto.Api_response))
-    in
-    let conflict = Response.case `Conflict (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.json (module Dto.User)) in
+    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
+    let conflict = case `Conflict (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     post / "user" / "createWithList"
     |> documented
@@ -91,17 +85,15 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
 
   let login_user =
     let ok =
-      Response.case
+      case
         `OK
         (Response.json (module Dto.Login_token)
          |> Response.with_header expires_after_header
          |> Response.with_header rate_limit_header)
     in
-    let bad_request =
-      Response.case `Bad_request (Response.json (module Dto.Api_response))
-    in
+    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     get
     / "user"
@@ -129,7 +121,7 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let logout_user =
-    let ok = Response.case `OK (Response.empty ~description:"Successful operation" ()) in
+    let ok = case `OK (Response.empty ~description:"Successful operation" ()) in
     get / "user" / "logout"
     |> documented
          ~operation_id:"logoutUser"
@@ -141,10 +133,10 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let get_user =
-    let ok = Response.case `OK (Response.json (module Dto.User)) in
-    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.json (module Dto.User)) in
+    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     get / "user" /: arg "username" (module Http_parameter.Username)
     |> documented
@@ -162,13 +154,11 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let update_user =
-    let ok = Response.case `OK (Response.empty ~description:"Successful operation" ()) in
-    let bad_request =
-      Response.case `Bad_request (Response.json (module Dto.Api_response))
-    in
-    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.empty ~description:"Successful operation" ()) in
+    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
+    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     put / "user" /: arg "username" (module Http_parameter.Username)
     |> documented
@@ -190,10 +180,10 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let delete_user =
-    let ok = Response.case `OK (Response.empty ~description:"User deleted" ()) in
-    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.empty ~description:"User deleted" ()) in
+    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     delete / "user" /: arg "username" (module Http_parameter.Username)
     |> documented

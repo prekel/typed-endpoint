@@ -8,5 +8,5 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) :
 
   (** Builds the public user route group and injects the runtime database
       resource into its handlers. *)
-  val groups : database:Users.database -> Endpoint.Dsl.Group.t list
+  val groups : database:Users.database -> Endpoint.Group.t list
 end

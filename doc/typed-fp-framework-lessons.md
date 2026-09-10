@@ -204,7 +204,7 @@ let run database_uri =
   let compiled =
     Application.compile ~auth ~database:pool
   in
-  Server.run (Application.Endpoint.Dsl.Compiled.app compiled)
+  Server.run (Application.Endpoint.Compiled.app compiled)
 ;;
 ```
 

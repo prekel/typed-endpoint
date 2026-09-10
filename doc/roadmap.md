@@ -27,8 +27,8 @@ Servant, Tapir, Smithy4s, http4s и ZIO. Это backlog, а не описани�
 
 ```ocaml
 let get_pet =
-  let ok = Response.case `OK (Response.json Pet) in
-  let not_found = Response.case `Not_found (Response.json Api_response) in
+  let ok = case `OK (Response.json Pet) in
+  let not_found = case `Not_found (Response.json Api_response) in
   Contract.Staged.(
     get / "pet" /: arg "petId" Pet_id
     |> documented ~operation_id:"getPetById"
@@ -96,7 +96,7 @@ cardinality.
 2. route-aware interceptor — tracing, metrics и логирование с `Route_info`;
 3. `Context`/`Guard` — типизированные request-scoped значения и авторизация.
 
-Framework middleware остаётся API конкретного адаптера. `Dsl.Interceptor.t`
+Framework middleware остаётся API конкретного адаптера. `interceptor`
 подключается через `compile ~interceptors`, выполняется только для совпавшего
 typed route и получает лишь `Route_info`, raw request и `next`. Поэтому он не
 может превратиться в service locator или получить произвольные application

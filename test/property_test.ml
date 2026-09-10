@@ -2,14 +2,12 @@ open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_testing)
 open Endpoint
-open Dsl
-open Staged
 
 let group routes = Group.make ~description:"Property tests" routes
 let call = Typed_endpoint_testing.Client.call
 
 let segment_route =
-  let ok = Response.case `OK (Response.text ~description:"Echo" ()) in
+  let ok = case `OK (Response.text ~description:"Echo" ()) in
   get / "segment" /: arg "value" (Parameter.string ~description:"Segment" ())
   |> documented
   |> accepts Request.empty
@@ -18,7 +16,7 @@ let segment_route =
 ;;
 
 let query_route =
-  let ok = Response.case `OK (Response.text ~description:"Value" ()) in
+  let ok = case `OK (Response.text ~description:"Value" ()) in
   get / "query" /! arg "value" (Parameter.int ~description:"Scalar value" ())
   |> documented
   |> accepts Request.empty
@@ -31,7 +29,7 @@ let version_header =
 ;;
 
 let header_route =
-  let ok = Response.case `OK (Response.text ~description:"Version" ()) in
+  let ok = case `OK (Response.text ~description:"Version" ()) in
   get / "header"
   |> header version_header
   |> documented
@@ -41,7 +39,7 @@ let header_route =
 ;;
 
 let priority_dynamic_route =
-  let ok = Response.case `OK (Response.text ~description:"Route kind" ()) in
+  let ok = case `OK (Response.text ~description:"Route kind" ()) in
   get / "priority" /: arg "value" (Parameter.string ~description:"Value" ())
   |> documented
   |> accepts Request.empty
@@ -50,7 +48,7 @@ let priority_dynamic_route =
 ;;
 
 let priority_static_route =
-  let ok = Response.case `OK (Response.text ~description:"Route kind" ()) in
+  let ok = case `OK (Response.text ~description:"Route kind" ()) in
   get / "priority" / "fixed"
   |> documented
   |> accepts Request.empty

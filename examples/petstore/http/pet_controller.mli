@@ -11,5 +11,5 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) : s
   (** Builds route groups with group-scoped authorization and database
       injection. One controller produces two groups because the official pet
       operations use two distinct security policies. *)
-  val groups : auth:Auth.t -> database:Pets.database -> Endpoint.Dsl.Group.t list
+  val groups : auth:Auth.t -> database:Pets.database -> Endpoint.Group.t list
 end

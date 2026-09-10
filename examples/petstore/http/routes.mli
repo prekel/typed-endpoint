@@ -51,9 +51,9 @@ module Make
       application resource; repository and service selection remains visible
       in the functor application. *)
   val compile
-    :  ?interceptors:Endpoint.Dsl.Interceptor.t list
+    :  ?interceptors:Endpoint.interceptor list
     -> auth:auth
     -> database:Database.t
     -> unit
-    -> Endpoint.Dsl.Compiled.t
+    -> Endpoint.Compiled.t
 end

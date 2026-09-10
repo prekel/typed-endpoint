@@ -27,8 +27,12 @@
   представление `Ppx_deriving_jsonschema_runtime.t`; Petstore использует общие
   `[@default]`/`[@key]` без дублирующих schema-аннотаций.
 - Фиксированный response GADT заменён на масштабируемые typed
-  `Response.case` tokens. Каждый status получает собственный payload type,
+  `case` tokens. Каждый status получает собственный payload type,
   декларации объединяются через `<|>`, а handlers отвечают через `respond`.
+- API результата `Make` расплющен: staged DSL и `case` находятся прямо в
+  `Endpoint`, а `route` и `interceptor` больше не требуют однотиповых модулей.
+- HTTP method/status вынесены из `Backend.S` в общие `Method.t` и `Status.t`;
+  `Status.code` централизует отображение всех именованных статусов.
 
 ### Отложено
 

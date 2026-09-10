@@ -27,13 +27,13 @@ lookup.
 независимые зависимости без вложенных пар, а [all_unit] компонует guards.
 Через [Context.Let_syntax] ту же композицию можно записать с [let%map] и [and].
 [bind] намеренно отсутствует: набор responses и security requirements должен
-быть известен до выполнения request. [Staged.handle] использует пустой context;
-[Staged.handle_with] делает зависимости и доступ к сырому request явными в
+быть известен до выполнения request. [handle] использует пустой context;
+[handle_with] делает зависимости и доступ к сырому request явными в
 сигнатуре handler.
 
 Одинаковый контекст нескольких endpoint можно объявить один раз через
 [Group.make_with_context]. Такие endpoint завершаются
-[Staged.handle_in_group] или [Staged.(==>)], поэтому тип результата контекста
+[==>], поэтому тип результата контекста
 проверяется для каждого handler до сборки группы. Guard выполняется только у
 совпавшего маршрута, а его ответы и security requirements добавляются к каждой
 операции группы. Разные политики доступа следует оформлять отдельными группами.
@@ -46,7 +46,7 @@ OR, [Security.all] объединяет схемы как AND. При [Context.b
 
 HTTP pipeline разделён на три уровня. Framework middleware находится снаружи
 [Compiled.app] и отвечает за работу, не требующую совпавшего typed route:
-request ID, CORS, compression и transport timeout. [Dsl.Interceptor] включается
+request ID, CORS, compression и transport timeout. [interceptor] включается
 при [compile], выполняется только после выбора маршрута и получает [Route_info]:
 [operation_id], HTTP method, низкокардинальный route template, итоговые tags и
 security requirements. Это уровень tracing, metrics и access log. [Context] и

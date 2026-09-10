@@ -7,10 +7,10 @@ module App =
     (Database.Order_repository)
     (Database.User_repository)
 
-module Dsl = App.Endpoint.Dsl
+module Endpoint = App.Endpoint
 
 let auth = Petstore_app.Routes.{ bearer_token = "wire-token"; api_key = "wire-key" }
-let app = App.compile ~auth ~database:(Database.create ()) () |> Dsl.Compiled.app
+let app = App.compile ~auth ~database:(Database.create ()) () |> Endpoint.Compiled.app
 
 let send ?(headers = []) ?(body = "") meth target =
   Typed_endpoint_testing.Request.v ~headers ~body ~meth ~target ()

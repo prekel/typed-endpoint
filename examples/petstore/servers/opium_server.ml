@@ -7,7 +7,7 @@ module App =
     (Database.Order_repository)
     (Database.User_repository)
 
-module Dsl = App.Endpoint.Dsl
+module Endpoint = App.Endpoint
 module Access_log = Petstore_server_support.Access_log
 
 let logger = Access_log.create ()
@@ -67,7 +67,7 @@ let () =
       ()
   in
   Opium.App.empty
-  |> Backend.mount (Dsl.Compiled.app compiled)
+  |> Backend.mount (Endpoint.Compiled.app compiled)
   |> Opium.App.middleware request_id
   |> Opium.App.port 8080
   |> Opium.App.run_command

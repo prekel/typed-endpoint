@@ -11,17 +11,15 @@ struct
   module Io = B.Io
   open Io.Let_syntax
   open Endpoint
-  open Dsl
-  open Staged
 
   let unavailable response_case error =
     respond response_case (Dto.Api_response.persistence_error error)
   ;;
 
   let get_inventory =
-    let ok = Response.case `OK (Response.json (module Dto.Inventory)) in
+    let ok = case `OK (Response.json (module Dto.Inventory)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     get / "store" / "inventory"
     |> documented
@@ -39,15 +37,13 @@ struct
   ;;
 
   let place_order =
-    let ok = Response.case `OK (Response.json (module Dto.Order)) in
-    let bad_request =
-      Response.case `Bad_request (Response.json (module Dto.Api_response))
-    in
+    let ok = case `OK (Response.json (module Dto.Order)) in
+    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
     let unprocessable_entity =
-      Response.case `Unprocessable_entity (Response.json (module Dto.Api_response))
+      case `Unprocessable_entity (Response.json (module Dto.Api_response))
     in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     post / "store" / "order"
     |> documented
@@ -74,10 +70,10 @@ struct
   ;;
 
   let get_order =
-    let ok = Response.case `OK (Response.json (module Dto.Order)) in
-    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.json (module Dto.Order)) in
+    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     get / "store" / "order" /: arg "orderId" (module Http_parameter.Order_id)
     |> documented
@@ -95,10 +91,10 @@ struct
   ;;
 
   let delete_order =
-    let ok = Response.case `OK (Response.empty ~description:"Order deleted" ()) in
-    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.empty ~description:"Order deleted" ()) in
+    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     delete / "store" / "order" /: arg "orderId" (module Http_parameter.Order_id)
     |> documented

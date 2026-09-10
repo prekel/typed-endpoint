@@ -1,7 +1,7 @@
 open! Base
 
 type request =
-  { meth : Cohttp.Code.meth
+  { meth : Typed_endpoint.Method.t
   ; target : string
   ; uri : Uri.t
   ; headers : (string * string) list
@@ -18,7 +18,6 @@ type response =
 type req = request
 type resp = response
 type 'a io = 'a
-type body_read_error = [ `Too_large ]
 
 module Io = struct
   type 'a t = 'a io
@@ -32,25 +31,18 @@ module Io = struct
     end)
 end
 
-include Cohttp.Code
-
 type segment =
   | Static of string
   | Param of string
 
 type route =
-  { meth : meth
+  { meth : Typed_endpoint.Method.t
   ; path : segment list
   ; handler : request -> response
   }
 
 type app_builder = route list
 
-let get : meth = `GET
-let post : meth = `POST
-let put : meth = `PUT
-let delete : meth = `DELETE
-let patch : meth = `PATCH
 let empty = []
 let combine = List.append
 
@@ -107,7 +99,7 @@ let body_to_string ~max_bytes (request : request) =
 ;;
 
 let respond ?(status = `OK) ~headers ~body () =
-  { status = code_of_status status; headers; body }
+  { status = Typed_endpoint.Status.code status; headers; body }
 ;;
 
 let respond_empty ?status () = respond ?status ~headers:[] ~body:"" ()
@@ -164,13 +156,13 @@ let dispatch routes request =
   in
   match
     List.find matches ~f:(fun (route, _) ->
-      Int.equal (compare_method route.meth request.meth) 0)
+      Int.equal (Cohttp.Code.compare_method route.meth request.meth) 0)
   with
   | Some (route, params) -> route.handler { request with params }
   | None when not (List.is_empty matches) ->
     let allow =
       matches
-      |> List.map ~f:(fun (route, _params) -> string_of_method route.meth)
+      |> List.map ~f:(fun (route, _params) -> Cohttp.Code.string_of_method route.meth)
       |> List.dedup_and_sort ~compare:String.compare
       |> String.concat ~sep:", "
     in
@@ -204,7 +196,7 @@ module Backend_conformance = struct
       :  Backend.app_builder
       -> ?headers:(string * string) list
       -> ?body:string
-      -> Backend.meth
+      -> Typed_endpoint.Method.t
       -> string
       -> Backend.resp Backend.io
 
@@ -217,8 +209,6 @@ module Backend_conformance = struct
     module B = H.Backend
     module Endpoint = Typed_endpoint.Make (B)
     open Endpoint
-    open Dsl
-    open Staged
 
     let check condition message =
       if not condition then
@@ -228,12 +218,12 @@ module Backend_conformance = struct
     let text description = Response.text ~description ()
 
     let endpoint uri request response handler =
-      let ok = Response.case `OK response in
+      let ok = case `OK response in
       uri |> documented |> accepts request |> returns ok |> handle (handler ok)
     ;;
 
     let endpoint_with ~context uri request response handler =
-      let ok = Response.case `OK response in
+      let ok = case `OK response in
       uri
       |> documented
       |> accepts request
@@ -363,12 +353,7 @@ module Backend_conformance = struct
     let run () =
       let open B.Io.Let_syntax in
       let%bind echoed =
-        H.call
-          app
-          ~headers:[ "content-type", "text/plain" ]
-          ~body:"data"
-          B.post
-          "/bounded"
+        H.call app ~headers:[ "content-type", "text/plain" ] ~body:"data" `POST "/bounded"
       in
       check_response echoed ~status:200 ~content_type:(Some "text/plain; charset=utf-8");
       let%bind echoed_body = body echoed in
@@ -378,7 +363,7 @@ module Backend_conformance = struct
           app
           ~headers:[ "content-type", "text/plain" ]
           ~body:"large"
-          B.post
+          `POST
           "/bounded"
       in
       check_response too_large ~status:413 ~content_type:(Some "application/json");
@@ -391,17 +376,17 @@ module Backend_conformance = struct
           app
           ~headers:[ "content-type", "application/json" ]
           ~body:"data"
-          B.post
+          `POST
           "/bounded"
       in
       check_response unsupported ~status:415 ~content_type:(Some "application/json");
       let%bind reflected =
-        H.call app ~headers:[ "X-Conformance", "present" ] B.get "/header"
+        H.call app ~headers:[ "X-Conformance", "present" ] `GET "/header"
       in
       let%bind reflected_body = body reflected in
       check (String.equal reflected_body "present") "case-insensitive request header";
       let%bind typed_headers =
-        H.call app ~headers:[ "x-conformance-version", "7" ] B.get "/typed-headers"
+        H.call app ~headers:[ "x-conformance-version", "7" ] `GET "/typed-headers"
       in
       check_response
         typed_headers
@@ -415,19 +400,19 @@ module Backend_conformance = struct
         "typed response header";
       let%bind typed_headers_body = body typed_headers in
       check (String.equal typed_headers_body "version:7") "typed request header";
-      let%bind missing_header = H.call app B.get "/typed-headers" in
+      let%bind missing_header = H.call app `GET "/typed-headers" in
       check (Int.equal (H.status missing_header) 400) "missing typed header status";
       let%bind invalid_header =
-        H.call app ~headers:[ "X-Conformance-Version", "invalid" ] B.get "/typed-headers"
+        H.call app ~headers:[ "X-Conformance-Version", "invalid" ] `GET "/typed-headers"
       in
       check (Int.equal (H.status invalid_header) 400) "invalid typed header status";
-      let%bind empty = H.call app B.get "/empty" in
+      let%bind empty = H.call app `GET "/empty" in
       check_response empty ~status:200 ~content_type:None;
       let%bind empty_body = body empty in
       check (String.is_empty empty_body) "empty response body";
-      let%bind missing = H.call app B.get "/missing" in
+      let%bind missing = H.call app `GET "/missing" in
       check (Int.equal (H.status missing) 404) "404 status";
-      let%bind wrong_method = H.call app B.put "/methods" in
+      let%bind wrong_method = H.call app `PUT "/methods" in
       check_response
         wrong_method
         ~status:405
@@ -435,21 +420,21 @@ module Backend_conformance = struct
       check
         (Option.equal String.equal (H.header wrong_method "allow") (Some "GET, POST"))
         "405 Allow header";
-      let%bind fixed_response = H.call app B.get "/priority/fixed" in
+      let%bind fixed_response = H.call app `GET "/priority/fixed" in
       let%bind fixed_body = body fixed_response in
       check (String.equal fixed_body "static") "static route priority";
-      let%bind captured_response = H.call app B.get "/priority/other" in
+      let%bind captured_response = H.call app `GET "/priority/other" in
       let%bind captured_body = body captured_response in
       check (String.equal captured_body "capture:other") "captured route";
-      let%bind invalid = H.call app B.get "/decoded/nope?enabled=true" in
+      let%bind invalid = H.call app `GET "/decoded/nope?enabled=true" in
       check_response invalid ~status:400 ~content_type:(Some "application/json");
       let%bind invalid_body = body invalid in
       check
         (String.is_substring invalid_body ~substring:"invalid_parameter")
         "invalid parameter error shape";
-      let%bind absent = H.call app B.get "/decoded/42" in
+      let%bind absent = H.call app `GET "/decoded/42" in
       check (Int.equal (H.status absent) 400) "missing query status";
-      let%bind duplicate = H.call app B.get "/decoded/42?enabled=true&enabled=false" in
+      let%bind duplicate = H.call app `GET "/decoded/42?enabled=true&enabled=false" in
       check (Int.equal (H.status duplicate) 400) "duplicate scalar query status";
       let%bind duplicate_body = body duplicate in
       check
@@ -457,18 +442,18 @@ module Backend_conformance = struct
         "duplicate scalar query shape";
       let ordered =
         B.combine
-          (B.route B.get "/ordered/:first" (fun _request ->
+          (B.route `GET "/ordered/:first" (fun _request ->
              B.respond
                ~headers:[ "content-type", "text/plain; charset=utf-8" ]
                ~body:"first"
                ()))
-          (B.route B.get "/ordered/:second" (fun _request ->
+          (B.route `GET "/ordered/:second" (fun _request ->
              B.respond
                ~headers:[ "content-type", "text/plain; charset=utf-8" ]
                ~body:"second"
                ()))
       in
-      let%bind ordered_response = H.call ordered B.get "/ordered/value" in
+      let%bind ordered_response = H.call ordered `GET "/ordered/value" in
       let%map ordered_body = body ordered_response in
       check (String.equal ordered_body "first") "route declaration order"
     ;;

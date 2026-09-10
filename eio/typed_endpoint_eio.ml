@@ -14,7 +14,6 @@ type resp =
   }
 
 type 'a io = 'a
-type body_read_error = [ `Too_large ]
 type middleware = request:Http.Request.t -> next:(Http.Request.t -> resp) -> resp
 
 module Io = struct
@@ -29,25 +28,18 @@ module Io = struct
     end)
 end
 
-include Cohttp.Code
-
 type segment =
   | Static of string
   | Param of string
 
 type route =
-  { meth : meth
+  { meth : Typed_endpoint.Method.t
   ; path : segment list
   ; handler : req -> resp
   }
 
 type app_builder = route list
 
-let get : meth = `GET
-let post : meth = `POST
-let put : meth = `PUT
-let delete : meth = `DELETE
-let patch : meth = `PATCH
 let empty = []
 let combine = List.append
 
@@ -113,7 +105,10 @@ let body_to_string ~max_bytes (request : req) =
 ;;
 
 let respond ?(status = `OK) ~headers ~body () =
-  { status; headers = Http.Header.of_list headers; body }
+  { status = Http.Status.of_int (Typed_endpoint.Status.code status)
+  ; headers = Http.Header.of_list headers
+  ; body
+  }
 ;;
 
 let respond_empty ?status () = respond ?status ~headers:[] ~body:"" ()

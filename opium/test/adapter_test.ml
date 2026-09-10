@@ -3,8 +3,6 @@ open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_opium)
 module Io = Endpoint.Io
 open Endpoint
-open Dsl
-open Staged
 
 module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
     module Backend = Typed_endpoint_opium
@@ -60,7 +58,7 @@ let decode_errors =
 ;;
 
 let route =
-  let ok = Response.case `OK (Response.text ~description:"Echo" ()) in
+  let ok = case `OK (Response.text ~description:"Echo" ()) in
   post / "echo"
   |> documented
   |> accepts (Request.text ~description:"Body" ())
@@ -69,22 +67,20 @@ let route =
 ;;
 
 let captured =
-  Unsafe.route ~meth:B.get ~path:"/priority/:value" ~handler:(fun request ->
-    B.respond_string ("capture:" ^ B.param request "value"))
+  Unsafe.route ~meth:`GET ~path:"/priority/:value" ~handler:(fun request ->
+    Typed_endpoint_opium.respond_string
+      ("capture:" ^ Typed_endpoint_opium.param request "value"))
 ;;
 
 let fixed =
-  Unsafe.route ~meth:B.get ~path:"/priority/fixed" ~handler:(fun _request ->
-    B.respond_string "static")
+  Unsafe.route ~meth:`GET ~path:"/priority/fixed" ~handler:(fun _request ->
+    Typed_endpoint_opium.respond_string "static")
 ;;
 
 let app =
   compile_exn
     ~decode_error:decode_errors
-    [ Group.v
-        ~metadata:(Operation_metadata.v ~description:"Opium adapter test" ())
-        [ route; captured; fixed ]
-    ]
+    [ Group.make ~description:"Opium adapter test" [ route; captured; fixed ] ]
   |> Compiled.app
   |> fun routes -> Typed_endpoint_opium.mount routes Opium.App.empty |> Opium.App.to_rock
 ;;

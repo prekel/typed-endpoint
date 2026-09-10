@@ -37,11 +37,9 @@ module Io = Endpoint.Io
 
 open Io.Let_syntax
 open Endpoint
-open Dsl
-open Staged
 
 let route =
-  let ok = Response.case `OK (Response.text ~description:"Health status" ()) in
+  let ok = case `OK (Response.text ~description:"Health status" ()) in
   get / "health"
   |> documented ~operation_id:"health"
   |> accepts Request.empty
@@ -60,8 +58,7 @@ staged DSL не позволяют добавить path segment после quer
 
 ```ocaml
 let get_pet =
-  let open Staged in
-  let ok = Response.case `OK (Response.text ~description:"Pet name" ()) in
+  let ok = case `OK (Response.text ~description:"Pet name" ()) in
   get
   / "pet"
   /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
@@ -71,8 +68,8 @@ let get_pet =
   |> handle @@ fun pet_id () -> respond ok (Int64.to_string pet_id)
 ```
 
-`/?` добавляет optional query, `/!` — required query, `Staged.header` —
-required или optional typed header, `Response.case` связывает status с codec,
+`/?` добавляет optional query, `/!` — required query, `header` —
+required или optional typed header, `case` связывает status с codec,
 `<|>` соединяет альтернативные responses, а `respond case value` формирует
 типизированный ответ. `==>` завершает route для typed group. Исходные
 path/query-параметры передаются handler слева направо, затем следуют context и

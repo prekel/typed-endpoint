@@ -48,9 +48,9 @@ Json_schema.integer_exn ~minimum:1 ()
 ответ теперь получает локальный typed token:
 
 {[
-let ok = Response.case `OK (Response.json (module Pet))
+let ok = case `OK (Response.json (module Pet))
 let not_found =
-  Response.case `Not_found (Response.json (module Api_response))
+  case `Not_found (Response.json (module Api_response))
 
 let route =
   get / "pet" /: arg "petId" (module Pet_id)
@@ -65,9 +65,34 @@ let route =
 
 [respond] возвращает backend effect сразу. Тип payload проверяется статически;
 принадлежность case набору [returns] проверяется по непрозрачному identity перед
-рендерингом. Один [Response.case] описывает любой именованный status или
+рендерингом. Один [case] описывает любой именованный status или
 extension-код вида [`Code n], поэтому отдельные семейства 2xx/4xx/5xx больше не
 нужны.
+
+{1 Плоский namespace и HTTP-типы}
+
+Результат [Typed_endpoint.Make] теперь сразу экспортирует staged DSL. После
+[open Endpoint] дополнительные [open Dsl] и [open Staged] не нужны. [case]
+также находится рядом с [respond] и [<|>], а не внутри [Response]:
+
+{[
+module Endpoint = Typed_endpoint.Make (Backend)
+open Endpoint
+
+let ok = case `OK (Response.json (module Item))
+]}
+
+Публичные однотиповые модули [Route] и [Interceptor] заменены абстрактным
+[route] и function type [interceptor]. Группы создаются только через
+[Group.make] и [Group.make_with_context]; отдельный публичный record operation
+metadata больше не нужен.
+
+HTTP method и status больше не определяются каждым backend. Реализации
+[Backend.S] принимают общие [Method.t] и [Status.t], а числовое значение status
+получают через [Status.code]. Поэтому у backend удалены дублирующие типы,
+[get]/[post]/[put]/[delete]/[patch] и [code_of_status]. Для runtime-only route
+передавайте, например, [Unsafe.route ~meth:`GET]. Convenience responders
+backend сохранены.
 
 {1 Opium}
 
@@ -91,7 +116,7 @@ collection он устанавливает один 405/[Allow] middleware.
 
 [query] теперь возвращает [string list]: каждое значение соответствует одному
 вхождению имени в query string. Реализация не должна разбивать одно значение по
-запятой. Staged DSL сам различает missing, single и duplicate scalar values.
+запятой. URI DSL сам различает missing, single и duplicate scalar values.
 
 Новый [respond] принимает полный список headers и готовую buffered body. Старые
 [respond_empty], [respond_string], [respond_html] и [respond_json] остаются
@@ -107,7 +132,7 @@ let version =
   Header.required "X-Api-Version" (Header.int ~description:"API version" ())
 
 get / "items"
-|> Staged.header version
+|> header version
 |> documented
 ]}
 
@@ -121,7 +146,7 @@ let response =
   Response.json (module Item)
   |> Response.with_header location
 
-let created = Response.case `Created response
+let created = case `Created response
 (* respond created (location_value, item) *)
 ]}
 

@@ -7,7 +7,7 @@ module App =
     (Database.Order_repository)
     (Database.User_repository)
 
-module Dsl = App.Endpoint.Dsl
+module Endpoint = App.Endpoint
 module Access_log = Petstore_server_support.Access_log
 
 let logger = Access_log.create ()
@@ -50,5 +50,5 @@ let () =
       ~database:(Database.create ())
       ()
   in
-  Dsl.Compiled.app compiled |> Typed_endpoint_dream.router |> request_id |> Dream.run
+  Endpoint.Compiled.app compiled |> Typed_endpoint_dream.router |> request_id |> Dream.run
 ;;

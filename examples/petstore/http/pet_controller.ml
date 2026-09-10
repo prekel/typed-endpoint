@@ -7,24 +7,20 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   module Io = B.Io
   open Io.Let_syntax
   open Endpoint
-  open Dsl
-  open Staged
 
   let unavailable response_case error =
     respond response_case (Dto.Api_response.persistence_error error)
   ;;
 
   let add_pet =
-    let ok = Response.case `OK (Response.json (module Dto.Pet)) in
-    let bad_request =
-      Response.case `Bad_request (Response.json (module Dto.Api_response))
-    in
-    let conflict = Response.case `Conflict (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.json (module Dto.Pet)) in
+    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
+    let conflict = case `Conflict (Response.json (module Dto.Api_response)) in
     let unprocessable_entity =
-      Response.case `Unprocessable_entity (Response.json (module Dto.Api_response))
+      case `Unprocessable_entity (Response.json (module Dto.Api_response))
     in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     post / "pet"
     |> documented
@@ -47,16 +43,14 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let update_pet =
-    let ok = Response.case `OK (Response.json (module Dto.Pet)) in
-    let bad_request =
-      Response.case `Bad_request (Response.json (module Dto.Api_response))
-    in
-    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.json (module Dto.Pet)) in
+    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
+    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
     let unprocessable_entity =
-      Response.case `Unprocessable_entity (Response.json (module Dto.Api_response))
+      case `Unprocessable_entity (Response.json (module Dto.Api_response))
     in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     put / "pet"
     |> documented
@@ -84,9 +78,9 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let find_by_status =
-    let ok = Response.case `OK (Response.json (module Dto.Pet_list)) in
+    let ok = case `OK (Response.json (module Dto.Pet_list)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     get / "pet" / "findByStatus" /! arg "status" (module Dto.Status)
     |> documented
@@ -104,9 +98,9 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let find_by_tags =
-    let ok = Response.case `OK (Response.json (module Dto.Pet_list)) in
+    let ok = case `OK (Response.json (module Dto.Pet_list)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     get / "pet" / "findByTags" /! arg "tags" (module Dto.Tags)
     |> documented
@@ -124,12 +118,10 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let search_pets =
-    let ok = Response.case `OK (Response.json (module Dto.Pet_page)) in
-    let bad_request =
-      Response.case `Bad_request (Response.json (module Dto.Api_response))
-    in
+    let ok = case `OK (Response.json (module Dto.Pet_page)) in
+    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     get
     / "pet"
@@ -158,10 +150,10 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let get_pet =
-    let ok = Response.case `OK (Response.json (module Dto.Pet)) in
-    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.json (module Dto.Pet)) in
+    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     get / "pet" /: arg "petId" (module Http_parameter.Pet_id)
     |> documented
@@ -180,13 +172,11 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let update_pet_with_form =
-    let ok = Response.case `OK (Response.json (module Dto.Pet)) in
-    let bad_request =
-      Response.case `Bad_request (Response.json (module Dto.Api_response))
-    in
-    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.json (module Dto.Pet)) in
+    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
+    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     post
     / "pet"
@@ -209,10 +199,10 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let delete_pet =
-    let ok = Response.case `OK (Response.empty ~description:"Pet deleted" ()) in
-    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.empty ~description:"Pet deleted" ()) in
+    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     delete / "pet" /: arg "petId" (module Http_parameter.Pet_id)
     |> documented
@@ -231,13 +221,11 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let upload_image =
-    let ok = Response.case `OK (Response.json (module Dto.Api_response)) in
-    let bad_request =
-      Response.case `Bad_request (Response.json (module Dto.Api_response))
-    in
-    let not_found = Response.case `Not_found (Response.json (module Dto.Api_response)) in
+    let ok = case `OK (Response.json (module Dto.Api_response)) in
+    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
+    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
     let service_unavailable =
-      Response.case `Service_unavailable (Response.json (module Dto.Api_response))
+      case `Service_unavailable (Response.json (module Dto.Api_response))
     in
     post
     / "pet"

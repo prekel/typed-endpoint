@@ -41,19 +41,19 @@ struct
   module Pet_controller = Pet_controller.Make (B) (Pets)
   module Store_controller = Store_controller.Make (B) (Pets) (Orders)
   module User_controller = User_controller.Make (B) (Users)
-  open Endpoint.Dsl
+  open Endpoint
 
   let openapi_route compiled =
-    Unsafe.route ~meth:B.get ~path:"/openapi.json" ~handler:(fun _request ->
+    Unsafe.route ~meth:`GET ~path:"/openapi.json" ~handler:(fun _request ->
       B.respond_json (Compiled.openapi ~config:openapi_config compiled))
   ;;
 
   let docs_page (path, html) =
-    Unsafe.route ~meth:B.get ~path ~handler:(fun _request -> B.respond_html html)
+    Unsafe.route ~meth:`GET ~path ~handler:(fun _request -> B.respond_html html)
   ;;
 
   let health =
-    Unsafe.route ~meth:B.get ~path:"/health" ~handler:(fun _request ->
+    Unsafe.route ~meth:`GET ~path:"/health" ~handler:(fun _request ->
       B.respond_json (`Assoc [ "status", `String "ok" ]))
   ;;
 

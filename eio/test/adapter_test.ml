@@ -2,8 +2,6 @@ open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_eio)
 open Endpoint
-open Endpoint.Dsl
-open Staged
 
 module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
     module Backend = Typed_endpoint_eio
@@ -72,7 +70,7 @@ let authenticated =
 ;;
 
 let route =
-  let ok = Response.case `OK (Response.text ~description:"OK" ()) in
+  let ok = case `OK (Response.text ~description:"OK" ()) in
   post / "items" /: arg "id" (module String_param) /? arg "q" (module String_param)
   |> documented
   |> accepts (Request.text ~description:"Body" ())
@@ -87,23 +85,20 @@ let route =
 ;;
 
 let captured =
-  Unsafe.route ~meth:B.get ~path:"/priority/:value" ~handler:(fun request ->
-    B.respond_string ("capture:" ^ B.param request "value"))
+  Unsafe.route ~meth:`GET ~path:"/priority/:value" ~handler:(fun request ->
+    Typed_endpoint_eio.respond_string
+      ("capture:" ^ Typed_endpoint_eio.param request "value"))
 ;;
 
 let fixed =
-  Unsafe.route ~meth:B.get ~path:"/priority/fixed" ~handler:(fun _request ->
-    B.respond_string "static")
+  Unsafe.route ~meth:`GET ~path:"/priority/fixed" ~handler:(fun _request ->
+    Typed_endpoint_eio.respond_string "static")
 ;;
 
 let app =
   compile_exn
     ~decode_error:decode_errors
-    [ Group.v
-        ~prefix:[ "v1" ]
-        ~metadata:(Operation_metadata.v ~description:"Eio test" ())
-        [ route; captured; fixed ]
-    ]
+    [ Group.make ~prefix:[ "v1" ] ~description:"Eio test" [ route; captured; fixed ] ]
   |> Compiled.app
 ;;
 

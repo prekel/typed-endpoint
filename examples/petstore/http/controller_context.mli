@@ -24,17 +24,17 @@ module Make (B : Backend.S) : sig
   end
 
   (** Requires the official OAuth credentials and injects [dependency]. *)
-  val pet_oauth : auth:Auth.t -> 'a -> 'a Secured.t Endpoint.Dsl.Context.t
+  val pet_oauth : auth:Auth.t -> 'a -> 'a Secured.t Endpoint.Context.t
 
   (** Accepts either the official OAuth credentials or API key. *)
-  val pet_lookup : auth:Auth.t -> 'a -> 'a Secured.t Endpoint.Dsl.Context.t
+  val pet_lookup : auth:Auth.t -> 'a -> 'a Secured.t Endpoint.Context.t
 
   (** Requires the official API key and injects [dependency]. *)
-  val api_key : auth:Auth.t -> 'a -> 'a Secured.t Endpoint.Dsl.Context.t
+  val api_key : auth:Auth.t -> 'a -> 'a Secured.t Endpoint.Context.t
 
   (** Injects [dependency] without an authorization guard. *)
-  val public : 'a -> 'a Endpoint.Dsl.Context.t
+  val public : 'a -> 'a Endpoint.Context.t
 
   (** Stable JSON mapping used by all controller groups. *)
-  val decode_errors : Endpoint.Dsl.Decode_error_response.t
+  val decode_errors : Endpoint.Decode_error_response.t
 end
