@@ -44,28 +44,29 @@ Json_schema.integer_exn ~minimum:1 ()
 
 {1 Response cases}
 
-Фиксированный response GADT и status-specific combinators удалены. Каждый
-ответ теперь получает локальный typed token:
+Фиксированный response GADT и status-specific combinators удалены. [returns]
+принимает типизированную цепочку cases и передаёт соответствующие capabilities
+в handler позиционно:
 
 {[
-let ok = case `OK (Response.json (module Pet))
-let not_found =
-  case `Not_found (Response.json (module Api_response))
-
 let route =
   get / "pet" /: arg "petId" (module Pet_id)
   |> documented
   |> accepts Request.empty
-  |> returns (ok <|> not_found)
-  |> handle @@ fun id () ->
+  |> returns
+       (case `OK (Response.json (module Pet))
+        <|> case `Not_found (Response.json (module Api_response)))
+  |> handle @@ fun id ok not_found () ->
   match find_pet id with
   | Some pet -> respond ok pet
   | None -> respond not_found (Api_response.not_found id)
 ]}
 
-[respond] возвращает backend effect сразу. Тип payload проверяется статически;
-принадлежность case набору [returns] проверяется по непрозрачному identity перед
-рендерингом. Один [case] описывает любой именованный status или
+[respond] возвращает backend effect сразу. Capability несёт тип status и
+payload; порядок её аргументов совпадает с порядком cases в [returns].
+Непрозрачный identity дополнительно проверяется перед рендерингом на случай,
+если capability была вынесена из handler другого endpoint. Один [case]
+описывает любой именованный status или
 extension-код вида [`Code n], поэтому отдельные семейства 2xx/4xx/5xx больше не
 нужны.
 
@@ -79,7 +80,10 @@ extension-код вида [`Code n], поэтому отдельные семе�
 module Endpoint = Typed_endpoint.Make (Backend)
 open Endpoint
 
-let ok = case `OK (Response.json (module Item))
+get / "items"
+|> documented
+|> accepts Request.empty
+|> returns (case `OK (Response.json (module Item)))
 ]}
 
 Публичные однотиповые модули [Route] и [Interceptor] заменены абстрактным
@@ -146,8 +150,11 @@ let response =
   Response.json (module Item)
   |> Response.with_header location
 
-let created = case `Created response
-(* respond created (location_value, item) *)
+post / "items"
+|> documented
+|> accepts Request.empty
+|> returns (case `Created response)
+|> handle @@ fun created () -> respond created (location_value, item)
 ]}
 
 Optional header использует ['a option] и при [None] отсутствует на wire.

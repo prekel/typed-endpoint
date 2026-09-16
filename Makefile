@@ -4,9 +4,12 @@ PACKAGES = ./typed-endpoint.opam ./typed-endpoint-opium.opam \
 	./typed-endpoint-dream.opam ./typed-endpoint-eio.opam \
 	./typed-endpoint-testing.opam
 
+RELEASE_VERSION = 0.1.0
+RELEASE_DIR = _release
+
 .PHONY: create_switch
 create_switch:
-	opam switch create . 5.5.0 --no-install -y
+	opam switch create . 5.5.1 --no-install -y
 
 .PHONY: deps
 deps:
@@ -51,6 +54,14 @@ check: fmt build test doc package
 .PHONY: release-check
 release-check: check
 	git diff --check
+
+.PHONY: release-artifacts
+release-artifacts:
+	./scripts/release_archive.sh $(RELEASE_VERSION) $(RELEASE_DIR)
+
+.PHONY: release-install-check
+release-install-check: release-artifacts
+	./scripts/release_install_check.sh $(RELEASE_VERSION) $(RELEASE_DIR)
 
 .PHONY: clean
 clean:

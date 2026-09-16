@@ -7,21 +7,19 @@ let group routes = Group.make ~description:"Property tests" routes
 let call = Typed_endpoint_testing.Client.call
 
 let segment_route =
-  let ok = case `OK (Response.text ~description:"Echo" ()) in
   get / "segment" /: arg "value" (Parameter.string ~description:"Segment" ())
   |> documented
   |> accepts Request.empty
-  |> returns ok
-  |> handle @@ fun value () -> respond ok value
+  |> returns (case `OK (Response.text ~description:"Echo" ()))
+  |> handle @@ fun value ok () -> respond ok value
 ;;
 
 let query_route =
-  let ok = case `OK (Response.text ~description:"Value" ()) in
   get / "query" /! arg "value" (Parameter.int ~description:"Scalar value" ())
   |> documented
   |> accepts Request.empty
-  |> returns ok
-  |> handle @@ fun value () -> respond ok (Int.to_string value)
+  |> returns (case `OK (Response.text ~description:"Value" ()))
+  |> handle @@ fun value ok () -> respond ok (Int.to_string value)
 ;;
 
 let version_header =
@@ -29,31 +27,28 @@ let version_header =
 ;;
 
 let header_route =
-  let ok = case `OK (Response.text ~description:"Version" ()) in
   get / "header"
   |> header version_header
   |> documented
   |> accepts Request.empty
-  |> returns ok
-  |> handle @@ fun version () -> respond ok (Int.to_string version)
+  |> returns (case `OK (Response.text ~description:"Version" ()))
+  |> handle @@ fun version ok () -> respond ok (Int.to_string version)
 ;;
 
 let priority_dynamic_route =
-  let ok = case `OK (Response.text ~description:"Route kind" ()) in
   get / "priority" /: arg "value" (Parameter.string ~description:"Value" ())
   |> documented
   |> accepts Request.empty
-  |> returns ok
-  |> handle @@ fun _value () -> respond ok "dynamic"
+  |> returns (case `OK (Response.text ~description:"Route kind" ()))
+  |> handle @@ fun _value ok () -> respond ok "dynamic"
 ;;
 
 let priority_static_route =
-  let ok = case `OK (Response.text ~description:"Route kind" ()) in
   get / "priority" / "fixed"
   |> documented
   |> accepts Request.empty
-  |> returns ok
-  |> handle @@ fun () -> respond ok "static"
+  |> returns (case `OK (Response.text ~description:"Route kind" ()))
+  |> handle @@ fun ok () -> respond ok "static"
 ;;
 
 let app =

@@ -58,12 +58,11 @@ let decode_errors =
 ;;
 
 let route =
-  let ok = case `OK (Response.text ~description:"Echo" ()) in
   post / "echo"
   |> documented
   |> accepts (Request.text ~description:"Body" ())
-  |> returns ok
-  |> handle @@ fun body -> respond ok body
+  |> returns (case `OK (Response.text ~description:"Echo" ()))
+  |> handle @@ fun ok body -> respond ok body
 ;;
 
 let captured =

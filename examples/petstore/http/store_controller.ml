@@ -12,23 +12,24 @@ struct
   open Io.Let_syntax
   open Endpoint
 
-  let unavailable response_case error =
+  let unavailable
+        (response_case : ([ `Service_unavailable ], Dto.Api_response.t) Response.case)
+        error
+    =
     respond response_case (Dto.Api_response.persistence_error error)
   ;;
 
   let get_inventory =
-    let ok = case `OK (Response.json (module Dto.Inventory)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     get / "store" / "inventory"
     |> documented
          ~operation_id:"getInventory"
          ~summary:"Returns pet inventories by status."
          ~description:"Returns a map of status names to quantities."
     |> accepts Request.empty
-    |> returns (ok <|> service_unavailable)
-    ==> fun context () ->
+    |> returns
+         (case `OK (Response.json (module Dto.Inventory))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun ok service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.inventory ~database in
     match result with
@@ -37,22 +38,18 @@ struct
   ;;
 
   let place_order =
-    let ok = case `OK (Response.json (module Dto.Order)) in
-    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
-    let unprocessable_entity =
-      case `Unprocessable_entity (Response.json (module Dto.Api_response))
-    in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     post / "store" / "order"
     |> documented
          ~operation_id:"placeOrder"
          ~summary:"Place an order for a pet."
          ~description:"Place a new order in the store."
     |> accepts (Request.json (module Dto.Order))
-    |> returns (ok <|> bad_request <|> unprocessable_entity <|> service_unavailable)
-    ==> fun database order ->
+    |> returns
+         (case `OK (Response.json (module Dto.Order))
+          <|> case `Bad_request (Response.json (module Dto.Api_response))
+          <|> case `Unprocessable_entity (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun ok bad_request unprocessable_entity service_unavailable database order ->
     match Dto.Order.to_domain order with
     | Error message -> respond bad_request (Dto.Api_response.bad_request message)
     | Ok (id, attributes) ->
@@ -70,19 +67,17 @@ struct
   ;;
 
   let get_order =
-    let ok = case `OK (Response.json (module Dto.Order)) in
-    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     get / "store" / "order" /: arg "orderId" (module Http_parameter.Order_id)
     |> documented
          ~operation_id:"getOrderById"
          ~summary:"Find purchase order by ID."
          ~description:"Returns a stored purchase order."
     |> accepts Request.empty
-    |> returns (ok <|> not_found <|> service_unavailable)
-    ==> fun id database () ->
+    |> returns
+         (case `OK (Response.json (module Dto.Order))
+          <|> case `Not_found (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun id ok not_found service_unavailable database () ->
     let%bind result = Orders.find ~database id in
     match result with
     | Ok (Some order) -> respond ok (Dto.Order.of_domain order)
@@ -91,19 +86,17 @@ struct
   ;;
 
   let delete_order =
-    let ok = case `OK (Response.empty ~description:"Order deleted" ()) in
-    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     delete / "store" / "order" /: arg "orderId" (module Http_parameter.Order_id)
     |> documented
          ~operation_id:"deleteOrder"
          ~summary:"Delete purchase order by identifier."
          ~description:"Deletes a stored purchase order."
     |> accepts Request.empty
-    |> returns (ok <|> not_found <|> service_unavailable)
-    ==> fun id database () ->
+    |> returns
+         (case `OK (Response.empty ~description:"Order deleted" ())
+          <|> case `Not_found (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun id ok not_found service_unavailable database () ->
     let%bind result = Orders.delete ~database id in
     match result with
     | Ok () -> respond ok ()

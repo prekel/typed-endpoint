@@ -4,7 +4,6 @@
  (modules invariants json_schema_test)
  (libraries
   base
-  cohttp
   jsonschema
   ppx_deriving_jsonschema.runtime
   typed-endpoint
@@ -18,4 +17,25 @@
  (name property_test)
  (modules property_test)
  (package typed-endpoint-testing)
- (libraries base cohttp qcheck typed-endpoint typed-endpoint-testing uri))
+ (libraries base qcheck typed-endpoint typed-endpoint-testing uri))
+
+(test
+ (name compile_fail_test)
+ (modules compile_fail_test)
+ (package typed-endpoint-testing)
+ (libraries base typed-endpoint typed-endpoint-testing unix)
+ (deps
+  compile_fail/valid.ml
+  compile_fail/wrong_handler_arguments.ml
+  compile_fail/wrong_payload.ml
+  compile_fail/wrong_status.ml
+  compile_fail/wrong_stage_order.ml)
+ (action
+  (run
+   %{test}
+   %{workspace_root}
+   %{dep:compile_fail/valid.ml}
+   %{dep:compile_fail/wrong_payload.ml}
+   %{dep:compile_fail/wrong_status.ml}
+   %{dep:compile_fail/wrong_handler_arguments.ml}
+   %{dep:compile_fail/wrong_stage_order.ml})))

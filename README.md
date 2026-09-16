@@ -15,8 +15,8 @@ OpenAPI 3.1.
 ## Основные гарантии
 
 - типы path/query/header/body становятся аргументами handler;
-- handler может вернуть только объявленный тип ответа, а динамический status
-  проверяется во время выполнения;
+- handler получает объявленные response capabilities позиционно; каждый из них
+  типизирован HTTP-статусом и payload;
 - JSON body ограничен по размеру (по умолчанию 1 МиБ), проверяется
   `Content-Type`, ошибки получают фиксированные статусы 400/413/415;
 - именованные схемы попадают в `components/schemas`, конфликт имён отклоняется;
@@ -39,12 +39,11 @@ open Io.Let_syntax
 open Endpoint
 
 let route =
-  let ok = case `OK (Response.text ~description:"Health status" ()) in
   get / "health"
   |> documented ~operation_id:"health"
   |> accepts Request.empty
-  |> returns ok
-  |> handle @@ fun () -> respond ok "ok"
+  |> returns (case `OK (Response.text ~description:"Health status" ()))
+  |> handle @@ fun ok () -> respond ok "ok"
 
 let compiled =
   compile_exn
@@ -58,23 +57,23 @@ staged DSL не позволяют добавить path segment после quer
 
 ```ocaml
 let get_pet =
-  let ok = case `OK (Response.text ~description:"Pet name" ()) in
   get
   / "pet"
   /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
   |> documented ~operation_id:"getPetById"
   |> accepts Request.empty
-  |> returns ok
-  |> handle @@ fun pet_id () -> respond ok (Int64.to_string pet_id)
+  |> returns (case `OK (Response.text ~description:"Pet name" ()))
+  |> handle @@ fun pet_id ok () -> respond ok (Int64.to_string pet_id)
 ```
 
 `/?` добавляет optional query, `/!` — required query, `header` —
 required или optional typed header, `case` связывает status с codec,
 `<|>` соединяет альтернативные responses, а `respond case value` формирует
-типизированный ответ. `==>` завершает route для typed group. Исходные
-path/query-параметры передаются handler слева направо, затем следуют context и
-body. Standalone route завершается `handle`, route со своим контекстом —
-`handle_with ~context`, а grouped route — `==>`. Сырой request можно запросить
+типизированный ответ. `==>` завершает route для typed group. Сначала handler
+получает path/query/header-параметры слева направо, затем response capabilities
+в порядке `returns`, context и body. Standalone route завершается `handle`,
+route со своим контекстом — `handle_with ~context`, а grouped route — `==>`.
+Сырой request можно запросить
 явно через `Context.request`. Ошибки декодирования по умолчанию получают
 безопасный JSON `{ "code": ..., "message": ... }`, который можно заменить на
 уровне endpoint, группы или всей компиляции.
@@ -95,6 +94,76 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 Так старые Opium endpoint можно заменять по одному без передачи server lifecycle
 библиотеке.
 
+## Установка и первый сервер
+
+Для Opium-приложения установите ядро и адаптер:
+
+```sh
+opam install typed-endpoint typed-endpoint-opium
+```
+
+Минимальный `dune-project`:
+
+```lisp
+(lang dune 3.14)
+(name hello_typed_endpoint)
+```
+
+В `dune` добавьте executable:
+
+```lisp
+(executable
+ (name main)
+ (libraries typed-endpoint typed-endpoint-opium))
+```
+
+`main.ml` объявляет маршрут и передаёт скомпилированные routes в существующее
+Opium-приложение:
+
+```ocaml
+open! Base
+open Typed_endpoint
+
+module Endpoint = Make (Typed_endpoint_opium)
+
+open Endpoint
+
+let route =
+  get / "health"
+  |> documented ~operation_id:"health"
+  |> accepts Request.empty
+  |> returns (case `OK (Response.text ~description:"Health status" ()))
+  |> handle @@ fun ok () -> respond ok "ok"
+;;
+
+let routes =
+  compile_exn [ Group.make ~description:"Hello" [ route ] ] |> Compiled.app
+;;
+
+let () =
+  Opium.App.empty
+  |> Typed_endpoint_opium.mount routes
+  |> Opium.App.port 8080
+  |> Opium.App.run_command
+;;
+```
+
+Запустите сервер и проверьте endpoint:
+
+```sh
+dune exec ./main.exe
+curl -i http://127.0.0.1:8080/health
+```
+
+Ответ содержит статус `200`, `Content-Type: text/plain; charset=utf-8` и тело
+`ok`.
+
+`Response.case` статически связывает status и payload с конкретной веткой
+handler. Capability другого endpoint может быть сохранена и передана в другой
+handler, поэтому перед рендерингом библиотека дополнительно проверяет её
+принадлежность объявленным cases и отвергает чужую capability с
+`Runtime_error`.
+
 ## Petstore
 
 В [examples/petstore](examples/petstore/README.md) находится расширенный пример
@@ -111,17 +180,26 @@ opam exec -- dune exec examples/petstore/servers/opium_server.exe
 
 ## Сборка
 
-Проект использует локальный switch OCaml 5.5.0:
+Проект использует локальный switch OCaml 5.5.1:
 
 ```sh
 make create_switch
 make deps_all
 make check
 make release-check
+make release-artifacts
+make release-install-check
 ```
 
 `make check` проверяет форматирование, сборку, тесты, odoc, install targets и
 сгенерированные opam-файлы. CI намеренно не добавлен.
+
+`make release-artifacts` создаёт локальный source archive, SHA-256 и заготовки
+пяти пакетов для opam-repository в `_release/`. `make release-install-check`
+распаковывает этот archive и проверяет установку всех пакетов, тесты,
+документацию и внешние consumer-проекты в активном switch OCaml 5.5.1, не
+создавая и не устанавливая отдельный compiler. Распакованный исходный код
+остаётся в `_release/` для проверки результата.
 
 На Ubuntu транзитивным TLS-зависимостям Opium нужен `libgmp-dev`; Dream также
 может потребовать `libev-dev` и `libssl-dev`.

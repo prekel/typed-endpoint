@@ -8,20 +8,14 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   open Io.Let_syntax
   open Endpoint
 
-  let unavailable response_case error =
+  let unavailable
+        (response_case : ([ `Service_unavailable ], Dto.Api_response.t) Response.case)
+        error
+    =
     respond response_case (Dto.Api_response.persistence_error error)
   ;;
 
   let add_pet =
-    let ok = case `OK (Response.json (module Dto.Pet)) in
-    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
-    let conflict = case `Conflict (Response.json (module Dto.Api_response)) in
-    let unprocessable_entity =
-      case `Unprocessable_entity (Response.json (module Dto.Api_response))
-    in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     post / "pet"
     |> documented
          ~operation_id:"addPet"
@@ -29,8 +23,13 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
          ~description:"Add a new pet to the store."
     |> accepts (Request.json (module Dto.Pet))
     |> returns
-         (ok <|> bad_request <|> conflict <|> unprocessable_entity <|> service_unavailable)
-    ==> fun context pet ->
+         (case `OK (Response.json (module Dto.Pet))
+          <|> case `Bad_request (Response.json (module Dto.Api_response))
+          <|> case `Conflict (Response.json (module Dto.Api_response))
+          <|> case `Unprocessable_entity (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==>
+    fun ok bad_request conflict _unprocessable_entity service_unavailable context pet ->
     let database = Common.Secured.dependency context in
     match Dto.Pet.to_domain pet with
     | Error message -> respond bad_request (Dto.Api_response.bad_request message)
@@ -43,15 +42,6 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let update_pet =
-    let ok = case `OK (Response.json (module Dto.Pet)) in
-    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
-    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
-    let unprocessable_entity =
-      case `Unprocessable_entity (Response.json (module Dto.Api_response))
-    in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     put / "pet"
     |> documented
          ~operation_id:"updatePet"
@@ -59,12 +49,13 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
          ~description:"Update an existing pet by ID."
     |> accepts (Request.json (module Dto.Pet))
     |> returns
-         (ok
-          <|> bad_request
-          <|> not_found
-          <|> unprocessable_entity
-          <|> service_unavailable)
-    ==> fun context pet ->
+         (case `OK (Response.json (module Dto.Pet))
+          <|> case `Bad_request (Response.json (module Dto.Api_response))
+          <|> case `Not_found (Response.json (module Dto.Api_response))
+          <|> case `Unprocessable_entity (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==>
+    fun ok bad_request not_found _unprocessable_entity service_unavailable context pet ->
     let database = Common.Secured.dependency context in
     match Dto.Pet.to_domain pet with
     | Error message -> respond bad_request (Dto.Api_response.bad_request message)
@@ -78,18 +69,16 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let find_by_status =
-    let ok = case `OK (Response.json (module Dto.Pet_list)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     get / "pet" / "findByStatus" /! arg "status" (module Dto.Status)
     |> documented
          ~operation_id:"findPetsByStatus"
          ~summary:"Finds Pets by status."
          ~description:"Returns all pets having the requested official status."
     |> accepts Request.empty
-    |> returns (ok <|> service_unavailable)
-    ==> fun status context () ->
+    |> returns
+         (case `OK (Response.json (module Dto.Pet_list))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun status ok service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.list_by_status ~database ~status in
     match result with
@@ -98,18 +87,16 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let find_by_tags =
-    let ok = case `OK (Response.json (module Dto.Pet_list)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     get / "pet" / "findByTags" /! arg "tags" (module Dto.Tags)
     |> documented
          ~operation_id:"findPetsByTags"
          ~summary:"Finds Pets by tags."
          ~description:"Returns pets carrying at least one comma-separated tag."
     |> accepts Request.empty
-    |> returns (ok <|> service_unavailable)
-    ==> fun tags context () ->
+    |> returns
+         (case `OK (Response.json (module Dto.Pet_list))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun tags ok service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.list_by_tags ~database ~tags in
     match result with
@@ -118,11 +105,6 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let search_pets =
-    let ok = case `OK (Response.json (module Dto.Pet_page)) in
-    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     get
     / "pet"
     / "search"
@@ -135,8 +117,11 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
          ~description:
            "Typed-endpoint extension retaining bounded pagination outside the official operations."
     |> accepts Request.empty
-    |> returns (ok <|> bad_request <|> service_unavailable)
-    ==> fun status page limit context () ->
+    |> returns
+         (case `OK (Response.json (module Dto.Pet_page))
+          <|> case `Bad_request (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun status page limit ok bad_request service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let page = Option.value page ~default:Domain.Page_request.default_page in
     let limit = Option.value limit ~default:Domain.Page_request.default_limit in
@@ -150,19 +135,17 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let get_pet =
-    let ok = case `OK (Response.json (module Dto.Pet)) in
-    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     get / "pet" /: arg "petId" (module Http_parameter.Pet_id)
     |> documented
          ~operation_id:"getPetById"
          ~summary:"Find pet by ID."
          ~description:"Returns a single pet."
     |> accepts Request.empty
-    |> returns (ok <|> not_found <|> service_unavailable)
-    ==> fun id context () ->
+    |> returns
+         (case `OK (Response.json (module Dto.Pet))
+          <|> case `Not_found (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun id ok not_found service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.find ~database id in
     match result with
@@ -172,12 +155,6 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let update_pet_with_form =
-    let ok = case `OK (Response.json (module Dto.Pet)) in
-    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
-    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     post
     / "pet"
     /: arg "petId" (module Http_parameter.Pet_id)
@@ -188,8 +165,12 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
          ~summary:"Updates a pet in the store with form data."
          ~description:"Updates the pet name and/or status from query form fields."
     |> accepts Request.empty
-    |> returns (ok <|> bad_request <|> not_found <|> service_unavailable)
-    ==> fun id name status context () ->
+    |> returns
+         (case `OK (Response.json (module Dto.Pet))
+          <|> case `Bad_request (Response.json (module Dto.Api_response))
+          <|> case `Not_found (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun id name status ok _bad_request not_found service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.patch ~database ~id ?name ?status () in
     match result with
@@ -199,19 +180,17 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let delete_pet =
-    let ok = case `OK (Response.empty ~description:"Pet deleted" ()) in
-    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     delete / "pet" /: arg "petId" (module Http_parameter.Pet_id)
     |> documented
          ~operation_id:"deletePet"
          ~summary:"Deletes a pet."
          ~description:"Delete a pet."
     |> accepts Request.empty
-    |> returns (ok <|> not_found <|> service_unavailable)
-    ==> fun id context () ->
+    |> returns
+         (case `OK (Response.empty ~description:"Pet deleted" ())
+          <|> case `Not_found (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun id ok not_found service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.delete ~database id in
     match result with
@@ -221,12 +200,6 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
   ;;
 
   let upload_image =
-    let ok = case `OK (Response.json (module Dto.Api_response)) in
-    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
-    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     post
     / "pet"
     /: arg "petId" (module Http_parameter.Pet_id)
@@ -237,8 +210,12 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
          ~summary:"Uploads an image."
          ~description:"Upload an opaque image of the pet."
     |> accepts (Request.binary ~description:"Image bytes" ())
-    |> returns (ok <|> bad_request <|> not_found <|> service_unavailable)
-    ==> fun id metadata context bytes ->
+    |> returns
+         (case `OK (Response.json (module Dto.Api_response))
+          <|> case `Bad_request (Response.json (module Dto.Api_response))
+          <|> case `Not_found (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun id metadata ok bad_request not_found service_unavailable context bytes ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.upload_image ~database ~id ~metadata ~bytes in
     match result with

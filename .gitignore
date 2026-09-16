@@ -11,6 +11,7 @@
 
 # Dune output
 _build/
+_release/
 *.install
 
 # Local opam switch

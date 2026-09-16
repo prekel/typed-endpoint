@@ -46,6 +46,19 @@ type app_builder = route list
 let empty = []
 let combine = List.append
 
+let method_to_string : Typed_endpoint.Method.t -> string = function
+  | `GET -> "GET"
+  | `POST -> "POST"
+  | `HEAD -> "HEAD"
+  | `DELETE -> "DELETE"
+  | `PATCH -> "PATCH"
+  | `PUT -> "PUT"
+  | `OPTIONS -> "OPTIONS"
+  | `TRACE -> "TRACE"
+  | `CONNECT -> "CONNECT"
+  | `Other method_ -> method_
+;;
+
 let path_segments path =
   String.split path ~on:'/'
   |> List.filter ~f:(Fn.non String.is_empty)
@@ -154,15 +167,12 @@ let dispatch routes request =
     List.filter_map routes ~f:(fun route ->
       Option.map (match_path route.path path []) ~f:(fun params -> route, params))
   in
-  match
-    List.find matches ~f:(fun (route, _) ->
-      Int.equal (Cohttp.Code.compare_method route.meth request.meth) 0)
-  with
+  match List.find matches ~f:(fun (route, _) -> Poly.equal route.meth request.meth) with
   | Some (route, params) -> route.handler { request with params }
   | None when not (List.is_empty matches) ->
     let allow =
       matches
-      |> List.map ~f:(fun (route, _params) -> Cohttp.Code.string_of_method route.meth)
+      |> List.map ~f:(fun (route, _params) -> method_to_string route.meth)
       |> List.dedup_and_sort ~compare:String.compare
       |> String.concat ~sep:", "
     in
@@ -218,17 +228,19 @@ module Backend_conformance = struct
     let text description = Response.text ~description ()
 
     let endpoint uri request response handler =
-      let ok = case `OK response in
-      uri |> documented |> accepts request |> returns ok |> handle (handler ok)
-    ;;
-
-    let endpoint_with ~context uri request response handler =
-      let ok = case `OK response in
       uri
       |> documented
       |> accepts request
-      |> returns ok
-      |> handle_with ~context (handler ok)
+      |> returns (case `OK response)
+      |> handle handler
+    ;;
+
+    let endpoint_with ~context uri request response handler =
+      uri
+      |> documented
+      |> accepts request
+      |> returns (case `OK response)
+      |> handle_with ~context handler
     ;;
 
     let bounded =
@@ -267,7 +279,7 @@ module Backend_conformance = struct
         Request.empty
         (Response.text ~description:"Typed headers" ()
          |> Response.with_header typed_response_header)
-        (fun ok version () -> respond ok ("present", "version:" ^ Int.to_string version))
+        (fun version ok () -> respond ok ("present", "version:" ^ Int.to_string version))
     ;;
 
     let empty_route =
@@ -286,7 +298,7 @@ module Backend_conformance = struct
          /! arg "enabled" (Typed_endpoint.Parameter.bool ~description:"Enabled" ()))
         Request.empty
         (text "Decoded")
-        (fun ok id enabled () ->
+        (fun id enabled ok () ->
            respond ok (Int.to_string id ^ ":" ^ Bool.to_string enabled))
     ;;
 
@@ -297,7 +309,7 @@ module Backend_conformance = struct
          /: arg "value" (Typed_endpoint.Parameter.string ~description:"Value" ()))
         Request.empty
         (text "Captured")
-        (fun ok value () -> respond ok ("capture:" ^ value))
+        (fun value ok () -> respond ok ("capture:" ^ value))
     ;;
 
     let fixed =

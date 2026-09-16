@@ -153,7 +153,7 @@ module Status = struct
     | `Network_connect_timeout_error
     ]
 
-  let code : t -> int = function
+  let code : [< t ] -> int = function
     | `Continue -> 100
     | `Switching_protocols -> 101
     | `Processing -> 102
@@ -590,8 +590,6 @@ module Make (B : Backend.S) = struct
   module Io = B.Io
   open Io.Let_syntax
 
-  type never = |
-
   module Request = struct
     let default_max_body_bytes = 1_048_576
 
@@ -663,23 +661,28 @@ module Make (B : Backend.S) = struct
 
     let with_header header response = With_header (header, response)
 
-    type 'a case_data =
+    type (+'status, 'a) case_data =
       { id : int
-      ; status : Status.t
+      ; status : 'status
       ; response : 'a t
       }
+      constraint 'status = [< Status.t ]
 
-    type declared_case = Declared_case : 'a case_data -> declared_case
+    type declared_case = Declared_case : ([< Status.t ], 'a) case_data -> declared_case
 
-    type cases =
+    type declarations =
       | One_case of declared_case
-      | Both_cases of cases * cases
+      | Both_cases of declarations * declarations
 
-    type reply = Reply : 'a case_data * 'a -> reply
+    type reply = Reply : ([< Status.t ], 'a) case_data * 'a -> reply
 
-    type 'a case =
-      { cases : cases
-      ; make_reply : 'a -> reply
+    type (+'status, 'a) case =
+      { make_reply : 'a -> reply }
+      constraint 'status = [< Status.t ]
+
+    type ('handler, 'terminal) cases =
+      { declarations : declarations
+      ; apply : 'handler -> 'terminal
       }
 
     let fresh_case_id =
@@ -689,17 +692,20 @@ module Make (B : Backend.S) = struct
 
     let case status response =
       let data = { id = fresh_case_id (); status; response } in
-      { cases = One_case (Declared_case data)
-      ; make_reply = (fun value -> Reply (data, value))
+      let responder = { make_reply = (fun value -> Reply (data, value)) } in
+      { declarations = One_case (Declared_case data)
+      ; apply = (fun handler -> handler responder)
       }
     ;;
 
-    let combine (type a b) (left : a case) (right : b case) : never case =
-      { cases = Both_cases (left.cases, right.cases)
-      ; make_reply =
-          (fun impossible ->
-            match impossible with
-            | _ -> .)
+    let combine
+          (type handler middle terminal)
+          (left : (handler, middle) cases)
+          (right : (middle, terminal) cases)
+      : (handler, terminal) cases
+      =
+      { declarations = Both_cases (left.declarations, right.declarations)
+      ; apply = (fun handler -> right.apply (left.apply handler))
       }
     ;;
   end
@@ -707,7 +713,8 @@ module Make (B : Backend.S) = struct
   let case = Response.case
 
   type reply = Response.reply
-  type response_cases = Response.cases
+  type ('handler, 'terminal) responses = ('handler, 'terminal) Response.cases
+  type response_cases = Response.declarations
 
   let ( <|> ) = Response.combine
   let respond case value = Io.return (case.Response.make_reply value)
@@ -1196,7 +1203,7 @@ module Make (B : Backend.S) = struct
      | Ok () -> ()
      | Error { Runtime.meth; path; status; declared } ->
        raise (Runtime_error (Undeclared_response_case { meth; path; status; declared })));
-    respond_ok_with_status ~status:returned.status returned.response value
+    respond_ok_with_status ~status:(returned.status :> Status.t) returned.response value
   ;;
 
   let render_context_rejection (Context.Rejected { status; response; error })
@@ -1864,17 +1871,19 @@ module Make (B : Backend.S) = struct
   let accepts request documented = { documented; request }
 
   type ('handler, 'terminal, 'request) ready =
-    { requested : ('handler, 'terminal, 'request) requested
-    ; responses : response_cases
-    }
+    | Ready :
+        { requested : ('handler, 'response_handler, 'request) requested
+        ; responses : ('response_handler, 'terminal) responses
+        }
+        -> ('handler, 'terminal, 'request) ready
 
-  let returns responses requested = { requested; responses = responses.Response.cases }
+  let returns responses requested = Ready { requested; responses }
 
   let handle handler ready =
-    let { requested = { documented; request }; responses } = ready in
+    let (Ready { requested = { documented; request }; responses }) = ready in
     make_route
       ~context:Context.empty
-      ~invoke:(fun handler () body -> handler body)
+      ~invoke:(fun handler () body -> responses.Response.apply handler body)
       ~meth:documented.meth
       ?summary:documented.summary
       ?tags:documented.tags
@@ -1884,15 +1893,15 @@ module Make (B : Backend.S) = struct
       ?decode_error:documented.decode_error
       ~request
       ~path:documented.path
-      ~responses
+      ~responses:responses.Response.declarations
       handler
   ;;
 
   let handle_with ~context handler ready =
-    let { requested = { documented; request }; responses } = ready in
+    let (Ready { requested = { documented; request }; responses }) = ready in
     make_route
       ~context
-      ~invoke:(fun handler context body -> handler context body)
+      ~invoke:(fun handler context body -> responses.Response.apply handler context body)
       ~meth:documented.meth
       ?summary:documented.summary
       ?tags:documented.tags
@@ -1902,17 +1911,18 @@ module Make (B : Backend.S) = struct
       ?decode_error:documented.decode_error
       ~request
       ~path:documented.path
-      ~responses
+      ~responses:responses.Response.declarations
       handler
   ;;
 
   let handle_in_group handler ready =
-    let { requested = { documented; request }; responses } = ready in
+    let (Ready { requested = { documented; request }; responses }) = ready in
     Group.Contextual_route
       (fun context ->
         make_route
           ~context
-          ~invoke:(fun handler context body -> handler context body)
+          ~invoke:(fun handler context body ->
+            responses.Response.apply handler context body)
           ~meth:documented.meth
           ?summary:documented.summary
           ?tags:documented.tags
@@ -1922,7 +1932,7 @@ module Make (B : Backend.S) = struct
           ?decode_error:documented.decode_error
           ~request
           ~path:documented.path
-          ~responses
+          ~responses:responses.Response.declarations
           handler)
   ;;
 

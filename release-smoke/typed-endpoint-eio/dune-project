@@ -1,0 +1,3 @@
+(lang dune 3.14)
+
+(name typed_endpoint_eio_release_smoke)

@@ -264,7 +264,7 @@ module Status : sig
     | `Network_connect_timeout_error
     ]
 
-  val code : t -> int
+  val code : [< t ] -> int
 end
 
 module Backend : sig
@@ -549,8 +549,6 @@ module Make (B : Backend.S) : sig
         services. Open [Io.Let_syntax] to use [ppx_let]. *)
   module Io : Base.Monad.S with type 'a t = 'a B.io
 
-  type never = |
-
   module Request : sig
     (** Runtime request decoding paired with its OpenAPI request-body
             contract. *)
@@ -576,10 +574,10 @@ module Make (B : Backend.S) : sig
     (** Runtime response encoding paired with its OpenAPI content contract. *)
     type 'a t
 
-    (** A typed response declaration. A single value is both an OpenAPI
-            declaration for {!returns} and a capability accepted by
-            {!respond}; its payload type cannot be mixed with another case. *)
-    type 'a case
+    (** A typed response capability passed positionally to the handler. Its
+            first parameter carries the declared status variant and its second
+            parameter carries the payload type. *)
+    type (+'status, 'payload) case constraint 'status = [< Status.t ]
 
     (** Declares the exact JSON wire type returned by the handler. *)
     val json : (module Response_payload.S with type t = 'a) -> 'a t
@@ -596,23 +594,32 @@ module Make (B : Backend.S) : sig
     val with_header : 'header Header.t -> 'body t -> ('header * 'body) t
   end
 
-  (** Associates one HTTP status with its payload codec. The returned token
-          is reused by [respond], keeping the handler result tied to the
-          declaration. *)
-  val case : Status.t -> 'a Response.t -> 'a Response.case
+  (** A response declaration chain. ['handler] is the handler before its
+          positional response capabilities are supplied; ['terminal] is the
+          remaining handler after all capabilities have been supplied. *)
+  type ('handler, 'terminal) responses
+
+  (** Associates one HTTP status with its payload codec and adds its typed
+          capability as the next positional handler argument. *)
+  val case
+    :  ([< Status.t ] as 'status)
+    -> 'a Response.t
+    -> (('status, 'a) Response.case -> 'terminal, 'terminal) responses
 
   (** Existential handler result retaining the exact case/payload pairing. *)
   type reply
 
-  (** Combines declarations without erasing the individual case values used
-          by handlers. A combined declaration cannot itself be passed to
-          {!respond}, because its payload type is uninhabited. *)
-  val ( <|> ) : 'a Response.case -> 'b Response.case -> never Response.case
+  (** Combines declarations from left to right. The handler receives their
+          capabilities in the same order. *)
+  val ( <|> )
+    :  ('handler, 'middle) responses
+    -> ('middle, 'terminal) responses
+    -> ('handler, 'terminal) responses
 
   (** Returns a response through [case]. Case membership is verified before
           rendering; the backend effect is returned directly for ergonomic
           handler branches. *)
-  val respond : 'a Response.case -> 'a -> reply B.io
+  val respond : ('status, 'a) Response.case -> 'a -> reply B.io
 
   module Context : sig
     (** A typed computation performed once before parameter and body
@@ -829,8 +836,8 @@ module Make (B : Backend.S) : sig
   (** Adds one or more typed response cases and advances to a
             handler-ready route. *)
   val returns
-    :  'response Response.case
-    -> ('handler, 'terminal, 'request) requested
+    :  ('response_handler, 'terminal) responses
+    -> ('handler, 'response_handler, 'request) requested
     -> ('handler, 'terminal, 'request) ready
 
   val handle : 'handler -> ('handler, 'request -> reply B.io, 'request) ready -> route

@@ -70,13 +70,12 @@ let authenticated =
 ;;
 
 let route =
-  let ok = case `OK (Response.text ~description:"OK" ()) in
   post / "items" /: arg "id" (module String_param) /? arg "q" (module String_param)
   |> documented
   |> accepts (Request.text ~description:"Body" ())
-  |> returns ok
+  |> returns (case `OK (Response.text ~description:"OK" ()))
   |> handle_with ~context:(Context.both authenticated (Dependency.value "items"))
-     @@ fun id query (user, service) body ->
+     @@ fun id query ok (user, service) body ->
      respond
        ok
        (String.concat

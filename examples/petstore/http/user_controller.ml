@@ -25,25 +25,26 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
          ())
   ;;
 
-  let unavailable response_case error =
+  let unavailable
+        (response_case : ([ `Service_unavailable ], Dto.Api_response.t) Response.case)
+        error
+    =
     respond response_case (Dto.Api_response.persistence_error error)
   ;;
 
   let create_user =
-    let ok = case `OK (Response.json (module Dto.User)) in
-    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
-    let conflict = case `Conflict (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     post / "user"
     |> documented
          ~operation_id:"createUser"
          ~summary:"Create user."
          ~description:"Creates one Petstore user."
     |> accepts (Request.json (module Dto.User))
-    |> returns (ok <|> bad_request <|> conflict <|> service_unavailable)
-    ==> fun database user ->
+    |> returns
+         (case `OK (Response.json (module Dto.User))
+          <|> case `Bad_request (Response.json (module Dto.Api_response))
+          <|> case `Conflict (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun ok bad_request conflict service_unavailable database user ->
     match Dto.User.to_domain user with
     | Error message -> respond bad_request (Dto.Api_response.bad_request message)
     | Ok user ->
@@ -56,20 +57,18 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let create_users_with_list =
-    let ok = case `OK (Response.json (module Dto.User)) in
-    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
-    let conflict = case `Conflict (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     post / "user" / "createWithList"
     |> documented
          ~operation_id:"createUsersWithListInput"
          ~summary:"Creates list of users with given input array."
          ~description:"Creates all users atomically and returns the final created user."
     |> accepts (Request.json (module Dto.User_list))
-    |> returns (ok <|> bad_request <|> conflict <|> service_unavailable)
-    ==> fun database users ->
+    |> returns
+         (case `OK (Response.json (module Dto.User))
+          <|> case `Bad_request (Response.json (module Dto.Api_response))
+          <|> case `Conflict (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun ok bad_request conflict service_unavailable database users ->
     match Dto.User_list.to_domain users with
     | Error message -> respond bad_request (Dto.Api_response.bad_request message)
     | Ok [] ->
@@ -84,17 +83,6 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let login_user =
-    let ok =
-      case
-        `OK
-        (Response.json (module Dto.Login_token)
-         |> Response.with_header expires_after_header
-         |> Response.with_header rate_limit_header)
-    in
-    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     get
     / "user"
     / "login"
@@ -105,8 +93,15 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
          ~summary:"Logs user into the system."
          ~description:"Authenticates the demo user and returns a session token."
     |> accepts Request.empty
-    |> returns (ok <|> bad_request <|> service_unavailable)
-    ==> fun username password database () ->
+    |> returns
+         (case
+            `OK
+            (Response.json (module Dto.Login_token)
+             |> Response.with_header expires_after_header
+             |> Response.with_header rate_limit_header)
+          <|> case `Bad_request (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun username password ok bad_request service_unavailable database () ->
     match username, password with
     | Some username, Some password ->
       let%bind result = Users.authenticate ~database ~username ~password in
@@ -121,31 +116,28 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let logout_user =
-    let ok = case `OK (Response.empty ~description:"Successful operation" ()) in
     get / "user" / "logout"
     |> documented
          ~operation_id:"logoutUser"
          ~summary:"Logs out current logged in user session."
          ~description:"Ends the demo session."
     |> accepts Request.empty
-    |> returns ok
-    ==> fun _database () -> respond ok ()
+    |> returns (case `OK (Response.empty ~description:"Successful operation" ()))
+    ==> fun ok _database () -> respond ok ()
   ;;
 
   let get_user =
-    let ok = case `OK (Response.json (module Dto.User)) in
-    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     get / "user" /: arg "username" (module Http_parameter.Username)
     |> documented
          ~operation_id:"getUserByName"
          ~summary:"Get user by user name."
          ~description:"Returns one user by username."
     |> accepts Request.empty
-    |> returns (ok <|> not_found <|> service_unavailable)
-    ==> fun username database () ->
+    |> returns
+         (case `OK (Response.json (module Dto.User))
+          <|> case `Not_found (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun username ok not_found service_unavailable database () ->
     let%bind result = Users.find ~database username in
     match result with
     | Ok (Some user) -> respond ok (Dto.User.of_domain user)
@@ -154,20 +146,18 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let update_user =
-    let ok = case `OK (Response.empty ~description:"Successful operation" ()) in
-    let bad_request = case `Bad_request (Response.json (module Dto.Api_response)) in
-    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     put / "user" /: arg "username" (module Http_parameter.Username)
     |> documented
          ~operation_id:"updateUser"
          ~summary:"Update user resource."
          ~description:"Replaces the user selected by the path username."
     |> accepts (Request.json (module Dto.User))
-    |> returns (ok <|> bad_request <|> not_found <|> service_unavailable)
-    ==> fun username database user ->
+    |> returns
+         (case `OK (Response.empty ~description:"Successful operation" ())
+          <|> case `Bad_request (Response.json (module Dto.Api_response))
+          <|> case `Not_found (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun username ok bad_request not_found service_unavailable database user ->
     match Dto.User.to_domain ~username user with
     | Error message -> respond bad_request (Dto.Api_response.bad_request message)
     | Ok user ->
@@ -180,19 +170,17 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let delete_user =
-    let ok = case `OK (Response.empty ~description:"User deleted" ()) in
-    let not_found = case `Not_found (Response.json (module Dto.Api_response)) in
-    let service_unavailable =
-      case `Service_unavailable (Response.json (module Dto.Api_response))
-    in
     delete / "user" /: arg "username" (module Http_parameter.Username)
     |> documented
          ~operation_id:"deleteUser"
          ~summary:"Delete user resource."
          ~description:"Deletes the user selected by username."
     |> accepts Request.empty
-    |> returns (ok <|> not_found <|> service_unavailable)
-    ==> fun username database () ->
+    |> returns
+         (case `OK (Response.empty ~description:"User deleted" ())
+          <|> case `Not_found (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun username ok not_found service_unavailable database () ->
     let%bind result = Users.delete ~database username in
     match result with
     | Ok () -> respond ok ()

@@ -68,10 +68,6 @@ responses и handler. После первого query type checker больше 
 
 {[
 let get_pet =
-  let ok = case `OK (Response.json (module Pet)) in
-  let not_found =
-    case `Not_found (Response.json (module Api_response))
-  in
   get
   / "pet"
   /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
@@ -80,8 +76,10 @@ let get_pet =
        ~operation_id:"getPetById"
        ~summary:"Finds a pet"
   |> accepts Request.empty
-  |> returns (ok <|> not_found)
-  |> handle @@ fun pet_id verbose () ->
+  |> returns
+       (case `OK (Response.json (module Pet))
+        <|> case `Not_found (Response.json (module Api_response)))
+  |> handle @@ fun pet_id verbose ok not_found () ->
   match find_pet pet_id verbose with
   | Some pet -> respond ok pet
   | None -> respond not_found (Api_response.not_found pet_id)
@@ -89,9 +87,10 @@ let get_pet =
 
 [/] добавляет static segment, [/:] — required path capture, [/?] — optional
 query и [/!] — required query. Порядок операторов одновременно задаёт порядок
-curried аргументов handler. Каждый [case] сохраняется в локальной
-переменной: [<|>] объединяет декларации для [returns], а [respond] принимает
-исходный case и payload ровно его типа. Для route,
+curried аргументов handler. [<|>] объединяет декларации для [returns], после
+чего handler получает response capabilities позиционно в том же порядке.
+Каждая capability типизирована status и payload; [respond] принимает её и
+значение ровно соответствующего payload-типа. Для route,
 который затем входит в [Group.make_with_context], последний шаг можно записать
 через [==>]; standalone route завершается [handle], а route со своим
 контекстом — [handle_with]. Backend request не добавляется неявно: при
@@ -131,19 +130,17 @@ let version =
 let result =
   Header.required "X-Result" (Header.string ~description:"Result marker" ())
 
-let ok =
-  case
-    `OK
-    (Response.text ~description:"Version" ()
-     |> Response.with_header result)
-
 let route =
   get / "versioned"
   |> header version
   |> documented
   |> accepts Request.empty
-  |> returns ok
-  |> handle @@ fun version () ->
+  |> returns
+       (case
+          `OK
+          (Response.text ~description:"Version" ()
+           |> Response.with_header result))
+  |> handle @@ fun version ok () ->
   respond ok ("accepted", Int.to_string version)
 ]}
 

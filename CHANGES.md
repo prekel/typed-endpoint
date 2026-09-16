@@ -1,6 +1,6 @@
 # История изменений
 
-## Не выпущено
+## 0.1.0 — 2026-09-16
 
 ### Добавлено
 
@@ -10,6 +10,8 @@
 - Единый buffered response primitive `Backend.S.respond` с явными headers.
 - Property tests для URI/query/header semantics и негейтящий router benchmark.
 - `make release-check`, security policy и migration guide.
+- Проверка release-архива в активном switch OCaml 5.5.1 и compile-fail
+  regression tests для staged DSL и response capabilities.
 - Абстрактный `Json_schema.t`, проверяемые smart constructors, типизированные
   стандартные formats и явные мосты к `ppx_deriving_jsonschema` и
   `Yojson.Safe`.
@@ -26,9 +28,9 @@
 - Metadata, parameters, headers и contract schema больше не публикуют
   представление `Ppx_deriving_jsonschema_runtime.t`; Petstore использует общие
   `[@default]`/`[@key]` без дублирующих schema-аннотаций.
-- Фиксированный response GADT заменён на масштабируемые typed
-  `case` tokens. Каждый status получает собственный payload type,
-  декларации объединяются через `<|>`, а handlers отвечают через `respond`.
+- Фиксированный response GADT заменён на масштабируемую цепочку typed cases.
+  Декларации объединяются через `<|>`, handler получает status/payload-typed
+  capabilities позиционно и отвечает через `respond`.
 - API результата `Make` расплющен: staged DSL и `case` находятся прямо в
   `Endpoint`, а `route` и `interceptor` больше не требуют однотиповых модулей.
 - HTTP method/status вынесены из `Backend.S` в общие `Method.t` и `Status.t`;

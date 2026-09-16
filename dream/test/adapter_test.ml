@@ -65,12 +65,11 @@ let decode_errors =
 ;;
 
 let route =
-  let ok = case `OK (Response.text ~description:"OK" ()) in
   post / "items" /: arg "id" (module String_param)
   |> documented
   |> accepts (Request.text ~description:"Body" ())
-  |> returns ok
-  |> handle_with ~context:Context.request @@ fun id request body ->
+  |> returns (case `OK (Response.text ~description:"OK" ()))
+  |> handle_with ~context:Context.request @@ fun id ok request body ->
      let query = Dream.query request "q" |> Option.value ~default:"none" in
      respond ok (String.concat ~sep:":" [ id; query; body ])
 ;;

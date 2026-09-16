@@ -31,6 +31,19 @@ let param = Dream.param
 let query = Dream.queries
 let header request name = Dream.header request name
 
+let method_to_string : Typed_endpoint.Method.t -> string = function
+  | `GET -> "GET"
+  | `POST -> "POST"
+  | `HEAD -> "HEAD"
+  | `DELETE -> "DELETE"
+  | `PATCH -> "PATCH"
+  | `PUT -> "PUT"
+  | `OPTIONS -> "OPTIONS"
+  | `TRACE -> "TRACE"
+  | `CONNECT -> "CONNECT"
+  | `Other method_ -> method_
+;;
+
 let body_to_string ~max_bytes request =
   let stream = Dream.body_stream request in
   let buffer = Buffer.create (Int.min max_bytes 4096) in
@@ -106,7 +119,7 @@ let router routes =
       | None ->
         let allow =
           routes
-          |> List.map ~f:(fun route -> Cohttp.Code.string_of_method route.meth)
+          |> List.map ~f:(fun route -> method_to_string route.meth)
           |> List.dedup_and_sort ~compare:String.compare
           |> String.concat ~sep:", "
         in

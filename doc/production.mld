@@ -110,6 +110,11 @@ Backend возвращает текст с [Content-Type: text/plain; charset=ut
 ответу 405; Opium adapter обеспечивает ту же семантику одним mount-level
 middleware.
 
+Capability [Response.case] статически связывает status и payload с веткой
+handler. Capability можно сохранить вне handler, поэтому перед рендерингом
+runtime дополнительно сверяет её непрозрачный identity со списком cases этого
+endpoint. Чужая capability получает [Runtime_error] и не рендерится.
+
 {1 Opium mount и постепенная миграция}
 
 Opium [app_builder] является immutable-коллекцией маршрутов, а не функцией
@@ -180,16 +185,20 @@ Benchmark нужен для сравнения изменений на одно�
 
 {1 Поддержка и release gate}
 
-Проверенная матрица первого релиза: OCaml >= 5.1, Opium 0.18.0, Dream
-1.0.0~alpha8 и cohttp-eio 6.3. Версия конкретного adapter меняется отдельной
-migration с повторным запуском общего conformance suite. Ядро не обещает
-совместимость с framework API вне соответствующего adapter package.
+Первый релиз проверяется на OCaml 5.5.1; это минимальная версия для всех
+пакетов. Версия конкретного adapter меняется
+отдельной migration с повторным запуском общего conformance suite. Ядро не
+обещает совместимость с framework API вне соответствующего adapter package.
 
 Перед тегом выполняется [make release-check]: форматирование, build, tests,
 odoc, package smoke tests, install targets, opam lint и проверка whitespace.
-Изменения публичного API фиксируются в [CHANGES.md] и migration guide. Правила
-private security reporting описаны в [SECURITY.md]. CI не добавляется этой
-задачей.
+Затем [make release-artifacts] создаёт source archive, а
+[make release-install-check] проверяет распакованный archive в уже активном
+switch OCaml 5.5.1, не устанавливая отдельный compiler. В [_release] также
+создаются локальные package definitions и URL/checksum для
+будущего opam-repository PR. Изменения публичного API фиксируются в
+[CHANGES.md] и migration guide. Правила private security reporting описаны в
+[SECURITY.md]. CI не добавляется этой задачей.
 
 Разделение чистого контракта и server handler, а также сетевой typed client
 сознательно отложены. Текущий production-hardening не вводит параллельный DSL и
