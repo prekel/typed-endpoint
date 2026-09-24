@@ -180,7 +180,7 @@ opam exec -- dune exec examples/petstore/servers/opium_server.exe
 
 ## Сборка
 
-Проект использует локальный switch OCaml 5.5.1:
+Проект поддерживает OCaml 5.1.1 и новее. Локальный switch можно создать так:
 
 ```sh
 make create_switch
@@ -196,9 +196,9 @@ make release-install-check
 
 `make release-artifacts` создаёт локальный source archive, SHA-256 и заготовки
 пяти пакетов для opam-repository в `_release/`. `make release-install-check`
-распаковывает этот archive и проверяет установку всех пакетов, тесты,
-документацию и внешние consumer-проекты в активном switch OCaml 5.5.1, не
-создавая и не устанавливая отдельный compiler. Распакованный исходный код
+распаковывает этот archive и проверяет install targets всех пакетов, тесты,
+документацию и внешние consumer-проекты в активном switch с OCaml >= 5.1.1.
+Отдельный compiler при этом не устанавливается. Распакованный исходный код
 остаётся в `_release/` для проверки результата.
 
 На Ubuntu транзитивным TLS-зависимостям Opium нужен `libgmp-dev`; Dream также

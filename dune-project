@@ -2,7 +2,7 @@
 
 (name typed-endpoint)
 
-(version 0.1.0)
+(version 0.1.1)
 
 (generate_opam_files true)
 
@@ -21,7 +21,7 @@
  (description
   "A framework-agnostic OCaml library for declaring typed HTTP routes and generating OpenAPI documents from the same definitions.")
  (depends
-  (ocaml (>= 5.5.1))
+  (ocaml (>= 5.1.1))
   base
   yojson
   (ppx_let (>= v0.17.1))
@@ -38,7 +38,7 @@
  (description
   "An Opium backend that turns typed-endpoint declarations into an Opium application.")
  (depends
-  (ocaml (>= 5.5.1))
+  (ocaml (>= 5.1.1))
   (typed-endpoint (= :version))
   (typed-endpoint-testing (and (= :version) :with-test))
   base
@@ -60,7 +60,7 @@
  (description
   "A framework-free in-memory backend for testing typed-endpoint applications and examples.")
  (depends
-  (ocaml (>= 5.5.1))
+  (ocaml (>= 5.1.1))
   (typed-endpoint (= :version))
   base
   uri
@@ -81,7 +81,7 @@
  (description
   "A Dream backend that turns typed-endpoint declarations into a Dream router.")
  (depends
-  (ocaml (>= 5.5.1))
+  (ocaml (>= 5.1.1))
   (typed-endpoint (= :version))
   (typed-endpoint-testing (and (= :version) :with-test))
   base
@@ -98,12 +98,12 @@
  (description
   "A native cohttp-eio backend with routing for typed-endpoint declarations.")
  (depends
-  (ocaml (>= 5.5.1))
+  (ocaml (>= 5.1.1))
   (typed-endpoint (= :version))
   (typed-endpoint-testing (and (= :version) :with-test))
   base
   (cohttp-eio (= 6.3.0))
-  (eio (>= 1.5))
+  (eio (>= 1.2))
   http
   uri
   yojson)

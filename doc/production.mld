@@ -185,16 +185,17 @@ Benchmark нужен для сравнения изменений на одно�
 
 {1 Поддержка и release gate}
 
-Первый релиз проверяется на OCaml 5.5.1; это минимальная версия для всех
-пакетов. Версия конкретного adapter меняется
-отдельной migration с повторным запуском общего conformance suite. Ядро не
+Минимальная версия OCaml для всех пакетов — 5.1.1. Eio adapter сохраняет
+[cohttp-eio 6.3.0] и требует [eio >= 1.2], совместимый с этой версией
+компилятора. Версия конкретного adapter меняется отдельной migration с
+повторным запуском общего conformance suite. Ядро не
 обещает совместимость с framework API вне соответствующего adapter package.
 
 Перед тегом выполняется [make release-check]: форматирование, build, tests,
 odoc, package smoke tests, install targets, opam lint и проверка whitespace.
 Затем [make release-artifacts] создаёт source archive, а
 [make release-install-check] проверяет распакованный archive в уже активном
-switch OCaml 5.5.1, не устанавливая отдельный compiler. В [_release] также
+switch OCaml >= 5.1.1, не устанавливая отдельный compiler. В [_release] также
 создаются локальные package definitions и URL/checksum для
 будущего opam-repository PR. Изменения публичного API фиксируются в
 [CHANGES.md] и migration guide. Правила private security reporting описаны в

@@ -18,8 +18,19 @@ if [ ! -f "$archive" ]; then
 fi
 
 compiler="$(opam exec -- ocamlc -version)"
-if [ "$compiler" != '5.5.1' ]; then
-  printf 'OCaml 5.5.1 is required; active compiler is %s\n' "$compiler" >&2
+if ! awk -v version="$compiler" '
+  BEGIN {
+    count = split(version, actual, /[^0-9]+/)
+    split("5.1.1", required, "[.]")
+    if (count < 3) exit 1
+    for (i = 1; i <= 3; i++) {
+      if (actual[i] + 0 > required[i] + 0) exit 0
+      if (actual[i] + 0 < required[i] + 0) exit 1
+    }
+    exit 0
+  }
+'; then
+  printf 'OCaml >= 5.1.1 is required; active compiler is %s\n' "$compiler" >&2
   exit 65
 fi
 
@@ -34,7 +45,8 @@ for package in \
   typed-endpoint-opium \
   typed-endpoint-dream \
   typed-endpoint-eio; do
-  opam exec -- dune build --root "$source_dir/release-smoke/$package" @all
+  OCAMLPATH="$source_dir/_build/install/default/lib${OCAMLPATH:+:$OCAMLPATH}" \
+    opam exec -- dune build --root "$source_dir/release-smoke/$package" @all
 done
 
-printf 'OCaml 5.5.1 installation check passed: %s\n' "$work_dir"
+printf 'OCaml %s archive check passed: %s\n' "$compiler" "$work_dir"

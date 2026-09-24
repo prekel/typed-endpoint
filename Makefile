@@ -4,12 +4,12 @@ PACKAGES = ./typed-endpoint.opam ./typed-endpoint-opium.opam \
 	./typed-endpoint-dream.opam ./typed-endpoint-eio.opam \
 	./typed-endpoint-testing.opam
 
-RELEASE_VERSION = 0.1.0
+RELEASE_VERSION = 0.1.1
 RELEASE_DIR = _release
 
 .PHONY: create_switch
 create_switch:
-	opam switch create . 5.5.1 --no-install -y
+	opam switch create . 5.1.1 --no-install -y
 
 .PHONY: deps
 deps:
