@@ -4,60 +4,65 @@
 Servant, Tapir, Smithy4s, http4s и ZIO. Это backlog, а не описание уже
 существующего публичного API.
 
+Все пункты, обозначающие работу, оформляются чекбоксами: `[ ]` — не выполнено,
+`[x]` — выполнено. Новые пункты добавляются с `[ ]`.
+
 ## Реализованная основа
 
-- Выбор database и repository adapters выполняется статически через функторы.
-- Repository — stateless module; каждая операция явно получает `~conn`.
-- Application service — stateless module с функциями use case. Он получает
+- [x] Выбор database и repository adapters выполняется статически через функторы.
+- [x] Repository — stateless module; каждая операция явно получает `~conn`.
+- [x] Application service — stateless module с функциями use case. Он получает
   `~database` и определяет границу `with_connection` или `transaction`.
-- Controller работает с DTO и HTTP-статусами, получает `Database.t` через
+- [x] Controller работает с DTO и HTTP-статусами, получает `Database.t` через
   group context и не видит `Database.connection`.
-- `Order_service.place` проверяет pet и записывает order через одно и то же
+- [x] `Order_service.place` проверяет pet и записывает order через одно и то же
   transaction-scoped соединение.
-- Единственный значимый runtime-экземпляр Petstore — `Database.t`: в production
+- [x] Единственный значимый runtime-экземпляр Petstore — `Database.t`: в production
   это будет pool, в примере — copy-on-write in-memory database.
 
 ## Согласованные задачи
 
 ### Пункты 1 и 13: контракт и сетевой typed client — отложено
 
-Направление не входит в ближайший release. Публичная запись маршрута остаётся
-единой: после `returns` сразу идут `==>` и серверный handler. Пользователь не
-должен выносить каждую декларацию в отдельный `Contract.Staged` и затем
-привязывать handler вторым объявлением. Сохраняются curried аргументы path,
-query и body; обязательный input record и `map_input` не нужны.
+Направление не входит в ближайший release. Текущая запись маршрута сохраняется:
+после `returns` сразу идут `==>` и серверный handler. Отдельный типизированный
+контракт будет экспериментальной возможностью для маршрутов, которым нужен
+общий контракт сервера и клиента. Его объявляют один раз и затем привязывают
+серверный handler; обычные маршруты не обязаны использовать этот API.
+Сохраняются curried аргументы path, query и body; обязательный input record и
+`map_input` не нужны.
 
 Для клиента на OCaml, включая браузерную сборку через `js_of_ocaml`, нужны
 следующие возможности:
 
-1. Внутри библиотеки отделить типизированное описание HTTP-контракта от
-   серверного handler и `Make (Backend)`. Итоговый серверный endpoint содержит
-   оба, но клиентский артефакт должен собираться без handler, Opium, Dream,
-   Eio и серверных application-зависимостей. Спроектировать генерацию этого
-   артефакта из того же исходного объявления на этапе сборки; способ извлечения
-   из DSL определить на прототипе, не вводя вторую публичную декларацию.
-2. Добавить необходимые обратные направления кодеков: `Parameter.S` сейчас
+- [ ] Добавить экспериментальный API для отдельного типизированного контракта.
+   Его серверная привязка принимает handler с теми же позиционными аргументами,
+   что текущий DSL. Runtime, OpenAPI и клиент используют одну декларацию
+   контракта; клиентский артефакт собирается без handler, Opium, Dream, Eio и
+   серверных application-зависимостей. Обычный inline route продолжает работать
+   для сервера и OpenAPI без отдельного контракта.
+- [ ] Добавить необходимые обратные направления кодеков: `Parameter.S` сейчас
    только разбирает path/query, `Request_payload.S` только декодирует body, а
    `Response_payload.S` только кодирует ответ. Клиент должен кодировать
    path/query/headers и request body, затем декодировать статус, headers и
-   response body. Серверные endpoint без клиентских кодеков должны оставаться
-   пригодными для сервера и OpenAPI; получение клиента для них должно давать
-   понятную ошибку сборки.
-3. Сделать ядро сетевого клиента независимым от транспорта и отдельный адаптер
+   response body. Контракт без клиентских кодеков остаётся пригодным для сервера
+   и OpenAPI; попытка получить из него клиент должна давать понятную ошибку
+   сборки.
+- [ ] Сделать ядро сетевого клиента независимым от транспорта и отдельный адаптер
    для браузера на `js_of_ocaml`/Fetch. Клиент принимает base URL и данные
    авторизации явно, сохраняет правила percent-encoding и query-параметров
    сервера. Объявленные HTTP-ответы возвращаются с типами их payload; ошибка
    сети, неожиданный статус и невалидный body различаются отдельно.
-4. Позволить клиенту и серверу компилировать одни и те же чистые доменные
+- [ ] Позволить клиенту и серверу компилировать одни и те же чистые доменные
    модули и DTO/кодеки. Клиентский артефакт ссылается на эти OCaml-типы, а не
    восстанавливает их из OpenAPI как новые record-типы. Если wire shape не
    совпадает с доменной сущностью, используется отдельная общая read model:
    например, элемент списка статей может не содержать `body` и внутренний ID.
-5. Добавить небольшой пример `js_of_ocaml`: серверный маршрут остаётся с
-   inline handler, браузерный клиент вызывает тот же endpoint через Fetch,
-   использует общий доменный тип параметра и разбирает несколько объявленных
-   статусов. Проверить соответствие клиентского запроса и ответа серверному
-   runtime и сгенерированному OpenAPI.
+- [ ] Добавить небольшой пример `js_of_ocaml`: один серверный маршрут использует
+   прежний inline handler, другой привязывает handler к отдельному контракту.
+   Браузерный клиент вызывает второй маршрут через Fetch, использует общий
+   доменный тип параметра и разбирает несколько объявленных статусов. Проверить
+   соответствие клиентского запроса и ответа серверному runtime и OpenAPI.
 
 OpenAPI остаётся внешним описанием и основой для SDK на других языках. Для
 собственного OCaml-клиента он не должен быть единственным источником типов:
@@ -65,31 +70,33 @@ OpenAPI остаётся внешним описанием и основой д�
 
 ### Этап 3: production HTTP semantics и адаптеры — реализовано
 
-- Добавлены типизированные required/optional request и response headers с общей
+- [x] Добавлены типизированные required/optional request и response headers с общей
   runtime/OpenAPI декларацией, проверкой имён и защитой от CR/LF injection.
-- Scalar query больше не зависит от first/last policy framework: повтор имени
+- [x] Scalar query больше не зависит от first/last policy framework: повтор имени
   получает предсказуемую decode error 400, а запятая внутри одного value
   сохраняется.
-- `Backend.S.respond` принимает готовые headers/body; convenience responders
+- [x] `Backend.S.respond` принимает готовые headers/body; convenience responders
   сохраняют канонические content types и поведение body-less ответа.
-- Opium `app_builder` стал immutable route collection. `mount` регистрирует один
+- [x] Opium `app_builder` стал immutable route collection. `mount` регистрирует один
   общий 405/`Allow` middleware и позволяет заменять старые Opium routes по одному.
-- Exception boundary, cancellation, timeout, CORS и compression остаются
+- [x] Exception boundary, cancellation, timeout, CORS и compression остаются
   ответственностью framework middleware; typed-endpoint не владеет lifecycle.
 
 ### Этап 4: проверки и release hardening — реализовано
 
-- Backend conformance расширен typed headers и duplicate scalar query.
-- Добавлены QCheck properties для percent-decoding, регистра headers, повторных
+- [x] Backend conformance расширен typed headers и duplicate scalar query.
+- [x] Добавлены QCheck properties для percent-decoding, регистра headers, повторных
   query values и приоритета static route, а также отдельный негейтящий router
   benchmark.
-- Petstore login публикует и возвращает `X-Rate-Limit` и `X-Expires-After`; wire
+- [x] Petstore login публикует и возвращает `X-Rate-Limit` и `X-Expires-After`; wire
   tests проверяют значения без повторного использования application codecs.
-- Добавлены changelog, security policy, migration guide и `make release-check`.
-- Матрица поддерживаемых adapter versions и эксплуатационные границы подробно
+- [x] Добавлены changelog, security policy, migration guide и `make release-check`.
+- [x] Матрица поддерживаемых adapter versions и эксплуатационные границы подробно
   описаны в `doc/production.mld`.
 
 ### Пункт 6: backend conformance suite — реализовано
+
+- [x] Общий conformance suite реализован и подключён к поддерживаемым backend.
 
 `Typed_endpoint_testing.Backend_conformance` содержит общий black-box suite для
 `Backend.S`: ограничение body, регистронезависимые заголовки, content type,
@@ -99,6 +106,8 @@ Dream и Eio adapter tests. Новый backend должен предостави
 преобразования request/response и запустить тот же suite.
 
 ### Пункт 7: типизированный `Route_info` — реализовано
+
+- [x] Типизированный `Route_info.t` используется interceptor и Petstore access log.
 
 После совпадения маршрута interceptor получает `Route_info.t` с
 `operation_id`, HTTP method, OpenAPI-style route template, итоговыми tags и
@@ -110,9 +119,9 @@ cardinality.
 
 Сохранена строгая граница:
 
-1. framework middleware — request ID, CORS, compression, transport timeout;
-2. route-aware interceptor — tracing, metrics и логирование с `Route_info`;
-3. `Context`/`Guard` — типизированные request-scoped значения и авторизация.
+- [x] framework middleware — request ID, CORS, compression, transport timeout;
+- [x] route-aware interceptor — tracing, metrics и логирование с `Route_info`;
+- [x] `Context`/`Guard` — типизированные request-scoped значения и авторизация.
 
 Framework middleware остаётся API конкретного адаптера. `interceptor`
 подключается через `compile ~interceptors`, выполняется только для совпавшего
@@ -124,6 +133,8 @@ endpoint.
 
 ### Пункт 9: request-scoped значения и `Principal.t` — реализовано
 
+- [x] Request-scoped значения и `Principal.t` реализованы и используются в Petstore.
+
 `Principal.t` хранит application-defined identity и детерминированный набор
 scopes. `Guard.authenticate` возвращает его как обычный typed context, поэтому
 principal компонуется с `Dependency.of_request` и application dependency через
@@ -132,6 +143,8 @@ principal компонуется с `Dependency.of_request` и application depen
 dependency; connection и runtime service locator туда не попадают.
 
 ### Пункт 14: независимые wire contract tests — реализовано
+
+- [x] Независимые wire contract tests покрывают Petstore HTTP API.
 
 `examples/petstore/test/wire_contract_test.ml` отправляет literal HTTP body
 через in-memory transport и независимо разбирает сырой ответ. Тесты не
