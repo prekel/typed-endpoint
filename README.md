@@ -7,10 +7,15 @@ OpenAPI 3.1.
 Проект разделён на независимые пакеты:
 
 - `typed-endpoint` — framework-agnostic ядро;
+- `typed-endpoint-ppx` — typed JSON Schema deriver с wire-аннотациями Yojson;
 - `typed-endpoint-testing` — прямой in-memory backend для тестов без сервера;
-- `typed-endpoint-opium` — интеграция с Opium 0.18;
+- `typed-endpoint-opium` — интеграция с Opium 0.17.1–0.18.0;
 - `typed-endpoint-dream` — интеграция с Dream 1.0.0~alpha8;
 - `typed-endpoint-eio` — direct-style интеграция с cohttp-eio 6.3.
+
+Deriver `typed-endpoint-ppx` перенесён и адаптирован на основе
+[ahrefs/ppx_deriving_jsonschema](https://github.com/ahrefs/ppx_deriving_jsonschema).
+Исходный copyright notice сохранён в [LICENSE](LICENSE).
 
 ## Основные гарантии
 
@@ -99,7 +104,7 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 Для Opium-приложения установите ядро и адаптер:
 
 ```sh
-opam install typed-endpoint typed-endpoint-opium
+opam install typed-endpoint typed-endpoint-ppx typed-endpoint-opium
 ```
 
 Минимальный `dune-project`:
@@ -180,7 +185,11 @@ opam exec -- dune exec examples/petstore/servers/opium_server.exe
 
 ## Сборка
 
-Проект поддерживает OCaml 5.1.1 и новее. Локальный switch можно создать так:
+Для сборки требуется Dune 3.14 или новее. Ядро, библиотека
+`typed-endpoint-testing` и адаптер Opium поддерживают OCaml
+4.14.1 и новее. Petstore также поддерживает OCaml 4.14.1; Dream и Eio
+требуют OCaml 5.1.1 или новее.
+Для полной проверки проекта локальный switch можно создать так:
 
 ```sh
 make create_switch
@@ -191,11 +200,22 @@ make release-artifacts
 make release-install-check
 ```
 
+Для проверки библиотек на OCaml 4.14.1 используйте отдельный switch и
+выбирайте только их цели Dune. При сборке компилятора из исходников с GCC 15
+задайте C17 режим через `CC`:
+
+```sh
+CC='gcc -std=gnu17' opam switch create /tmp/typed-endpoint-ocaml-4.14.1 4.14.1
+OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam install --deps-only ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-testing.opam ./typed-endpoint-opium.opam
+OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing @install opium/test/adapter_test.exe
+OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam exec -- dune exec --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing opium/test/adapter_test.exe
+```
+
 `make check` проверяет форматирование, сборку, тесты, odoc, install targets и
 сгенерированные opam-файлы. CI намеренно не добавлен.
 
 `make release-artifacts` создаёт локальный source archive, SHA-256 и заготовки
-пяти пакетов для opam-repository в `_release/`. `make release-install-check`
+шести пакетов для opam-repository в `_release/`. `make release-install-check`
 распаковывает этот archive и проверяет install targets всех пакетов, тесты,
 документацию и внешние consumer-проекты в активном switch с OCaml >= 5.1.1.
 Отдельный compiler при этом не устанавливается. Распакованный исходный код

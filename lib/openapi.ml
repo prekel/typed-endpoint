@@ -21,7 +21,7 @@ let binary_schema = Json_schema.string_exn ~format:`Binary () |> Json_schema.to_
 let render_schema (schema : Contract.Schema.t) =
   match schema.name with
   | Some name -> schema_ref name
-  | None -> Json_schema.to_yojson schema.value
+  | None -> Json_schema.to_yojson_packed schema.value
 ;;
 
 let render_param (param : Contract.param) =
@@ -220,7 +220,7 @@ let render_components compiled =
     Contract.Compiled.schemas compiled
     |> List.filter_map ~f:(fun schema ->
       Option.map schema.Contract.Schema.name ~f:(fun name ->
-        name, Json_schema.to_yojson schema.value))
+        name, Json_schema.to_yojson_packed schema.value))
   in
   let security_schemes =
     Contract.Compiled.security_schemes compiled

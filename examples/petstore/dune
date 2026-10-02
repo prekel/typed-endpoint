@@ -24,6 +24,6 @@
   user_controller
   routes)
  (private_modules api_docs)
- (libraries base ppx_deriving_jsonschema.runtime typed-endpoint yojson)
+ (libraries base typed-endpoint yojson)
  (preprocess
-  (pps ppx_let ppx_deriving_yojson ppx_deriving_jsonschema)))
+  (pps ppx_let ppx_deriving_yojson typed-endpoint-ppx)))

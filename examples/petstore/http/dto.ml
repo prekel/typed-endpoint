@@ -1,43 +1,35 @@
 open! Base
 open Typed_endpoint
-open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 
 module Schema_scalar = struct
   module Int64 = struct
     type t = int [@@deriving yojson]
 
-    let t_jsonschema = Json_schema.integer_exn ~format:`Int64 () |> Json_schema.to_ppx
+    let t_jsonschema = Json_schema.integer_exn ~format:`Int64 ()
   end
 
   module Int32 = struct
     type t = int [@@deriving yojson]
 
-    let t_jsonschema = Json_schema.integer_exn ~format:`Int32 () |> Json_schema.to_ppx
+    let t_jsonschema = Json_schema.integer_exn ~format:`Int32 ()
   end
 
   module Positive_int64 = struct
     type t = int [@@deriving yojson]
 
-    let t_jsonschema =
-      Json_schema.integer_exn ~format:`Int64 ~minimum:1 () |> Json_schema.to_ppx
-    ;;
+    let t_jsonschema = Json_schema.integer_exn ~format:`Int64 ~minimum:1 ()
   end
 
   module Positive_int32 = struct
     type t = int [@@deriving yojson]
 
-    let t_jsonschema =
-      Json_schema.integer_exn ~format:`Int32 ~minimum:1 () |> Json_schema.to_ppx
-    ;;
+    let t_jsonschema = Json_schema.integer_exn ~format:`Int32 ~minimum:1 ()
   end
 
   module Pet_status = struct
     type t = string [@@deriving yojson]
 
-    let t_jsonschema =
-      Json_schema.string_exn ~enum:[ "available"; "pending"; "sold" ] ()
-      |> Json_schema.to_ppx
-    ;;
+    let t_jsonschema = Json_schema.string_exn ~enum:[ "available"; "pending"; "sold" ] ()
   end
 
   module Order_status = struct
@@ -45,7 +37,6 @@ module Schema_scalar = struct
 
     let t_jsonschema =
       Json_schema.string_exn ~enum:[ "placed"; "approved"; "delivered" ] ()
-      |> Json_schema.to_ppx
     ;;
   end
 end
@@ -66,12 +57,13 @@ module Status = struct
     | Domain.Status.Sold -> "sold"
   ;;
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.string_exn ~enum:[ "available"; "pending"; "sold" ] ())
-      ~description:"Pet status"
-      ()
+  let schema =
+    Json_schema.string_exn ~enum:[ "available"; "pending"; "sold" ] ()
+    |> Json_schema.to_yojson
+    |> Json_schema.Unsafe.of_yojson
   ;;
+
+  let metadata = Metadata.v ~schema ~description:"Pet status" ()
 end
 
 module Category = struct
@@ -81,9 +73,9 @@ module Category = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata : t Metadata.t =
+  let metadata =
     Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~schema:t_jsonschema
       ~schema_name:"Category"
       ~description:"A pet category"
       ()
@@ -100,12 +92,8 @@ module Tag = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
-      ~schema_name:"Tag"
-      ~description:"A pet tag"
-      ()
+  let metadata =
+    Metadata.v ~schema:t_jsonschema ~schema_name:"Tag" ~description:"A pet tag" ()
   ;;
 
   let to_domain { id; name } = Domain.Tag.{ id; name }
@@ -138,9 +126,9 @@ module Pet = struct
     | Some _ -> Error "status must be available, pending, or sold"
   ;;
 
-  let metadata : t Metadata.t =
+  let metadata =
     Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~schema:t_jsonschema
       ~schema_name:"Pet"
       ~description:"A pet in the store"
       ()
@@ -194,9 +182,9 @@ module Tags = struct
       Ok tags
   ;;
 
-  let metadata : t Metadata.t =
+  let metadata =
     Metadata.v
-      ~schema:(Json_schema.array_exn ~min_items:1 ~items:(Json_schema.string_exn ()) ())
+      ~schema:(Json_schema.list_exn ~min_items:1 ~items:(Json_schema.string_exn ()) ())
       ~description:"Comma-separated tags to filter by"
       ()
   ;;
@@ -205,11 +193,8 @@ end
 module Pet_list = struct
   type t = Pet.t list [@@deriving to_yojson, jsonschema]
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
-      ~description:"Pets matching the filter"
-      ()
+  let metadata =
+    Metadata.v ~schema:t_jsonschema ~description:"Pets matching the filter" ()
   ;;
 
   let of_domain pets = List.map pets ~f:Pet.of_domain
@@ -224,9 +209,9 @@ module Pagination = struct
     }
   [@@deriving to_yojson, jsonschema]
 
-  let metadata : t Metadata.t =
+  let metadata =
     Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~schema:t_jsonschema
       ~schema_name:"Pagination"
       ~description:"Pagination metadata"
       ()
@@ -244,9 +229,9 @@ module Pet_page = struct
     }
   [@@deriving to_yojson, jsonschema]
 
-  let metadata : t Metadata.t =
+  let metadata =
     Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~schema:t_jsonschema
       ~schema_name:"PetPage"
       ~description:"One page of pets matching the query"
       ()
@@ -266,7 +251,7 @@ module Inventory = struct
     `Assoc (List.map inventory ~f:(fun (status, count) -> status, `Int count))
   ;;
 
-  let metadata : t Metadata.t =
+  let metadata =
     Metadata.v
       ~schema:(Json_schema.dictionary ~values:(Json_schema.integer_exn ~format:`Int32 ()))
       ~description:"Pet quantities keyed by lifecycle status"
@@ -305,9 +290,9 @@ module Order = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata : t Metadata.t =
+  let metadata =
     Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~schema:t_jsonschema
       ~schema_name:"Order"
       ~description:"A store order for a pet"
       ()
@@ -365,12 +350,8 @@ module User = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
-      ~schema_name:"User"
-      ~description:"A Petstore user"
-      ()
+  let metadata =
+    Metadata.v ~schema:t_jsonschema ~schema_name:"User" ~description:"A Petstore user" ()
   ;;
 
   let to_domain ?username:user_identity user =
@@ -410,11 +391,8 @@ end
 module User_list = struct
   type t = User.t list [@@deriving yojson, jsonschema]
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
-      ~description:"Users to create atomically"
-      ()
+  let metadata =
+    Metadata.v ~schema:t_jsonschema ~description:"Users to create atomically" ()
   ;;
 
   let to_domain users = users |> List.map ~f:User.to_domain |> Result.all
@@ -423,11 +401,8 @@ end
 module Login_token = struct
   type t = string [@@deriving to_yojson, jsonschema]
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
-      ~description:"Authenticated session token"
-      ()
+  let metadata =
+    Metadata.v ~schema:t_jsonschema ~description:"Authenticated session token" ()
   ;;
 end
 
@@ -439,9 +414,9 @@ module Api_response = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata : t Metadata.t =
+  let metadata =
     Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~schema:t_jsonschema
       ~schema_name:"ApiResponse"
       ~description:"An API error"
       ()

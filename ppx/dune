@@ -1,0 +1,8 @@
+(library
+ (name typed_endpoint_ppx)
+ (public_name typed-endpoint-ppx)
+ (kind ppx_rewriter)
+ (libraries base ppxlib)
+ (ppx_runtime_libraries typed-endpoint)
+ (preprocess
+  (pps ppxlib.metaquot)))

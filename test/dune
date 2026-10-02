@@ -1,17 +1,16 @@
 (library
  (name typed_endpoint_test)
  (package typed-endpoint-testing)
- (modules invariants json_schema_test)
+ (modules invariants json_schema_test schema_dependency typed_schema_signature)
  (libraries
   base
   jsonschema
-  ppx_deriving_jsonschema.runtime
   typed-endpoint
   typed-endpoint-testing
   yojson)
  (inline_tests)
  (preprocess
-  (pps ppx_let ppx_deriving_yojson ppx_deriving_jsonschema ppx_expect)))
+  (pps ppx_let ppx_deriving_yojson typed-endpoint-ppx ppx_expect)))
 
 (test
  (name property_test)

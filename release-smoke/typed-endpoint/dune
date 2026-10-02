@@ -1,3 +1,5 @@
 (executable
  (name main)
- (libraries typed-endpoint typed-endpoint-testing))
+ (libraries typed-endpoint typed-endpoint-testing)
+ (preprocess
+  (pps ppx_deriving_yojson typed-endpoint-ppx)))

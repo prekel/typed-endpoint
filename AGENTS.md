@@ -61,18 +61,16 @@
 - Wire shape JSON-ответа задавай явным `Response_payload.S`. Не вводи
   глобальный wrapper; пагинацию и envelope оформляй как DTO соответствующего
   endpoint.
-- Для DTO сначала используй общие аннотации `ppx_deriving_yojson`: `[@default]`,
-  `[@key]` и `[@name]`. `ppx_deriving_jsonschema` понимает их и должен строить
-  схему того же wire shape; не дублируй их через `[@jsonschema.option]` или
+- Для DTO используй `ppx_deriving_yojson` вместе с `typed-endpoint-ppx` и общие
+  аннотации `[@default]`, `[@key]` и `[@name]`. Схема должна совпадать с wire
+  shape codec; не дублируй общие аннотации через `[@jsonschema.option]` или
   `[@jsonschema.key]`.
-- Ограничения, которые поддерживает `ppx_deriving_jsonschema`, задавай его
-  аннотациями на типе или поле. `Json_schema` используй для параметров,
-  заголовков, enum, collections, dictionaries и других схем без подходящего
-  DTO-типа.
-- Не редактируй сгенерированную PPX-схему как дерево `Yojson.Safe`. Для
-  недостающего scalar wire shape введи небольшой manifest type с собственным
-  `t_jsonschema`; `Json_schema.Unsafe` оставляй только для документированного
-  JSON Schema keyword, которого ещё нет в безопасном DSL.
+- Ограничения задавай через поддерживаемые `[@jsonschema.*]` аннотации. Для
+  параметров, заголовков, enum, collections, dictionaries и схем без подходящего
+  DTO-типа используй `Json_schema`.
+- Не редактируй сгенерированную PPX-схему. Поддерживай связь между схемой и
+  OCaml-типом; `Json_schema.Unsafe` оставляй для импортированных схем и keywords,
+  которых ещё нет в безопасном DSL.
 - Новый backend реализует `Typed_endpoint.Backend.S` в отдельном пакете и не
   добавляет framework-зависимость в ядро.
 - `Backend.S.body_to_string` обязан соблюдать переданный лимит без

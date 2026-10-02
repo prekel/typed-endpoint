@@ -1,6 +1,9 @@
 open! Base
+
+(** Typed JSON Schema constructors shared by endpoint metadata and OpenAPI. *)
 module Json_schema : module type of Json_schema
 
+(** OpenAPI schema, tag, and human-readable description metadata. *)
 module Metadata : sig
   (** Metadata keeps a schema tied to the OCaml wire type. [schema_name], when
       present, registers the schema in OpenAPI [components/schemas] and renders
@@ -10,7 +13,7 @@ module Metadata : sig
   (** Creates metadata for exactly ['a]. [schema_name] opts into a reusable
       OpenAPI component; names are validated during compilation. *)
   val v
-    :  schema:Json_schema.t
+    :  schema:'a Json_schema.t
     -> ?schema_name:string
     -> ?tags:string list
     -> description:string
@@ -96,13 +99,19 @@ end
     request. The identity type belongs to the application; the HTTP core only
     carries it and never performs runtime type lookup. *)
 module Principal : sig
+  (** Opaque identity paired with request-scoped authorization scopes. *)
   type 'identity t
 
   (** Creates a principal with a deterministic, duplicate-free scope list. *)
   val v : ?scopes:string list -> identity:'identity -> unit -> 'identity t
 
+  (** Extracts the application-defined identity. *)
   val identity : 'identity t -> 'identity
+
+  (** Returns scopes in their stored order without duplicates. *)
   val scopes : _ t -> string list
+
+  (** Tests whether the principal carries [scope]. *)
   val has_scope : _ t -> string -> bool
 end
 
@@ -110,6 +119,7 @@ end
     [path_template] uses OpenAPI-style captures such as [/pet/{petId}], never
     the raw request target. *)
 module Route_info : sig
+  (** Stable route metadata passed to runtime interceptors. *)
   type t = private
     { operation_id : string option
     ; method_ : string
@@ -158,6 +168,7 @@ end
 (** A wire type carrying the schema and documentation used by OpenAPI. Keeping
     the metadata typed prevents accidentally passing metadata for another DTO. *)
 module type Metadatable = sig
+  (** OCaml value represented by the accompanying metadata. *)
   type t
 
   (** The runtime JSON shape and documentation for [t]. *)
@@ -167,6 +178,7 @@ end
 (** HTTP methods accepted by typed and runtime-only routes. [`Other] preserves
     extension methods without coupling the core to a backend library. *)
 module Method : sig
+  (** Supported methods, including extension methods. *)
   type t =
     [ `GET
     | `POST
@@ -264,9 +276,11 @@ module Status : sig
     | `Network_connect_timeout_error
     ]
 
+  (** Converts a supported status token to its numeric HTTP code. *)
   val code : [< t ] -> int
 end
 
+(** Capabilities every concrete HTTP server adapter must provide. *)
 module Backend : sig
   (** Minimal capability contract implemented by each HTTP adapter. Application
       code normally consumes an existing backend rather than implementing this
@@ -275,6 +289,7 @@ module Backend : sig
     (** Native request and response values owned by the HTTP framework. *)
     type req
 
+    (** Native response value returned by the backend. *)
     type resp
 
     (** Backend effect. Lwt adapters use [type 'a io = 'a Lwt.t]; direct-style
@@ -322,8 +337,13 @@ module Backend : sig
         their canonical media types. *)
     val respond_empty : ?status:Status.t -> unit -> resp io
 
+    (** Emits a UTF-8 plain-text response. *)
     val respond_string : ?status:Status.t -> string -> resp io
+
+    (** Emits an HTML response using the backend's canonical HTML media type. *)
     val respond_html : ?status:Status.t -> string -> resp io
+
+    (** Emits a JSON response using the backend's canonical JSON media type. *)
     val respond_json : ?status:Status.t -> Yojson.Safe.t -> resp io
 
     (** Combines routers while preserving declaration order. Runtime assembly
@@ -337,6 +357,7 @@ end
 
 (** A response returned by a handler violates its declared status contract. *)
 module Runtime_error : sig
+  (** Runtime response-contract or response-header failure. *)
   type t =
     | Undeclared_response_case of
         { meth : string
@@ -359,19 +380,22 @@ exception Runtime_error of Runtime_error.t
 (** Codecs shared by path and query parameters. A codec is the single source
     for runtime parsing and the parameter's OpenAPI schema. *)
 module Parameter : sig
+  (** Scalar query and path codec signature. *)
   module type S = sig
+    (** OCaml value parsed from one request parameter. *)
     type t
 
     (** Parses one percent-decoded path or query value. [Error message] becomes
         part of the configured decode-error response. *)
     val of_string : string -> (t, string) Result.t
 
+    (** Schema and description used to document the decoded value. *)
     include Metadatable with type t := t
   end
 
   (** Builds a first-class codec without requiring a named module. *)
   val v
-    :  schema:Json_schema.t
+    :  schema:'a Json_schema.t
     -> ?schema_name:string
     -> ?tags:string list
     -> description:string
@@ -388,6 +412,7 @@ module Parameter : sig
     -> unit
     -> (module S with type t = string)
 
+  (** Parses a decimal OCaml integer and documents an integer schema. *)
   val int
     :  ?schema_name:string
     -> ?tags:string list
@@ -395,6 +420,7 @@ module Parameter : sig
     -> unit
     -> (module S with type t = int)
 
+  (** Parses a decimal 64-bit integer and documents an int64 schema. *)
   val int64
     :  ?schema_name:string
     -> ?tags:string list
@@ -402,6 +428,7 @@ module Parameter : sig
     -> unit
     -> (module S with type t = int64)
 
+  (** Parses a finite floating-point value and documents a number schema. *)
   val float
     :  ?schema_name:string
     -> ?tags:string list
@@ -409,6 +436,7 @@ module Parameter : sig
     -> unit
     -> (module S with type t = float)
 
+  (** Parses only lowercase true and false. *)
   val bool
     :  ?schema_name:string
     -> ?tags:string list
@@ -421,17 +449,24 @@ end
     are validated during compilation; values emitted by responses are rejected
     at runtime if they contain CR or LF. *)
 module Header : sig
+  (** Codec for one header value and the schema exposed in OpenAPI. *)
   module type S = sig
+    (** OCaml value represented by one header field. *)
     type t
 
+    (** Parses one incoming header value. *)
     val of_string : string -> (t, string) Result.t
+
+    (** Formats a typed value for a response header. *)
     val to_string : t -> string
 
+    (** Associates the header value type with its schema and documentation. *)
     include Metadatable with type t := t
   end
 
+  (** Creates a first-class bidirectional codec for a header value. *)
   val v
-    :  schema:Json_schema.t
+    :  schema:'a Json_schema.t
     -> ?schema_name:string
     -> ?tags:string list
     -> description:string
@@ -440,6 +475,7 @@ module Header : sig
     -> unit
     -> (module S with type t = 'a)
 
+  (** Creates a string header codec. *)
   val string
     :  ?schema_name:string
     -> ?tags:string list
@@ -447,6 +483,7 @@ module Header : sig
     -> unit
     -> (module S with type t = string)
 
+  (** Creates an integer header codec. *)
   val int
     :  ?schema_name:string
     -> ?tags:string list
@@ -454,6 +491,7 @@ module Header : sig
     -> unit
     -> (module S with type t = int)
 
+  (** Creates an int64 header codec. *)
   val int64
     :  ?schema_name:string
     -> ?tags:string list
@@ -461,6 +499,7 @@ module Header : sig
     -> unit
     -> (module S with type t = int64)
 
+  (** Creates a boolean header codec. *)
   val bool
     :  ?schema_name:string
     -> ?tags:string list
@@ -468,9 +507,11 @@ module Header : sig
     -> unit
     -> (module S with type t = bool)
 
-  (** A required header contributes ['a] to the handler argument list. *)
+  (** Typed declaration of a named header and its codec. *)
   type 'a t
 
+  (** Creates a required header declaration, which contributes ['a] to the
+      handler argument list when used as a request header. *)
   val required : string -> (module S with type t = 'a) -> 'a t
 
   (** An optional header contributes ['a option] to the handler argument list
@@ -478,42 +519,58 @@ module Header : sig
   val optional : string -> (module S with type t = 'a) -> 'a option t
 end
 
+(** JSON request-payload codec signature consumed by {!Make.Request.json}. *)
 module Request_payload : sig
-  (** A JSON request DTO. [of_yojson] runs only after media type, size, and JSON
-      syntax checks have succeeded. *)
+  (** Codec signature implemented by JSON request DTOs. Its decoder runs only
+      after media type, body-size, and JSON syntax checks have succeeded. *)
   module type S = sig
+    (** OCaml representation decoded from the JSON body. *)
     type t
 
+    (** Documents the payload schema and metadata. *)
     include Metadatable with type t := t
 
+    (** Decodes one already-parsed JSON value into the request DTO. *)
     val of_yojson : Yojson.Safe.t -> (t, string) Result.t
   end
 end
 
+(** JSON response-payload codec signature consumed by {!Make.Response.json}. *)
 module Response_payload : sig
-  (** A JSON response DTO. The declared schema must describe the value emitted
-      by [to_yojson]. *)
+  (** Codec signature implemented by JSON response DTOs. The declared schema
+      must describe the value emitted by [to_yojson]. *)
   module type S = sig
+    (** OCaml representation encoded in the JSON body. *)
     type t
 
+    (** Documents the payload schema and metadata. *)
     include Metadatable with type t := t
 
+    (** Encodes the response DTO as its declared JSON wire shape. *)
     val to_yojson : t -> Yojson.Safe.t
   end
 end
 
 (** Convenience signature for DTOs used in both request and response bodies. *)
 module Json_payload : sig
+  (** Codec signature implemented by DTOs used in both request and response
+      bodies. *)
   module type S = sig
+    (** OCaml representation used for both request and response bodies. *)
     type t
 
+    (** Documents the payload schema and metadata. *)
     include Metadatable with type t := t
 
+    (** Decodes one JSON value into the DTO. *)
     val of_yojson : Yojson.Safe.t -> (t, string) Result.t
+
+    (** Encodes the DTO using the same wire shape documented by metadata. *)
     val to_yojson : t -> Yojson.Safe.t
   end
 end
 
+(** Failures reported before an endpoint handler is invoked. *)
 module Decode_error : sig
   (** Failures produced before the user handler runs. They map to 400, 413, or
       415 according to the constructor; applications control only the JSON
@@ -549,6 +606,7 @@ module Make (B : Backend.S) : sig
         services. Open [Io.Let_syntax] to use [ppx_let]. *)
   module Io : Base.Monad.S with type 'a t = 'a B.io
 
+  (** Request-body declarations and runtime decoding. *)
   module Request : sig
     (** Runtime request decoding paired with its OpenAPI request-body
             contract. *)
@@ -570,6 +628,7 @@ module Make (B : Backend.S) : sig
     val binary : ?max_body_bytes:int -> description:string -> unit -> string t
   end
 
+  (** Response-body declarations and typed response cases. *)
   module Response : sig
     (** Runtime response encoding paired with its OpenAPI content contract. *)
     type 'a t
@@ -621,6 +680,7 @@ module Make (B : Backend.S) : sig
           handler branches. *)
   val respond : ('status, 'a) Response.case -> 'a -> reply B.io
 
+  (** Typed values and guards resolved before request decoding. *)
   module Context : sig
     (** A typed computation performed once before parameter and body
             decoding. Contexts form an applicative: their complete structure is
@@ -643,17 +703,26 @@ module Make (B : Backend.S) : sig
     (** Syntax support for [let%map] and simultaneous [and] bindings from
             [ppx_let]. Bindings retain left-to-right resolution order. *)
     module Let_syntax : sig
+      (** Operators recognized by the outer let-map syntax. *)
       val return : 'a -> 'a t
+
       val ( >>| ) : 'a t -> ('a -> 'b) -> 'b t
       val ( <*> ) : ('a -> 'b) t -> 'a t -> 'b t
       val ( *> ) : unit t -> 'a t -> 'a t
       val ( <* ) : 'a t -> unit t -> 'a t
 
+      (** Nested syntax required by ppx_let for applicative contexts. *)
       module Let_syntax : sig
+        (** Returns a context containing one value. *)
         val return : 'a -> 'a t
+
+        (** Maps over the value produced by a context. *)
         val map : 'a t -> f:('a -> 'b) -> 'b t
+
+        (** Resolves both contexts from left to right. *)
         val both : 'a t -> 'b t -> ('a * 'b) t
 
+        (** Marker module used by ppx_let to open the right-hand side. *)
         module Open_on_rhs : sig end
       end
     end
@@ -663,6 +732,7 @@ module Make (B : Backend.S) : sig
     val request : B.req t
   end
 
+  (** Constructors for application-wide and request-scoped dependencies. *)
   module Dependency : sig
     (** Injects an immutable application dependency into every request. *)
     val value : 'a -> 'a Context.t
@@ -671,6 +741,7 @@ module Make (B : Backend.S) : sig
     val of_request : (B.req -> 'a B.io) -> 'a Context.t
   end
 
+  (** Authentication and authorization checks represented in the route contract. *)
   module Guard : sig
     (** Builds a guard whose successful typed context is passed to the handler.
             Rejections are rendered with [response] and included in OpenAPI.
@@ -696,6 +767,7 @@ module Make (B : Backend.S) : sig
       -> 'identity Principal.t Context.t
   end
 
+  (** Policies for rendering failures produced during automatic request decoding. *)
   module Decode_error_response : sig
     (** A typed rendering policy for failures that occur before the handler. *)
     type t
@@ -725,7 +797,9 @@ module Make (B : Backend.S) : sig
   type interceptor =
     route_info:Route_info.t -> request:B.req -> next:(unit -> B.resp B.io) -> B.resp B.io
 
+  (** A collection of routes sharing metadata and an optional context. *)
   module Group : sig
+    (** Abstract route-group value consumed by {!compile}. *)
     type t
 
     (** Creates a group of routes with shared metadata. [decode_error]
@@ -768,20 +842,37 @@ module Make (B : Backend.S) : sig
           determines an argument's location and whether it is optional. *)
   type 'a argument
 
+  (** Associates a path or query name with a typed scalar codec. *)
   val arg : string -> (module Parameter.S with type t = 'a) -> 'a argument
 
+  (** URI under construction, indexed by its legal declaration phase. *)
   type ('phase, 'handler, 'terminal) uri
+
+  (** URI closed with operation documentation. *)
   type ('handler, 'terminal) documented
+
+  (** Documented URI with its request-body contract attached. *)
   type ('handler, 'terminal, 'request) requested
+
+  (** Complete endpoint declaration ready to receive its handler. *)
   type ('handler, 'terminal, 'request) ready
 
   (** Starts a path for an arbitrary backend method. *)
   val meth : Method.t -> ([ `Path ], 'terminal, 'terminal) uri
 
+  (** Starts a GET route. *)
   val get : ([ `Path ], 'terminal, 'terminal) uri
+
+  (** Starts a POST route. *)
   val post : ([ `Path ], 'terminal, 'terminal) uri
+
+  (** Starts a PUT route. *)
   val put : ([ `Path ], 'terminal, 'terminal) uri
+
+  (** Starts a DELETE route. *)
   val delete : ([ `Path ], 'terminal, 'terminal) uri
+
+  (** Starts a PATCH route. *)
   val patch : ([ `Path ], 'terminal, 'terminal) uri
 
   (** Appends a static segment. Static and captured segments are no
@@ -840,8 +931,10 @@ module Make (B : Backend.S) : sig
     -> ('handler, 'response_handler, 'request) requested
     -> ('handler, 'terminal, 'request) ready
 
+  (** Finalizes a route whose handler receives no explicit context. *)
   val handle : 'handler -> ('handler, 'request -> reply B.io, 'request) ready -> route
 
+  (** Finalizes a route and supplies a typed context to its handler. *)
   val handle_with
     :  context:'context Context.t
     -> 'handler
@@ -854,11 +947,13 @@ module Make (B : Backend.S) : sig
     -> 'handler
     -> 'context Group.route
 
+  (** Escape hatch for backend-specific routes excluded from the contract. *)
   module Unsafe : sig
     (** Adds a runtime-only route that is deliberately absent from OpenAPI. *)
     val route : meth:Method.t -> path:string -> handler:(B.req -> B.resp B.io) -> route
   end
 
+  (** Errors that prevent route compilation. *)
   module Compile_error : sig
     (** Static contract violations found before a backend application or
             OpenAPI document is exposed. Errors are accumulated when possible. *)
@@ -942,7 +1037,9 @@ module Make (B : Backend.S) : sig
     val to_string : t -> string
   end
 
+  (** Successfully validated routes ready for backend and OpenAPI rendering. *)
   module Compiled : sig
+    (** Abstract compiled contract and runtime route collection. *)
     type t
 
     (** Builds the backend-specific runtime application. *)

@@ -1,10 +1,9 @@
 open! Base
-open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 module Json_schema = Json_schema
 
 module Metadata = struct
   type 'a t =
-    { schema : Json_schema.t
+    { schema : 'a Json_schema.t
     ; schema_name : string option
     ; description : string
     ; tags : string list
@@ -302,7 +301,7 @@ module Parameter = struct
 
   let v
         (type a)
-        ~schema
+        ~(schema : a Json_schema.t)
         ?schema_name
         ?tags
         ~description
@@ -343,7 +342,7 @@ module Parameter = struct
 
   let int64 ?schema_name ?tags ~description () =
     v
-      ~schema:(Json_schema.integer_exn ~format:`Int64 ())
+      ~schema:(Json_schema.int64_exn ~format:`Int64 ())
       ?schema_name
       ?tags
       ~description
@@ -397,7 +396,7 @@ module Header = struct
 
   let v
         (type a)
-        ~schema
+        ~(schema : a Json_schema.t)
         ?schema_name
         ?tags
         ~description
@@ -442,7 +441,7 @@ module Header = struct
 
   let int64 ?schema_name ?tags ~description () =
     v
-      ~schema:(Json_schema.integer_exn ~format:`Int64 ())
+      ~schema:(Json_schema.int64_exn ~format:`Int64 ())
       ?schema_name
       ?tags
       ~description
@@ -540,11 +539,27 @@ module Default_decode_error_payload = struct
     { code : string
     ; message : string
     }
-  [@@deriving to_yojson, jsonschema]
+  [@@deriving to_yojson]
+
+  let schema =
+    (* The safe schema DSL has no fixed-property object constructor. This is
+       the shape generated for this record by ppx_deriving_jsonschema 0.0.8. *)
+    Json_schema.Unsafe.of_yojson
+      (`Assoc
+          [ "type", `String "object"
+          ; ( "properties"
+            , `Assoc
+                [ "message", `Assoc [ "type", `String "string" ]
+                ; "code", `Assoc [ "type", `String "string" ]
+                ] )
+          ; "required", `List [ `String "message"; `String "code" ]
+          ; "additionalProperties", `Bool false
+          ])
+  ;;
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~schema
       ~schema_name:"TypedEndpointDecodeError"
       ~description:"A request rejected before the endpoint handler runs"
       ()

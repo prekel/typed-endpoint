@@ -5,6 +5,7 @@ open! Base
     This module deliberately contains no JSON or HTTP concerns. Transport
     adapters convert DTOs at the route boundary. *)
 
+(** Lifecycle states shared by pet commands, filters, and inventory. *)
 module Status : sig
   (** Lifecycle state of a pet. *)
   type t =
@@ -16,6 +17,7 @@ module Status : sig
   val equal : t -> t -> bool
 end
 
+(** Domain category value attached to a pet. *)
 module Category : sig
   (** Optional category attributes associated with a pet. *)
   type t =
@@ -24,6 +26,7 @@ module Category : sig
     }
 end
 
+(** Domain tag value attached to a pet. *)
 module Tag : sig
   (** Optional tag attributes associated with a pet. *)
   type t =
@@ -32,6 +35,7 @@ module Tag : sig
     }
 end
 
+(** Pet aggregate values and mutable business attributes. *)
 module Pet : sig
   (** Editable business attributes supplied when a pet is created or updated.
       Identity is intentionally kept outside this type so the service owns ID
@@ -51,14 +55,17 @@ module Pet : sig
     }
 end
 
+(** Order values and order-specific lifecycle states. *)
 module Order : sig
   (** Lifecycle state of a store order. *)
   module Status : sig
+    (** State transitions supported by the store order workflow. *)
     type t =
       | Placed
       | Approved
       | Delivered
 
+    (** Structural equality for order-state comparisons. *)
     val equal : t -> t -> bool
   end
 
@@ -79,6 +86,7 @@ module Order : sig
     }
 end
 
+(** User profile values keyed by username. *)
 module User : sig
   (** Editable user profile and credentials. The username is kept outside this
       record because it is the service-level identity. *)
@@ -99,6 +107,7 @@ module User : sig
     }
 end
 
+(** Validated, bounded pagination input. *)
 module Page_request : sig
   (** Validated pagination input. Pages are one-based; limits are capped to
       protect the service from accidentally unbounded collection reads. *)
@@ -126,6 +135,7 @@ module Page_request : sig
   val limit : t -> int
 end
 
+(** Result of applying a validated page request to a collection. *)
 module Page : sig
   (** One deterministic page of domain values. *)
   type 'a t =

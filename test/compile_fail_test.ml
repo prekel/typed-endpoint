@@ -16,7 +16,7 @@ let run_compiler ~root fixture =
     ]
   in
   let package =
-    "base,cohttp,uri,yojson,ppx_deriving_jsonschema.runtime,ppx_deriving_yojson.runtime,ppx_here.runtime-lib"
+    "base,cohttp,uri,yojson,ppx_deriving_yojson.runtime,ppx_here.runtime-lib"
   in
   let arguments =
     [ "ocamlfind"; "ocamlc"; "-stop-after"; "typing"; "-package"; package ]

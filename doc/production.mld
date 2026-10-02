@@ -59,21 +59,27 @@ error boundary.
 
 {1 OpenAPI}
 
-Публичные metadata принимают абстрактный [Json_schema.t], поэтому прикладной
-код не зависит от внутреннего представления PPX или [Yojson.Safe]. Источник
-схемы выбирается в следующем порядке:
+Публичные metadata принимают абстрактный ['a Json_schema.t], где ['a] — тип
+DTO. Источник схемы выбирается в следующем порядке:
 
-- DTO и его wire shape описываются [[@@deriving yojson, jsonschema]]; общие
-  [@default], [@key] и [@name] не дублируются schema-specific аннотациями;
-- ограничения поля, которые знает [ppx_deriving_jsonschema], задаются
+- DTO и его wire shape описываются [[@@deriving yojson, jsonschema]] с пакетом
+  [typed-endpoint-ppx]; общие [@default], [@key] и [@name] не дублируются
+  schema-specific аннотациями;
+- ограничения поля задаются
   [@jsonschema.format], [@jsonschema.minimum] и аналогичными аннотациями;
+- [@jsonschema.title] и [@jsonschema.description] документируют DTO, поля и
+  варианты; [@jsonschema.attrs] также принимает эти две аннотации;
+- строгие record schemas задаются атрибутами
+  [@@jsonschema.disallow_extra_fields] или [@jsonschema.disallow_extra_fields]
+  на constructor с inline record;
 - standalone параметры, headers, enum, массивы и dictionaries собираются
   конструкторами [Json_schema];
-- отсутствующий у PPX scalar format оформляется manifest type с явным
-  [t_jsonschema = Json_schema.to_ppx schema].
+- схемы нетронутого [ppx_deriving_jsonschema] импортируются через
+  [Json_schema.Unsafe.of_ppx], а произвольные JSON Schema keywords — через
+  [Json_schema.Unsafe.of_yojson].
 
-[Json_schema.Unsafe.of_yojson] является локальным escape hatch для keyword,
-которого ещё нет в DSL. Его нельзя использовать для постобработки
+[Json_schema.Unsafe] — явно небезопасный мост для внешнего представления или
+keyword, которого ещё нет в DSL. Не используйте его для постобработки
 сгенерированной схемы: такая правка расходится с типом DTO и легко ломается при
 обновлении PPX. Конструкторы без [_exn] проверяют противоречивые bounds,
 отрицательные длины, пустые format/enum, дубликаты enum и default вне

@@ -1,4 +1,4 @@
-(** Opium 0.18 backend for {!Typed_endpoint}.
+(** Opium 0.17.1 and 0.18 backend for {!Typed_endpoint}.
 
     Compiled endpoint declarations produce an immutable route collection.
     Attach it once with {!mount}; framework middleware, connection lifecycle

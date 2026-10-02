@@ -39,7 +39,6 @@ let response_json response =
 ;;
 
 let validate_schema_fragment ~location schema =
-  let schema = Yojson.Safe.to_basic schema in
   match Jsonschema.validate Jsonschema.draft2020_12_validator schema with
   | Ok () -> ()
   | Error error ->
@@ -47,7 +46,8 @@ let validate_schema_fragment ~location schema =
 ;;
 
 let validate_openapi_schemas document =
-  let open Yojson.Safe.Util in
+  let document = Yojson.Safe.to_basic document in
+  let open Yojson.Basic.Util in
   let components = document |> member "components" |> member "schemas" |> to_assoc in
   List.iter components ~f:(fun (name, schema) ->
     validate_schema_fragment ~location:("#/components/schemas/" ^ name) schema);
@@ -61,7 +61,7 @@ let validate_openapi_schemas document =
     | `List values ->
       List.iteri values ~f:(fun index value ->
         visit (path ^ "/" ^ Int.to_string index) value)
-    | `Null | `Bool _ | `Int _ | `Intlit _ | `Float _ | `String _ -> ()
+    | _ -> ()
   in
   visit "#" document
 ;;

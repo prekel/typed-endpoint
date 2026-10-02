@@ -1,5 +1,8 @@
 open! Base
+
+(** Principal type shared with authorization guards and route contexts. *)
 module Petstore_principal = Principal
+
 open Typed_endpoint
 
 (** Shared controller policies. Context composition injects a controller only
@@ -9,6 +12,7 @@ module Make (B : Backend.S) : sig
   (** Endpoint instance whose context types are returned below. *)
   module Endpoint : module type of Typed_endpoint.Make (B)
 
+  (** Context values available only after an authorization guard succeeds. *)
   module Secured : sig
     (** Protected request context. [dependency] remains the statically selected
         application value; principal and request ID are request-scoped. *)
@@ -18,8 +22,13 @@ module Make (B : Backend.S) : sig
       ; request_id : string option
       }
 
+    (** Returns the application dependency captured when the group was built. *)
     val dependency : 'a t -> 'a
+
+    (** Returns the authenticated caller for this request. *)
     val principal : _ t -> Petstore_principal.t
+
+    (** Returns the request correlation ID when access logging supplied one. *)
     val request_id : _ t -> string option
   end
 

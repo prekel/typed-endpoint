@@ -1,19 +1,20 @@
 open! Base
 
-(** Deterministic in-memory backend for exercising compiled endpoints without
-    starting an HTTP framework or server.
-
-    The backend is direct-style and owns all request and response strings it
-    creates. It intentionally models only the boundary required by
-    {!Typed_endpoint.Backend.S}; framework middleware, streaming and connection
-    behavior must be tested in the corresponding adapter. Header lookup is
-    case-insensitive and request-body byte limits are enforced before payload
-    decoding. *)
+(** Immutable request captured by the deterministic in-memory backend. It owns
+    its request and response strings and models only the boundary required by
+    {!Typed_endpoint.Backend.S}; framework middleware, streaming, and connection
+    behavior belong in adapter tests. Header lookup is case-insensitive and
+    request-body byte limits are enforced before payload decoding. *)
 type request
 
+(** Fully buffered response captured by the in-memory backend. *)
 type response
+
+(** In-memory route collection produced by endpoint compilation. *)
 type app_builder
 
+(** Backend capabilities specialized to the in-memory request and response
+    values. *)
 include
   Typed_endpoint.Backend.S
   with type req = request
@@ -21,6 +22,7 @@ include
    and type 'a io = 'a
    and type app_builder := app_builder
 
+(** Request construction and inspection helpers. *)
 module Request : sig
   (** Creates a complete in-memory request. [target] may contain both a path and
       query string. Duplicate headers are preserved in insertion order; lookup
@@ -40,6 +42,7 @@ module Request : sig
   val target : request -> string
 end
 
+(** Response inspection helpers. *)
 module Response : sig
   (** Returns the numeric HTTP status code. *)
   val status : response -> int
@@ -84,9 +87,12 @@ end
 (** Reusable black-box laws for every {!Typed_endpoint.Backend.S}. Adapter
     tests provide only request/response conversion and effect execution. *)
 module Backend_conformance : sig
+  (** Adapter-specific operations needed to execute shared backend laws. *)
   module type Harness = sig
+    (** Backend under test. *)
     module Backend : Typed_endpoint.Backend.S
 
+    (** Compiles and dispatches a request using the backend under test. *)
     val call
       :  Backend.app_builder
       -> ?headers:(string * string) list
@@ -95,11 +101,17 @@ module Backend_conformance : sig
       -> string
       -> Backend.resp Backend.io
 
+    (** Extracts the numeric response status. *)
     val status : Backend.resp -> int
+
+    (** Looks up a response header case-insensitively. *)
     val header : Backend.resp -> string -> string option
+
+    (** Reads the response body in the backend's effect. *)
     val body : Backend.resp -> string Backend.io
   end
 
+  (** Test suite generated for one adapter harness. *)
   module Make (H : Harness) : sig
     (** Runs bounded-body, representation, routing, decode-error, typed-header,
         duplicate-query, and declaration-order checks. *)

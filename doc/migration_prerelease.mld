@@ -6,15 +6,28 @@
 {1 JSON Schema}
 
 [Metadata.v], [Parameter.v], [Header.v] и внутренний контракт теперь принимают
-[Json_schema.t], а не открытый [Ppx_deriving_jsonschema_runtime.t]. Схему из
-PPX нужно импортировать явно:
+['a Json_schema.t], параметризованный типом значения. Для DTO подключите
+отдельный пакет [typed-endpoint-ppx] вместе с [ppx_deriving_yojson] и передавайте
+сгенерированную схему напрямую:
 
 {[
 Metadata.v
-  ~schema:(Json_schema.of_ppx t_jsonschema)
+  ~schema:t_jsonschema
   ~description:"Pet"
   ()
 ]}
+
+В Dune укажите [(pps ppx_deriving_yojson typed-endpoint-ppx)]. Встроенный
+deriver поддерживает OCaml 4.14.1 и wire-атрибуты [@key], [@name] и [@default].
+Схемы записей по умолчанию допускают дополнительные поля. Запретить их для
+отдельной записи можно атрибутом [@@jsonschema.disallow_extra_fields], а для
+inline-записи варианта — [@jsonschema.disallow_extra_fields] на конструкторе.
+Старый [@@jsonschema.allow_extra_fields] оставлен как no-op для совместимости;
+совместное использование атрибутов разрешения и запрета считается ошибкой.
+Если нужно согласовать схему со строгим decoder-ом, задайте
+[jsonschema { strict = true }]. Для permissive-режима задайте
+[strict = false] обоим deriver-ам:
+[[@@deriving yojson { strict = false }, jsonschema { strict = false }]].
 
 Простые ручные деревья заменяются конструкторами:
 
@@ -31,16 +44,17 @@ Json_schema.integer_exn ~minimum:1 ()
 [~format:`Double]. Для vendor-specific значения используйте
 [~format:(`Custom "vendor-format")].
 
-Обратный мост [Json_schema.to_ppx] нужен custom scalar-модулю, чей
-[t_jsonschema] читает PPX родительского DTO. Произвольное JSON-представление
-доступно только как явно небезопасный [Json_schema.Unsafe.of_yojson]; обычный
-код metadata не должен зависеть от него. При сравнении именованных schemas
-порядок полей JSON object больше не создаёт ложный конфликт.
+Если нужно оставить нетронутый [ppx_deriving_jsonschema] (например, в
+проекте на OCaml 5), его схему импортируйте через
+[Json_schema.Unsafe.of_ppx]. Произвольные схемы из [Yojson.Safe.t] доступны
+через [Json_schema.Unsafe.of_yojson]. Обратный мост [Json_schema.to_ppx]
+оставлен для проектов, которым требуется старое представление схемы. При
+сравнении именованных schemas порядок полей JSON object не создаёт ложный
+конфликт.
 
-В record DTO удалите пары [@default None] + [@jsonschema.option] и
-[@key "..."] + [@jsonschema.key "..."]. Оставьте общую аннотацию
-[ppx_deriving_yojson]: текущий [ppx_deriving_jsonschema] использует её для той
-же required/key семантики.
+В record DTO используйте общие аннотации [ppx_deriving_yojson]:
+[@default None] управляет значением при пропущенном поле и schema default,
+[@key "..."] задаёт wire-имя поля, [@name "..."] — wire-имя варианта.
 
 {1 Response cases}
 

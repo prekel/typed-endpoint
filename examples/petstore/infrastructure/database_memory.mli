@@ -4,6 +4,7 @@ open! Base
     commit atomically when their starting version is still current; otherwise
     they fail with an optimistic concurrency conflict. *)
 module Make (Io : Base.Monad.S) : sig
+  (** Provides connection and transaction operations for the in-memory state. *)
   include Database.S with type 'a io = 'a Io.t
 
   (** Stateless pet repository over a connection scoped by this database. *)

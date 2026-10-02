@@ -1,17 +1,21 @@
 open! Base
 
-(** Native direct-style backend for cohttp-eio 6.3.
-
-    The route table and router are internal to this package. Typed-endpoint
-    owns neither the Eio switch nor the network resources used by a server;
-    their lifetime must enclose all calls made through {!server}. Application
-    middleware can be supplied to {!server} or {!dispatch}; connection-level
-    behavior belongs around the returned [Cohttp_eio.Server.t], outside the
-    framework-agnostic core. *)
+(** Request value for the native direct-style cohttp-eio 6.3 backend. Its body
+    is consumed by one dispatch. The route table and router are internal to
+    this package. *)
 type req
 
+(** Buffered Cohttp response produced by a typed handler. *)
 type resp
+
+(** Eio handlers are direct-style and therefore use the identity effect. *)
 type 'a io = 'a
+
+(** Compiled route table consumed by {!dispatch} or {!server}. Typed-endpoint
+    owns neither the Eio switch nor the network resources used by a server;
+    their lifetime must enclose all calls made through {!server}. Application
+    middleware can wrap {!server} or {!dispatch}, while connection-level
+    behavior belongs around the returned [Cohttp_eio.Server.t]. *)
 type app_builder
 
 (** A direct-style wrapper around one typed-endpoint dispatch. Middleware is
@@ -28,6 +32,7 @@ include
    and type 'a io := 'a io
    and type app_builder := app_builder
 
+(** Accessors for the raw request available during dispatch. *)
 module Request : sig
   (** Returns the Cohttp request whose lifetime is that of the current handler.
       Do not retain it after the handler returns. *)
@@ -37,6 +42,7 @@ module Request : sig
   val header : req -> string -> string option
 end
 
+(** Inspection and immutable header updates for backend responses. *)
 module Response : sig
   (** Returns the status selected by the typed handler. *)
   val status : resp -> Http.Status.t

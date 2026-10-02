@@ -30,6 +30,7 @@ archive_sha256="$(awk '{ print $1 }' "$checksum")"
 
 for package in \
   typed-endpoint \
+  typed-endpoint-ppx \
   typed-endpoint-testing \
   typed-endpoint-opium \
   typed-endpoint-dream \

@@ -92,6 +92,28 @@ let handler =
 ;;
 
 let () =
+  let document =
+    compile_exn [ Group.make ~description:"Default decode error" [ route ] ]
+    |> Compiled.openapi
+  in
+  let open Yojson.Safe.Util in
+  let schema =
+    document
+    |> member "components"
+    |> member "schemas"
+    |> member "TypedEndpointDecodeError"
+  in
+  assert (String.equal (schema |> member "type" |> to_string) "object");
+  assert (
+    List.equal
+      String.equal
+      (schema |> member "required" |> to_list |> List.map ~f:to_string)
+      [ "message"; "code" ]);
+  assert (Bool.equal (schema |> member "additionalProperties" |> to_bool) false);
+  let properties = schema |> member "properties" in
+  List.iter [ "message"; "code" ] ~f:(fun name ->
+    assert (
+      String.equal (properties |> member name |> member "type" |> to_string) "string"));
   let empty_middleware_count =
     Opium.App.empty |> Opium.App.to_rock |> Opium.Std.Rock.App.middlewares |> List.length
   in

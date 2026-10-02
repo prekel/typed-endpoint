@@ -1,5 +1,4 @@
 open! Base
-open Ppx_deriving_jsonschema_runtime.Primitives.Yojson
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_testing)
 module Io = Endpoint.Io
@@ -104,11 +103,7 @@ module Item = struct
   [@@deriving yojson, jsonschema]
 
   let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
-      ~schema_name:"Item"
-      ~description:"An item"
-      ()
+    Metadata.v ~schema:t_jsonschema ~schema_name:"Item" ~description:"An item" ()
   ;;
 
   let of_yojson = of_yojson
@@ -123,7 +118,7 @@ module Error_payload = struct
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
+      ~schema:t_jsonschema
       ~schema_name:"RequestError"
       ~description:"A request error"
       ()
@@ -773,11 +768,7 @@ module Conflicting_item = struct
   type t = string [@@deriving yojson, jsonschema]
 
   let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.of_ppx t_jsonschema)
-      ~schema_name:"Item"
-      ~description:"Wrong item"
-      ()
+    Metadata.v ~schema:t_jsonschema ~schema_name:"Item" ~description:"Wrong item" ()
   ;;
 end
 

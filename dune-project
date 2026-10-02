@@ -21,16 +21,30 @@
  (description
   "A framework-agnostic OCaml library for declaring typed HTTP routes and generating OpenAPI documents from the same definitions.")
  (depends
-  (ocaml (>= 5.1.1))
+  (ocaml (>= 4.14.1))
   base
   yojson
-  (ppx_let (>= v0.17.1))
+  (ppx_let (>= v0.16.0))
   ppx_deriving_yojson
-  (ppx_deriving_jsonschema (>= 0.0.8))
   (ocamlformat (and (= 0.29.0) :with-dev-setup))
   (ocaml-lsp-server :with-dev-setup))
  (tags
   (http routing openapi)))
+
+(package
+ (name typed-endpoint-ppx)
+ (synopsis "Yojson-compatible JSON Schema deriver for typed-endpoint")
+ (description
+  "A ppxlib deriver for typed-endpoint JSON Schema values with wire annotations compatible with ppx_deriving_yojson.")
+ (depends
+  (ocaml (>= 4.14.1))
+  (typed-endpoint (= :version))
+  (ppxlib (>= 0.35.0))
+  base
+  (ocamlformat (and (= 0.29.0) :with-dev-setup))
+  (ocaml-lsp-server :with-dev-setup))
+ (tags
+  (ppx json-schema yojson)))
 
 (package
  (name typed-endpoint-opium)
@@ -38,19 +52,16 @@
  (description
   "An Opium backend that turns typed-endpoint declarations into an Opium application.")
  (depends
-  (ocaml (>= 5.1.1))
+  (ocaml (>= 4.14.1))
   (typed-endpoint (= :version))
   (typed-endpoint-testing (and (= :version) :with-test))
   base
   cohttp
   lwt
-  (opium (= 0.18.0))
+  (opium (and (>= 0.17.1) (< 0.19.0)))
   uri
   yojson
-  (ppx_let (>= v0.17.1))
-  (ppx_deriving_yojson :with-test)
-  (ppx_deriving_jsonschema (and (>= 0.0.8) :with-test))
-  (ppx_expect :with-test))
+  (ppx_let (>= v0.16.0)))
  (tags
   (http routing openapi opium)))
 
@@ -60,16 +71,16 @@
  (description
   "A framework-free in-memory backend for testing typed-endpoint applications and examples.")
  (depends
-  (ocaml (>= 5.1.1))
+  (ocaml (>= 4.14.1))
   (typed-endpoint (= :version))
   base
   uri
   yojson
   (jsonschema (and (>= 0.1.0) :with-test))
   (qcheck :with-test)
-  (ppx_let (>= v0.17.1))
+  (ppx_let (>= v0.16.0))
   (ppx_deriving_yojson :with-test)
-  (ppx_deriving_jsonschema (and (>= 0.0.8) :with-test))
+  (typed-endpoint-ppx :with-test)
   (ocamlfind :with-test)
   (ppx_expect :with-test))
  (tags

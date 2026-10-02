@@ -18,17 +18,30 @@ JSON-модуль реализует [Request_payload.S] и/или [Response_pay
 {[
 let metadata : t Typed_endpoint.Metadata.t =
   Metadata.v
-    ~schema:(Json_schema.of_ppx t_jsonschema)
+    ~schema:t_jsonschema
     ~schema_name:"Pet"
     ~description:"A pet"
 ]}
 
-[Json_schema.t] скрывает представление схемы от публичного HTTP API. Для DTO,
-полученного через [[@@deriving yojson, jsonschema]], используйте
-[Json_schema.of_ppx]. Общие аннотации codec являются приоритетными: например,
+[Json_schema.t] скрывает представление схемы от публичного HTTP API и
+параметризован типом DTO. Для DTO подключите пакет [typed-endpoint-ppx] в Dune
+через [(pps ppx_deriving_yojson typed-endpoint-ppx)] и используйте
+[[@@deriving yojson, jsonschema]]. Полученный [t_jsonschema] передаётся
+напрямую. Общие аннотации codec являются приоритетными: например,
 поле [name : string option [@key "displayName"] [@default None]] одновременно
 задаёт wire key, отсутствие поля по умолчанию и соответствующую PPX-схему.
 Дублировать их через [@jsonschema.key] и [@jsonschema.option] не требуется.
+Схемы записей по умолчанию допускают дополнительные поля. Чтобы запретить их
+для записи, укажите [@@jsonschema.disallow_extra_fields]; для inline-записи
+внутри варианта задайте [@jsonschema.disallow_extra_fields] на конструкторе.
+Схемы от нетронутого
+{{:https://github.com/ahrefs/ppx_deriving_jsonschema}ppx_deriving_jsonschema}
+можно импортировать через [Json_schema.Unsafe.of_ppx].
+Для аннотаций используйте [@jsonschema.title "Pet"] и
+[@jsonschema.description "A store pet"]. Те же [title] и [description] можно
+задать одним атрибутом [@jsonschema.attrs { title = "Pet"; description = "A store pet" }].
+Атрибут [@jsonschema.attrs] также принимает типизированные по DTO [format],
+[minimum] и [maximum], где это применимо.
 
 Схему значения без DTO можно собрать безопасными конструкторами:
 
@@ -43,8 +56,8 @@ let page =
 
 Функции без суффикса [_exn] возвращают [Result] и подходят для динамической
 конфигурации; варианты [_exn] удобны для статической декларации модуля. Для
-custom scalar, который должна использовать PPX-схема родительского DTO,
-экспортируйте [Json_schema.to_ppx schema] как [t_jsonschema].
+custom scalar экспортируйте типизированную схему как [t_jsonschema]; обратный
+мост [Json_schema.to_ppx] оставлен для проектов, использующих внешний PPX.
 Известные форматы типизированы: используйте [~format:`Date_time],
 [~format:`Int64] или [~format:`Double]. Нестандартное расширение записывается
 явно как [~format:(`Custom "vendor-format")].

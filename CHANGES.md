@@ -1,5 +1,29 @@
 # История изменений
 
+## Unreleased
+
+### Добавлено
+
+- Отдельный `typed-endpoint-ppx`: typed JSON Schema для DTO с поддержкой OCaml
+  4.14.1 и общих wire-аннотаций `ppx_deriving_yojson`.
+- Поддержаны JSON Schema `title` и `description`, в том числе через
+  `[@jsonschema.attrs { title = ...; description = ... }]`.
+- PPX теперь собирает `Json_schema.t` через типизированные конструкторы; он не
+  генерирует дерево Yojson и не импортирует его через `Unsafe.of_yojson`.
+- Добавлены регрессии для required-семантики option alias и `$defs` из
+  рекурсивной схемы другого модуля.
+- `Json_schema.t` параметризован типом DTO; схемы из нетронутого
+  `ppx_deriving_jsonschema` импортируются через `Json_schema.Unsafe.of_ppx`.
+- Схемы записей допускают дополнительные поля по умолчанию; атрибут
+  `[@@jsonschema.disallow_extra_fields]` включает строгую проверку.
+- Удалён `~variant_as_string`, который терял payload вариантов; для вариантов
+  без payload используется `[@@jsonschema.compact_variants]`.
+
+### Изменено
+
+- Petstore и Opium adapter работают на OCaml 4.14.1; Dream и Eio по-прежнему
+  требуют OCaml 5.1.1 или новее.
+
 ## 0.1.1 — 2026-09-24
 
 - Минимальная версия OCaml снижена до 5.1.1 для всех пакетов; Eio adapter

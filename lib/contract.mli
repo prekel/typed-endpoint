@@ -48,12 +48,12 @@ module Schema : sig
       digits, dots, underscores, or hyphens. Reusing a name with a different
       schema is rejected by {!compile}. An unnamed schema is rendered inline. *)
   type t =
-    { value : Json_schema.t
+    { value : Json_schema.packed
     ; name : string option
     }
 
   (** Associates an optional component [name] with a JSON Schema value. *)
-  val v : ?name:string -> Json_schema.t -> t
+  val v : ?name:string -> 'a Json_schema.t -> t
 
   (** Structural equality of both the optional name and JSON Schema value. *)
   val equal : t -> t -> bool
@@ -295,6 +295,7 @@ type group =
     document is exposed. Compilation reports all detected errors, rather than
     stopping at the first one. *)
 module Compile_error : sig
+  (** One static validation error associated with an invalid contract. *)
   type t =
     | Duplicate_route of
         { meth : string

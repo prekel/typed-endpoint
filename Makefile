@@ -1,6 +1,6 @@
 all: build
 
-PACKAGES = ./typed-endpoint.opam ./typed-endpoint-opium.opam \
+PACKAGES = ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-opium.opam \
 	./typed-endpoint-dream.opam ./typed-endpoint-eio.opam \
 	./typed-endpoint-testing.opam
 
@@ -43,6 +43,7 @@ package: smoke
 .PHONY: smoke
 smoke:
 	opam exec -- dune build -p typed-endpoint @install @runtest
+	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-ppx @install @runtest
 	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-testing @install @runtest
 	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-testing,typed-endpoint-opium @install @runtest
 	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-testing,typed-endpoint-dream @install @runtest

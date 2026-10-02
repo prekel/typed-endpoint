@@ -152,6 +152,14 @@ dependency; connection и runtime service locator туда не попадают
 field names, status, headers, content types, decode-error shape, пустые ответы
 и router 404.
 
+## Совместимость с OCaml 4.14.1
+
+- [x] Ядро, `typed-endpoint-testing` и адаптер Opium собираются и проверяются
+  отдельно на OCaml 4.14.1.
+- [x] Добавить отдельный `typed-endpoint-ppx` для OCaml 4.14.1 с wire-семантикой
+  `ppx_deriving_yojson`, сохранив generic-типы схем и импорт внешнего JSON.
+- [x] Перенести Petstore, включая Opium entrypoint и тесты, на OCaml 4.14.1.
+
 ## Не планируется сейчас
 
 - Обязательный endpoint-specific response ADT вместо текущей типизированной

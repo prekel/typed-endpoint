@@ -6,7 +6,10 @@ open! Base
     reduced to their path before logging, so query parameters, bodies, and
     request headers are never included in the event. *)
 
+(** Logger configuration and dependencies shared by access-log events. *)
 type t
+
+(** One in-flight request event, completed exactly once by {!finish} or {!fail}. *)
 type request
 
 (** Creates an access logger. The default writer appends JSONL to [stderr].

@@ -25,15 +25,15 @@ end
 
 module Schema = struct
   type t =
-    { value : Json_schema.t
+    { value : Json_schema.packed
     ; name : string option
     }
 
-  let v ?name value = { value; name }
+  let v ?name value = { value = Json_schema.pack value; name }
 
   let equal left right =
     Option.equal String.equal left.name right.name
-    && Json_schema.equal left.value right.value
+    && Json_schema.equal_packed left.value right.value
   ;;
 end
 
