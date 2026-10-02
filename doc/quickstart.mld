@@ -62,9 +62,23 @@ custom scalar экспортируйте типизированную схему
 [~format:`Int64] или [~format:`Double]. Нестандартное расширение записывается
 явно как [~format:(`Custom "vendor-format")].
 
-[Request.json] принимает [max_body_bytes], по умолчанию 1 МиБ. Runtime сам
-выбирает 400, 413 или 415 и применяет безопасный [Decode_error_response.default].
-Формат ошибки можно заменить через [Decode_error_response.json] на endpoint,
+[Request.json], [Request.text] и [Request.binary] передают handler значение
+['a Request_body.t]. Тело не читается и [Content-Type] не проверяется, пока
+handler не вызовет [Request_body.read]. Первый вызов проверяет media type,
+читает тело с лимитом [max_body_bytes] (по умолчанию 1 МиБ для JSON) и
+возвращает [Result]; повторный вызов использует тот же результат. Например:
+
+{[
+let%bind pet = Request_body.read pet_body in
+match pet with
+| Ok pet -> respond ok pet
+| Error error -> Request_body.reject error
+]}
+
+[Request_body.reject] выбирает 400, 413 или 415 и применяет безопасный
+[Decode_error_response.default]. Ошибку можно изучить через
+[Request_body.to_decode_error] или обработать в handler самостоятельно. Формат
+автоматического ответа заменяется через [Decode_error_response.json] на endpoint,
 группу или весь [compile].
 
 Для типовых path/query-параметров используйте готовые [Parameter.string],

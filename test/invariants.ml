@@ -159,7 +159,11 @@ let echo_route ?(max_body_bytes = 64) () =
   |> documented ~operation_id:"echoItem"
   |> accepts (Request.json ~max_body_bytes (module Item))
   |> returns ok
-  |> handle @@ fun ok item -> respond ok item
+  |> handle @@ fun ok body ->
+     let%bind item = Request_body.read body in
+     match item with
+     | Ok item -> respond ok item
+     | Error error -> Request_body.reject error
 ;;
 
 let binary_route =
@@ -168,10 +172,121 @@ let binary_route =
   |> documented ~operation_id:"uploadBinary"
   |> accepts (Request.binary ~max_body_bytes:4 ~description:"Opaque bytes" ())
   |> returns ok
-  |> handle @@ fun ok bytes -> respond ok (Int.to_string (String.length bytes))
+  |> handle @@ fun ok body ->
+     let%bind bytes = Request_body.read body in
+     match bytes with
+     | Ok bytes -> respond ok (Int.to_string (String.length bytes))
+     | Error error -> Request_body.reject error
 ;;
 
 let call = Typed_endpoint_testing.Client.call
+
+module Counting_backend = struct
+  include Typed_endpoint_testing
+
+  let reads = ref 0
+
+  let body_to_string ~max_bytes request =
+    Int.incr reads;
+    Typed_endpoint_testing.body_to_string ~max_bytes request
+  ;;
+end
+
+let%expect_test "request body stays unread until read and is read only once" =
+  let module E = Make (Counting_backend) in
+  let open E in
+  let open Io.Let_syntax in
+  let ignored =
+    post / "ignored"
+    |> documented
+    |> accepts (Request.text ~description:"Body" ())
+    |> returns (case `OK (Response.text ~description:"Result" ()))
+    |> handle @@ fun ok _body -> respond ok "ignored"
+  in
+  let repeated =
+    post / "repeated"
+    |> documented
+    |> accepts (Request.text ~max_body_bytes:4 ~description:"Body" ())
+    |> returns (case `OK (Response.text ~description:"Result" ()))
+    |> handle @@ fun ok body ->
+       let%bind first = Request_body.read body in
+       let%bind second = Request_body.read body in
+       match first, second with
+       | Ok first, Ok second -> respond ok (first ^ second)
+       | Error error, Error _ -> Request_body.reject error
+       | _ -> failwith "memoized body returned inconsistent results"
+  in
+  let app =
+    compile_exn [ Group.make ~description:"Body" [ ignored; repeated ] ] |> Compiled.app
+  in
+  Counting_backend.reads := 0;
+  let ignored_response =
+    call app ~headers:[ "content-type", "application/json" ] ~body:"data" `POST "/ignored"
+  in
+  Stdlib.Printf.printf
+    "ignored=%d reads=%d\n"
+    (Typed_endpoint_testing.Response.status ignored_response)
+    !Counting_backend.reads;
+  [%expect {| ignored=200 reads=0 |}];
+  let repeated_response =
+    call app ~headers:[ "content-type", "text/plain" ] ~body:"data" `POST "/repeated"
+  in
+  Stdlib.Printf.printf
+    "repeated=%s reads=%d\n"
+    (Typed_endpoint_testing.Response.body repeated_response)
+    !Counting_backend.reads;
+  [%expect {| repeated=datadata reads=1 |}];
+  let too_large =
+    call app ~headers:[ "content-type", "text/plain" ] ~body:"large" `POST "/repeated"
+  in
+  Stdlib.Printf.printf
+    "too_large=%d reads=%d\n"
+    (Typed_endpoint_testing.Response.status too_large)
+    !Counting_backend.reads;
+  [%expect {| too_large=413 reads=2 |}]
+;;
+
+let%expect_test "deferred rejection uses endpoint, group, then compile policy" =
+  let policy kind =
+    Decode_error_response.json
+      ~payload:(module Error_payload)
+      ~map:(fun _ -> Error_payload.{ kind; message = kind })
+  in
+  let route ?decode_error path =
+    post / path
+    |> documented ?decode_error
+    |> accepts (Request.text ~description:"Body" ())
+    |> returns (case `OK (Response.empty ~description:"OK" ()))
+    |> handle @@ fun ok body ->
+       let%bind result = Request_body.read body in
+       match result with
+       | Ok _ -> respond ok ()
+       | Error error -> Request_body.reject error
+  in
+  let compiled =
+    compile_exn
+      ~decode_error:(policy "compile")
+      [ group
+          ~decode_error:(policy "group")
+          [ route ~decode_error:(policy "endpoint") "endpoint"; route "group" ]
+      ; group [ route "compile" ]
+      ]
+  in
+  let app = Compiled.app compiled in
+  let print path =
+    let response = call app ~headers:[ "content-type", "application/json" ] `POST path in
+    Stdlib.Printf.printf
+      "%d %s"
+      (Typed_endpoint_testing.Response.status response)
+      (Typed_endpoint_testing.Response.body response)
+  in
+  print "/endpoint";
+  [%expect {| 415 {"kind":"endpoint","message":"endpoint"} |}];
+  print "/group";
+  [%expect {| 415 {"kind":"group","message":"group"} |}];
+  print "/compile";
+  [%expect {| 415 {"kind":"compile","message":"compile"} |}]
+;;
 
 let%test_unit "testing backend passes the shared conformance suite" =
   Testing_conformance.run ()

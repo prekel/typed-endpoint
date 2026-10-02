@@ -2,6 +2,7 @@ open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_dream)
 module Io = Endpoint.Io
+open Io.Let_syntax
 open Endpoint
 
 module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
@@ -70,8 +71,12 @@ let route =
   |> accepts (Request.text ~description:"Body" ())
   |> returns (case `OK (Response.text ~description:"OK" ()))
   |> handle_with ~context:Context.request @@ fun id ok request body ->
-     let query = Dream.query request "q" |> Option.value ~default:"none" in
-     respond ok (String.concat ~sep:":" [ id; query; body ])
+     let%bind result = Request_body.read body in
+     match result with
+     | Error error -> Request_body.reject error
+     | Ok body ->
+       let query = Dream.query request "q" |> Option.value ~default:"none" in
+       respond ok (String.concat ~sep:":" [ id; query; body ])
 ;;
 
 let custom =

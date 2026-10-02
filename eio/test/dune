@@ -8,4 +8,6 @@
   typed-endpoint
   typed-endpoint-eio
   typed-endpoint-testing
-  yojson))
+  yojson)
+ (preprocess
+  (pps ppx_let)))

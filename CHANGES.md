@@ -1,11 +1,16 @@
 # История изменений
 
-## Unreleased
+## 0.2.0 — 2026-10-02
 
 ### Добавлено
 
-- Отдельный `typed-endpoint-ppx`: typed JSON Schema для DTO с поддержкой OCaml
-  4.14.1 и общих wire-аннотаций `ppx_deriving_yojson`.
+- Типизированный `Request_body.t` для отложенного, ограниченного и повторно
+  используемого чтения JSON, text и binary в handler; `Request_body.reject`
+  сохраняет настройку decode-error response.
+- Отдельный `typed-endpoint-ppx`: перенос и адаптация
+  [`ahrefs/ppx_deriving_jsonschema`](https://github.com/ahrefs/ppx_deriving_jsonschema)
+  для typed JSON Schema DTO с поддержкой OCaml 4.14.1 и общих wire-аннотаций
+  `ppx_deriving_yojson`.
 - Поддержаны JSON Schema `title` и `description`, в том числе через
   `[@jsonschema.attrs { title = ...; description = ... }]`.
 - PPX теперь собирает `Json_schema.t` через типизированные конструкторы; он не
@@ -21,6 +26,10 @@
 
 ### Изменено
 
+- Handler для `Request.json`, `Request.text` и `Request.binary` теперь
+  получает `Request_body.t`. Вызовите `Request_body.read` и обработайте
+  `Result`; `Request_body.reject` сохраняет настроенный ответ для ошибок
+  декодирования. Чтение и проверка `Content-Type` выполняются по требованию.
 - Petstore и Opium adapter работают на OCaml 4.14.1; Dream и Eio по-прежнему
   требуют OCaml 5.1.1 или новее.
 

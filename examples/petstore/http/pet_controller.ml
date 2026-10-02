@@ -29,16 +29,26 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
           <|> case `Unprocessable_entity (Response.json (module Dto.Api_response))
           <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
     ==>
-    fun ok bad_request conflict _unprocessable_entity service_unavailable context pet ->
-    let database = Common.Secured.dependency context in
-    match Dto.Pet.to_domain pet with
-    | Error message -> respond bad_request (Dto.Api_response.bad_request message)
-    | Ok (id, attributes) ->
-      let%bind result = Pets.add ~database ?id attributes in
-      (match result with
-       | Ok pet -> respond ok (Dto.Pet.of_domain pet)
-       | Error (`Already_exists id) -> respond conflict (Dto.Api_response.conflict id)
-       | Error (`Persistence error) -> unavailable service_unavailable error)
+    fun ok
+      bad_request
+      conflict
+      _unprocessable_entity
+      service_unavailable
+      context
+      pet_body ->
+    let%bind pet = Request_body.read pet_body in
+    match pet with
+    | Error error -> Request_body.reject error
+    | Ok pet ->
+      let database = Common.Secured.dependency context in
+      (match Dto.Pet.to_domain pet with
+       | Error message -> respond bad_request (Dto.Api_response.bad_request message)
+       | Ok (id, attributes) ->
+         let%bind result = Pets.add ~database ?id attributes in
+         (match result with
+          | Ok pet -> respond ok (Dto.Pet.of_domain pet)
+          | Error (`Already_exists id) -> respond conflict (Dto.Api_response.conflict id)
+          | Error (`Persistence error) -> unavailable service_unavailable error))
   ;;
 
   let update_pet =
@@ -55,17 +65,28 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
           <|> case `Unprocessable_entity (Response.json (module Dto.Api_response))
           <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
     ==>
-    fun ok bad_request not_found _unprocessable_entity service_unavailable context pet ->
-    let database = Common.Secured.dependency context in
-    match Dto.Pet.to_domain pet with
-    | Error message -> respond bad_request (Dto.Api_response.bad_request message)
-    | Ok (None, _) -> respond bad_request (Dto.Api_response.bad_request "id is required")
-    | Ok (Some id, attributes) ->
-      let%bind result = Pets.update ~database ~id attributes in
-      (match result with
-       | Ok pet -> respond ok (Dto.Pet.of_domain pet)
-       | Error (`Not_found id) -> respond not_found (Dto.Api_response.not_found id)
-       | Error (`Persistence error) -> unavailable service_unavailable error)
+    fun ok
+      bad_request
+      not_found
+      _unprocessable_entity
+      service_unavailable
+      context
+      pet_body ->
+    let%bind pet = Request_body.read pet_body in
+    match pet with
+    | Error error -> Request_body.reject error
+    | Ok pet ->
+      let database = Common.Secured.dependency context in
+      (match Dto.Pet.to_domain pet with
+       | Error message -> respond bad_request (Dto.Api_response.bad_request message)
+       | Ok (None, _) ->
+         respond bad_request (Dto.Api_response.bad_request "id is required")
+       | Ok (Some id, attributes) ->
+         let%bind result = Pets.update ~database ~id attributes in
+         (match result with
+          | Ok pet -> respond ok (Dto.Pet.of_domain pet)
+          | Error (`Not_found id) -> respond not_found (Dto.Api_response.not_found id)
+          | Error (`Persistence error) -> unavailable service_unavailable error))
   ;;
 
   let find_by_status =
@@ -215,15 +236,19 @@ module Make (B : Backend.S) (Pets : Pet_service.S with type 'a io = 'a B.io) = s
           <|> case `Bad_request (Response.json (module Dto.Api_response))
           <|> case `Not_found (Response.json (module Dto.Api_response))
           <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
-    ==> fun id metadata ok bad_request not_found service_unavailable context bytes ->
-    let database = Common.Secured.dependency context in
-    let%bind result = Pets.upload_image ~database ~id ~metadata ~bytes in
-    match result with
-    | Ok bytes -> respond ok (Dto.Api_response.upload_success ~id ~bytes ~metadata)
-    | Error `Empty_file ->
-      respond bad_request (Dto.Api_response.bad_request "no file uploaded")
-    | Error (`Not_found id) -> respond not_found (Dto.Api_response.not_found id)
-    | Error (`Persistence error) -> unavailable service_unavailable error
+    ==> fun id metadata ok bad_request not_found service_unavailable context body ->
+    let%bind bytes = Request_body.read body in
+    match bytes with
+    | Error error -> Request_body.reject error
+    | Ok bytes ->
+      let database = Common.Secured.dependency context in
+      let%bind result = Pets.upload_image ~database ~id ~metadata ~bytes in
+      (match result with
+       | Ok bytes -> respond ok (Dto.Api_response.upload_success ~id ~bytes ~metadata)
+       | Error `Empty_file ->
+         respond bad_request (Dto.Api_response.bad_request "no file uploaded")
+       | Error (`Not_found id) -> respond not_found (Dto.Api_response.not_found id)
+       | Error (`Persistence error) -> unavailable service_unavailable error)
   ;;
 
   let groups ~auth ~database =

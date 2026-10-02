@@ -8,4 +8,6 @@
   typed-endpoint
   typed-endpoint-dream
   typed-endpoint-testing
-  yojson))
+  yojson)
+ (preprocess
+  (pps ppx_let)))

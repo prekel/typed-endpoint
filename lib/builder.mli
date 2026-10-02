@@ -606,6 +606,31 @@ module Make (B : Backend.S) : sig
         services. Open [Io.Let_syntax] to use [ppx_let]. *)
   module Io : Base.Monad.S with type 'a t = 'a B.io
 
+  (** Existential handler result retaining the exact case/payload pairing. *)
+  type reply
+
+  (** A request-scoped, memoized body decoder. [read] starts validation and
+      bounded reading on its first call; later calls reuse the same result.
+      [reject] applies the endpoint, group, or compile decode-error policy. *)
+  module Request_body : sig
+    (** A request-local handle. The underlying body is read at most once. *)
+    type 'a t
+
+    (** A body validation failure. Convert it to [Decode_error.t] when
+        application logic needs to inspect the reason. *)
+    type error
+
+    (** Validates the media type, reads within the declared limit, and decodes
+        on the first call. Subsequent calls return the same effect/result. *)
+    val read : 'a t -> ('a, error) Result.t B.io
+
+    (** Renders a failure with the route's resolved decode-error policy. *)
+    val reject : error -> reply B.io
+
+    (** Exposes the structured failure without including the raw body. *)
+    val to_decode_error : error -> Decode_error.t
+  end
+
   (** Request-body declarations and runtime decoding. *)
   module Request : sig
     (** Runtime request decoding paired with its OpenAPI request-body
@@ -615,17 +640,28 @@ module Make (B : Backend.S) : sig
     (** A request without a body. The handler receives [()]. *)
     val empty : unit t
 
-    (** Requires a JSON media type, reads no more than [max_body_bytes], and
-            then invokes the DTO decoder. *)
-    val json : ?max_body_bytes:int -> (module Request_payload.S with type t = 'a) -> 'a t
+    (** On [Request_body.read], requires a JSON media type, reads no more than
+            [max_body_bytes], and invokes the DTO decoder. *)
+    val json
+      :  ?max_body_bytes:int
+      -> (module Request_payload.S with type t = 'a)
+      -> 'a Request_body.t t
 
-    (** A UTF-8 text body requiring [Content-Type: text/plain]. *)
-    val text : ?max_body_bytes:int -> description:string -> unit -> string t
+    (** A text body requiring [Content-Type: text/plain] when read. *)
+    val text
+      :  ?max_body_bytes:int
+      -> description:string
+      -> unit
+      -> string Request_body.t t
 
     (** An opaque byte string requiring
-            [Content-Type: application/octet-stream]. The backend enforces
-            [max_body_bytes] before returning the body. *)
-    val binary : ?max_body_bytes:int -> description:string -> unit -> string t
+            [Content-Type: application/octet-stream] when read. The backend
+            enforces [max_body_bytes] before returning the body. *)
+    val binary
+      :  ?max_body_bytes:int
+      -> description:string
+      -> unit
+      -> string Request_body.t t
   end
 
   (** Response-body declarations and typed response cases. *)
@@ -664,9 +700,6 @@ module Make (B : Backend.S) : sig
     :  ([< Status.t ] as 'status)
     -> 'a Response.t
     -> (('status, 'a) Response.case -> 'terminal, 'terminal) responses
-
-  (** Existential handler result retaining the exact case/payload pairing. *)
-  type reply
 
   (** Combines declarations from left to right. The handler receives their
           capabilities in the same order. *)

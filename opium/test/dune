@@ -9,4 +9,6 @@
   typed-endpoint
   typed-endpoint-opium
   typed-endpoint-testing
-  yojson))
+  yojson)
+ (preprocess
+  (pps ppx_let)))

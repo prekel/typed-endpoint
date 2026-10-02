@@ -2,6 +2,7 @@ open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_opium)
 module Io = Endpoint.Io
+open Io.Let_syntax
 open Endpoint
 
 module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
@@ -62,7 +63,11 @@ let route =
   |> documented
   |> accepts (Request.text ~description:"Body" ())
   |> returns (case `OK (Response.text ~description:"Echo" ()))
-  |> handle @@ fun ok body -> respond ok body
+  |> handle @@ fun ok body ->
+     let%bind result = Request_body.read body in
+     match result with
+     | Ok body -> respond ok body
+     | Error error -> Request_body.reject error
 ;;
 
 let captured =

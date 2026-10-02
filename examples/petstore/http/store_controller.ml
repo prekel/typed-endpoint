@@ -49,21 +49,27 @@ struct
           <|> case `Bad_request (Response.json (module Dto.Api_response))
           <|> case `Unprocessable_entity (Response.json (module Dto.Api_response))
           <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
-    ==> fun ok bad_request unprocessable_entity service_unavailable database order ->
-    match Dto.Order.to_domain order with
-    | Error message -> respond bad_request (Dto.Api_response.bad_request message)
-    | Ok (id, attributes) ->
-      let%bind result = Orders.place ~database ?id attributes in
-      (match result with
-       | Ok order -> respond ok (Dto.Order.of_domain order)
-       | Error (`Pet_not_found _) ->
-         respond bad_request (Dto.Api_response.bad_request "ordered pet does not exist")
-       | Error (`Already_exists id) ->
-         respond
-           unprocessable_entity
-           (Dto.Api_response.bad_request
-              ("order " ^ Int.to_string id ^ " already exists"))
-       | Error (`Persistence error) -> unavailable service_unavailable error)
+    ==> fun ok bad_request unprocessable_entity service_unavailable database body ->
+    let%bind order = Request_body.read body in
+    match order with
+    | Error error -> Request_body.reject error
+    | Ok order ->
+      (match Dto.Order.to_domain order with
+       | Error message -> respond bad_request (Dto.Api_response.bad_request message)
+       | Ok (id, attributes) ->
+         let%bind result = Orders.place ~database ?id attributes in
+         (match result with
+          | Ok order -> respond ok (Dto.Order.of_domain order)
+          | Error (`Pet_not_found _) ->
+            respond
+              bad_request
+              (Dto.Api_response.bad_request "ordered pet does not exist")
+          | Error (`Already_exists id) ->
+            respond
+              unprocessable_entity
+              (Dto.Api_response.bad_request
+                 ("order " ^ Int.to_string id ^ " already exists"))
+          | Error (`Persistence error) -> unavailable service_unavailable error))
   ;;
 
   let get_order =

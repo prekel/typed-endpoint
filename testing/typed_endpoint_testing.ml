@@ -219,6 +219,7 @@ module Backend_conformance = struct
     module B = H.Backend
     module Endpoint = Typed_endpoint.Make (B)
     open Endpoint
+    open Io.Let_syntax
 
     let check condition message =
       if not condition then
@@ -248,7 +249,11 @@ module Backend_conformance = struct
         (post / "bounded")
         (Request.text ~max_body_bytes:4 ~description:"Bounded body" ())
         (text "Echo")
-        (fun ok body -> respond ok body)
+        (fun ok body ->
+           let%bind result = Request_body.read body in
+           match result with
+           | Ok body -> respond ok body
+           | Error error -> Request_body.reject error)
     ;;
 
     let header_route =

@@ -44,16 +44,20 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
           <|> case `Bad_request (Response.json (module Dto.Api_response))
           <|> case `Conflict (Response.json (module Dto.Api_response))
           <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
-    ==> fun ok bad_request conflict service_unavailable database user ->
-    match Dto.User.to_domain user with
-    | Error message -> respond bad_request (Dto.Api_response.bad_request message)
+    ==> fun ok bad_request conflict service_unavailable database body ->
+    let%bind user = Request_body.read body in
+    match user with
+    | Error error -> Request_body.reject error
     | Ok user ->
-      let%bind result = Users.add ~database user in
-      (match result with
-       | Ok user -> respond ok (Dto.User.of_domain user)
-       | Error (`Already_exists username) ->
-         respond conflict (Dto.Api_response.user_conflict username)
-       | Error (`Persistence error) -> unavailable service_unavailable error)
+      (match Dto.User.to_domain user with
+       | Error message -> respond bad_request (Dto.Api_response.bad_request message)
+       | Ok user ->
+         let%bind result = Users.add ~database user in
+         (match result with
+          | Ok user -> respond ok (Dto.User.of_domain user)
+          | Error (`Already_exists username) ->
+            respond conflict (Dto.Api_response.user_conflict username)
+          | Error (`Persistence error) -> unavailable service_unavailable error))
   ;;
 
   let create_users_with_list =
@@ -68,18 +72,24 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
           <|> case `Bad_request (Response.json (module Dto.Api_response))
           <|> case `Conflict (Response.json (module Dto.Api_response))
           <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
-    ==> fun ok bad_request conflict service_unavailable database users ->
-    match Dto.User_list.to_domain users with
-    | Error message -> respond bad_request (Dto.Api_response.bad_request message)
-    | Ok [] ->
-      respond bad_request (Dto.Api_response.bad_request "at least one user is required")
+    ==> fun ok bad_request conflict service_unavailable database body ->
+    let%bind users = Request_body.read body in
+    match users with
+    | Error error -> Request_body.reject error
     | Ok users ->
-      let%bind result = Users.add_many ~database users in
-      (match result with
-       | Ok users -> respond ok (Dto.User.of_domain (List.last_exn users))
-       | Error (`Already_exists username) ->
-         respond conflict (Dto.Api_response.user_conflict username)
-       | Error (`Persistence error) -> unavailable service_unavailable error)
+      (match Dto.User_list.to_domain users with
+       | Error message -> respond bad_request (Dto.Api_response.bad_request message)
+       | Ok [] ->
+         respond
+           bad_request
+           (Dto.Api_response.bad_request "at least one user is required")
+       | Ok users ->
+         let%bind result = Users.add_many ~database users in
+         (match result with
+          | Ok users -> respond ok (Dto.User.of_domain (List.last_exn users))
+          | Error (`Already_exists username) ->
+            respond conflict (Dto.Api_response.user_conflict username)
+          | Error (`Persistence error) -> unavailable service_unavailable error))
   ;;
 
   let login_user =
@@ -157,16 +167,20 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
           <|> case `Bad_request (Response.json (module Dto.Api_response))
           <|> case `Not_found (Response.json (module Dto.Api_response))
           <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
-    ==> fun username ok bad_request not_found service_unavailable database user ->
-    match Dto.User.to_domain ~username user with
-    | Error message -> respond bad_request (Dto.Api_response.bad_request message)
+    ==> fun username ok bad_request not_found service_unavailable database body ->
+    let%bind user = Request_body.read body in
+    match user with
+    | Error error -> Request_body.reject error
     | Ok user ->
-      let%bind result = Users.update ~database ~username user in
-      (match result with
-       | Ok _ -> respond ok ()
-       | Error (`Not_found username) ->
-         respond not_found (Dto.Api_response.user_not_found username)
-       | Error (`Persistence error) -> unavailable service_unavailable error)
+      (match Dto.User.to_domain ~username user with
+       | Error message -> respond bad_request (Dto.Api_response.bad_request message)
+       | Ok user ->
+         let%bind result = Users.update ~database ~username user in
+         (match result with
+          | Ok _ -> respond ok ()
+          | Error (`Not_found username) ->
+            respond not_found (Dto.Api_response.user_not_found username)
+          | Error (`Persistence error) -> unavailable service_unavailable error))
   ;;
 
   let delete_user =

@@ -605,47 +605,6 @@ module Make (B : Backend.S) = struct
   module Io = B.Io
   open Io.Let_syntax
 
-  module Request = struct
-    let default_max_body_bytes = 1_048_576
-
-    type _ t =
-      | Empty : unit t
-      | JSON :
-          { payload : (module Request_payload.S with type t = 'a)
-          ; max_body_bytes : int
-          }
-          -> 'a t
-      | PlainText :
-          { metadata : Documentation.t
-          ; max_body_bytes : int
-          }
-          -> string t
-      | Binary :
-          { metadata : Documentation.t
-          ; max_body_bytes : int
-          }
-          -> string t
-
-    let empty = Empty
-
-    let json
-          (type a)
-          ?(max_body_bytes = default_max_body_bytes)
-          (module R : Request_payload.S with type t = a)
-      : a t
-      =
-      JSON { payload = (module R); max_body_bytes }
-    ;;
-
-    let text ?(max_body_bytes = default_max_body_bytes) ~description () : string t =
-      PlainText { metadata = Documentation.v ~description (); max_body_bytes }
-    ;;
-
-    let binary ?(max_body_bytes = default_max_body_bytes) ~description () : string t =
-      Binary { metadata = Documentation.v ~description (); max_body_bytes }
-    ;;
-  end
-
   module Response = struct
     type _ payload =
       | Json : (module Response_payload.S with type t = 'a) -> 'a payload
@@ -689,7 +648,9 @@ module Make (B : Backend.S) = struct
       | One_case of declared_case
       | Both_cases of declarations * declarations
 
-    type reply = Reply : ([< Status.t ], 'a) case_data * 'a -> reply
+    type reply =
+      | Reply : ([< Status.t ], 'a) case_data * 'a -> reply
+      | Decode_error_reply of Decode_error.t
 
     type (+'status, 'a) case =
       { make_reply : 'a -> reply }
@@ -730,6 +691,74 @@ module Make (B : Backend.S) = struct
   type reply = Response.reply
   type ('handler, 'terminal) responses = ('handler, 'terminal) Response.cases
   type response_cases = Response.declarations
+
+  module Request_body = struct
+    type error = Decode_error.t
+
+    type 'a t =
+      { load : unit -> ('a, error) Result.t B.io
+      ; mutable cached : ('a, error) Result.t B.io option
+      }
+
+    let create load = { load; cached = None }
+
+    let read body =
+      match body.cached with
+      | Some result -> result
+      | None ->
+        let result = body.load () in
+        body.cached <- Some result;
+        result
+    ;;
+
+    let reject error = Io.return (Response.Decode_error_reply error)
+    let to_decode_error error = error
+  end
+
+  module Request = struct
+    let default_max_body_bytes = 1_048_576
+
+    type _ t =
+      | Empty : unit t
+      | JSON :
+          { payload : (module Request_payload.S with type t = 'a)
+          ; max_body_bytes : int
+          }
+          -> 'a Request_body.t t
+      | PlainText :
+          { metadata : Documentation.t
+          ; max_body_bytes : int
+          }
+          -> string Request_body.t t
+      | Binary :
+          { metadata : Documentation.t
+          ; max_body_bytes : int
+          }
+          -> string Request_body.t t
+
+    let empty = Empty
+
+    let json
+          (type a)
+          ?(max_body_bytes = default_max_body_bytes)
+          (module R : Request_payload.S with type t = a)
+      : a Request_body.t t
+      =
+      JSON { payload = (module R); max_body_bytes }
+    ;;
+
+    let text ?(max_body_bytes = default_max_body_bytes) ~description ()
+      : string Request_body.t t
+      =
+      PlainText { metadata = Documentation.v ~description (); max_body_bytes }
+    ;;
+
+    let binary ?(max_body_bytes = default_max_body_bytes) ~description ()
+      : string Request_body.t t
+      =
+      Binary { metadata = Documentation.v ~description (); max_body_bytes }
+    ;;
+  end
 
   let ( <|> ) = Response.combine
   let respond case value = Io.return (case.Response.make_reply value)
@@ -1031,62 +1060,65 @@ module Make (B : Backend.S) = struct
       && String.is_suffix value ~suffix:"+json"
   ;;
 
-  let parse_request
-    : type req. req Request.t -> B.req -> (req, Decode_error.t) Result.t B.io
-    =
+  let request_argument : type req. req Request.t -> B.req -> req =
     fun spec req0 ->
     match spec with
-    | Request.Empty -> return (Ok ())
+    | Request.Empty -> ()
     | Request.PlainText { max_body_bytes; _ } ->
-      let actual = media_type req0 in
-      if not (Option.value_map actual ~default:false ~f:(String.equal "text/plain")) then
-        return
-          (Error
-             (Decode_error.Unsupported_media_type { expected = [ "text/plain" ]; actual }))
-      else (
-        let%map body = B.body_to_string ~max_bytes:max_body_bytes req0 in
-        Result.map_error body ~f:(fun `Too_large ->
-          Decode_error.Body_too_large { max_bytes = max_body_bytes }))
+      Request_body.create (fun () ->
+        let actual = media_type req0 in
+        if not (Option.value_map actual ~default:false ~f:(String.equal "text/plain"))
+        then
+          return
+            (Error
+               (Decode_error.Unsupported_media_type
+                  { expected = [ "text/plain" ]; actual }))
+        else (
+          let%map body = B.body_to_string ~max_bytes:max_body_bytes req0 in
+          Result.map_error body ~f:(fun `Too_large ->
+            Decode_error.Body_too_large { max_bytes = max_body_bytes })))
     | Request.Binary { max_body_bytes; _ } ->
-      let actual = media_type req0 in
-      if
-        not
-          (Option.value_map
-             actual
-             ~default:false
-             ~f:(String.equal "application/octet-stream"))
-      then
-        return
-          (Error
-             (Decode_error.Unsupported_media_type
-                { expected = [ "application/octet-stream" ]; actual }))
-      else (
-        let%map body = B.body_to_string ~max_bytes:max_body_bytes req0 in
-        Result.map_error body ~f:(fun `Too_large ->
-          Decode_error.Body_too_large { max_bytes = max_body_bytes }))
+      Request_body.create (fun () ->
+        let actual = media_type req0 in
+        if
+          not
+            (Option.value_map
+               actual
+               ~default:false
+               ~f:(String.equal "application/octet-stream"))
+        then
+          return
+            (Error
+               (Decode_error.Unsupported_media_type
+                  { expected = [ "application/octet-stream" ]; actual }))
+        else (
+          let%map body = B.body_to_string ~max_bytes:max_body_bytes req0 in
+          Result.map_error body ~f:(fun `Too_large ->
+            Decode_error.Body_too_large { max_bytes = max_body_bytes })))
     | Request.JSON { payload = (module Rq); max_body_bytes } ->
-      let actual = media_type req0 in
-      if not (Option.value_map actual ~default:false ~f:is_json_media_type) then
-        return
-          (Error
-             (Decode_error.Unsupported_media_type
-                { expected = [ "application/json"; "application/*+json" ]; actual }))
-      else (
-        let%bind body = B.body_to_string ~max_bytes:max_body_bytes req0 in
-        match body with
-        | Error `Too_large ->
-          return (Error (Decode_error.Body_too_large { max_bytes = max_body_bytes }))
-        | Ok body ->
-          let json =
-            try Ok (Yojson.Safe.from_string body) with
-            | Yojson.Json_error error -> Error error
-          in
-          (match json with
-           | Error error -> return (Error (Decode_error.Invalid_json { error }))
-           | Ok json ->
-             (match Rq.of_yojson json with
-              | Ok value -> return (Ok value)
-              | Error error -> return (Error (Decode_error.Invalid_body { error })))))
+      Request_body.create (fun () ->
+        let actual = media_type req0 in
+        if not (Option.value_map actual ~default:false ~f:is_json_media_type) then
+          return
+            (Error
+               (Decode_error.Unsupported_media_type
+                  { expected = [ "application/json"; "application/*+json" ]; actual }))
+        else (
+          let%bind body = B.body_to_string ~max_bytes:max_body_bytes req0 in
+          match body with
+          | Error `Too_large ->
+            return (Error (Decode_error.Body_too_large { max_bytes = max_body_bytes }))
+          | Ok body ->
+            let json =
+              try Ok (Yojson.Safe.from_string body) with
+              | Yojson.Json_error error -> Error error
+            in
+            (match json with
+             | Error error -> return (Error (Decode_error.Invalid_json { error }))
+             | Ok json ->
+               (match Rq.of_yojson json with
+                | Ok value -> return (Ok value)
+                | Error error -> return (Error (Decode_error.Invalid_body { error }))))))
   ;;
 
   let validate_response_header name value =
@@ -1197,28 +1229,31 @@ module Make (B : Backend.S) = struct
       response_case_list left @ response_case_list right
   ;;
 
-  let render_reply b (Response.Reply (returned, value)) =
-    let declared = response_case_list b.responses in
-    let declared_ids, declared_statuses =
-      List.fold_right declared ~init:([], []) ~f:(fun declared (ids, statuses) ->
-        match declared with
-        | Response.Declared_case data ->
-          data.id :: ids, Status.code data.status :: statuses)
-    in
-    let status = Status.code returned.status in
-    (match
-       Runtime.ensure_declared_case
-         ~meth:(meth_to_string b.meth)
-         ~path:(path_to_string b.pattern)
-         ~case_id:returned.id
-         ~declared_case_ids:declared_ids
-         ~status
-         ~declared:declared_statuses
-     with
-     | Ok () -> ()
-     | Error { Runtime.meth; path; status; declared } ->
-       raise (Runtime_error (Undeclared_response_case { meth; path; status; declared })));
-    respond_ok_with_status ~status:(returned.status :> Status.t) returned.response value
+  let render_reply b ~decode_error_policy = function
+    | Response.Decode_error_reply error ->
+      render_decode_error_response decode_error_policy error
+    | Response.Reply (returned, value) ->
+      let declared = response_case_list b.responses in
+      let declared_ids, declared_statuses =
+        List.fold_right declared ~init:([], []) ~f:(fun declared (ids, statuses) ->
+          match declared with
+          | Response.Declared_case data ->
+            data.id :: ids, Status.code data.status :: statuses)
+      in
+      let status = Status.code returned.status in
+      (match
+         Runtime.ensure_declared_case
+           ~meth:(meth_to_string b.meth)
+           ~path:(path_to_string b.pattern)
+           ~case_id:returned.id
+           ~declared_case_ids:declared_ids
+           ~status
+           ~declared:declared_statuses
+       with
+       | Ok () -> ()
+       | Error { Runtime.meth; path; status; declared } ->
+         raise (Runtime_error (Undeclared_response_case { meth; path; status; declared })));
+      respond_ok_with_status ~status:(returned.status :> Status.t) returned.response value
   ;;
 
   let render_context_rejection (Context.Rejected { status; response; error })
@@ -1701,12 +1736,9 @@ module Make (B : Backend.S) = struct
         (match apply_path b.pattern f req0 with
          | Error error -> render_decode_error inherited error
          | Ok f' ->
-           let%bind parsed = parse_request b.request req0 in
-           (match parsed with
-            | Error error -> render_decode_error inherited error
-            | Ok body ->
-              let%bind r = b.invoke f' context body in
-              render_reply b r))
+           let body = request_argument b.request req0 in
+           let%bind r = b.invoke f' context body in
+           render_reply b ~decode_error_policy:(resolve_decode_error inherited) r)
     in
     let decode_statuses = Openapi_adapter.decode_statuses b.pattern b.request in
     let contract inherited =

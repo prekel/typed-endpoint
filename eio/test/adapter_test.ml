@@ -1,6 +1,8 @@
 open! Base
 open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_eio)
+module Io = Endpoint.Io
+open Io.Let_syntax
 open Endpoint
 
 module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
@@ -76,11 +78,15 @@ let route =
   |> returns (case `OK (Response.text ~description:"OK" ()))
   |> handle_with ~context:(Context.both authenticated (Dependency.value "items"))
      @@ fun id query ok (user, service) body ->
-     respond
-       ok
-       (String.concat
-          ~sep:":"
-          [ service; user; id; Option.value query ~default:"none"; body ])
+     let%bind result = Request_body.read body in
+     match result with
+     | Error error -> Request_body.reject error
+     | Ok body ->
+       respond
+         ok
+         (String.concat
+            ~sep:":"
+            [ service; user; id; Option.value query ~default:"none"; body ])
 ;;
 
 let captured =
