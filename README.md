@@ -9,13 +9,12 @@ OpenAPI 3.1.
 - `typed-endpoint` — framework-agnostic ядро;
 - `typed-endpoint-ppx` — typed JSON Schema deriver с wire-аннотациями Yojson;
 - `typed-endpoint-testing` — прямой in-memory backend для тестов без сервера;
-- `typed-endpoint-opium` — интеграция с Opium 0.17.1–0.18.0;
+- `typed-endpoint-opium` — интеграция с Opium >= 0.17.1 и < 0.19.0;
 - `typed-endpoint-dream` — интеграция с Dream 1.0.0~alpha8;
 - `typed-endpoint-eio` — direct-style интеграция с cohttp-eio 6.3.
 
 Deriver `typed-endpoint-ppx` перенесён и адаптирован на основе
 [ahrefs/ppx_deriving_jsonschema](https://github.com/ahrefs/ppx_deriving_jsonschema).
-Исходный copyright notice сохранён в [LICENSE](LICENSE).
 
 ## Основные гарантии
 
@@ -37,12 +36,11 @@ Deriver `typed-endpoint-ppx` перенесён и адаптирован на �
 ## Минимальная декларация
 
 ```ocaml
+open! Base
 open Typed_endpoint
 
 module Endpoint = Make (Typed_endpoint_testing)
-module Io = Endpoint.Io
 
-open Io.Let_syntax
 open Endpoint
 
 let route =
@@ -50,11 +48,15 @@ let route =
   |> documented ~operation_id:"health"
   |> accepts Request.empty
   |> returns (case `OK (Response.text ~description:"Health status" ()))
-  |> handle @@ fun ok () -> respond ok "ok"
+  ==> fun ok () () -> respond ok "ok"
 
 let compiled =
   compile_exn
-    [ Group.make ~description:"Service" [ route ] ]
+    [ Group.make_with_context
+        ~description:"Service"
+        ~context:(Context.return ())
+        [ route ]
+    ]
 ```
 
 `Compiled.app compiled` возвращает значение конкретного backend, а
@@ -69,25 +71,29 @@ let get_pet =
   /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
   |> documented ~operation_id:"getPetById"
   |> accepts Request.empty
-  |> returns (case `OK (Response.text ~description:"Pet name" ()))
-  |> handle @@ fun pet_id ok () -> respond ok (Int64.to_string pet_id)
+  |> returns (case `OK (Response.text ~description:"Pet ID" ()))
+  ==> fun pet_id ok () () -> respond ok (Int64.to_string pet_id)
 ```
 
 `/?` добавляет optional query, `/!` — required query, `header` —
-required или optional typed header, `case` связывает status с codec,
+required или optional typed header, функция `case` связывает status с codec,
 `<|>` соединяет альтернативные responses, а `respond case value` формирует
-типизированный ответ. `==>` завершает route для typed group. Сначала handler
-получает path/query/header-параметры слева направо, затем response capabilities
-в порядке `returns`, context и body. Standalone route завершается `handle`,
-route со своим контекстом — `handle_with ~context`, а grouped route — `==>`.
-Сырой request можно запросить
-явно через `Context.request`. Ошибки декодирования по умолчанию получают
+типизированный ответ. `==>` завершает маршрут для `Group.make_with_context`.
+Handler получает path/query/header-параметры слева направо, затем response
+capabilities в порядке `returns`, значение контекста группы и request body.
+Если зависимости не нужны, передайте `Context.return ()`. Сырой request можно
+получить через `Context.request`. Ошибки декодирования по умолчанию получают
 безопасный JSON `{ "code": ..., "message": ... }`, который можно заменить на
 уровне endpoint, группы или всей компиляции.
 
-Если один guard/набор зависимостей используется несколькими маршрутами,
-endpoint завершается `==>`, а контекст один раз прикрепляется через
-`Group.make_with_context`. Его тип остаётся связан с handler каждого маршрута.
+Для `Request.json`, `Request.text` и `Request.binary` последний аргумент
+handler — `Request_body.t`. Вызов `Request_body.read` возвращает `Result` в
+эффекте backend; `Request_body.reject` применяет настроенный ответ при ошибке.
+Тело и `Content-Type` проверяются только при первом чтении.
+
+Если один guard или набор зависимостей используется несколькими маршрутами,
+контекст один раз прикрепляется через `Group.make_with_context`. Его тип
+остаётся связан с handler каждого маршрута.
 
 Interceptors передаются в `compile ~interceptors`. Они запускаются после
 совпадения маршрута и подходят для tracing, metrics и access log по стабильному
@@ -103,10 +109,20 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 
 ## Установка и первый сервер
 
-Для Opium-приложения установите ядро и адаптер:
+Чтобы установить версию `v0.2.0` из исходников, получите тег и установите
+нужные для примера пакеты:
 
 ```sh
-opam install typed-endpoint typed-endpoint-ppx typed-endpoint-opium
+git clone --branch v0.2.0 --depth 1 https://github.com/prekel/typed-endpoint.git
+cd typed-endpoint
+opam install ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-opium.opam
+```
+
+Создайте каталог приложения:
+
+```sh
+mkdir ../hello_typed_endpoint
+cd ../hello_typed_endpoint
 ```
 
 Минимальный `dune-project`:
@@ -121,30 +137,56 @@ opam install typed-endpoint typed-endpoint-ppx typed-endpoint-opium
 ```lisp
 (executable
  (name main)
- (libraries typed-endpoint typed-endpoint-opium))
+ (libraries base yojson typed-endpoint typed-endpoint-opium)
+ (preprocess
+  (pps ppx_let ppx_deriving_yojson typed-endpoint-ppx)))
 ```
 
-`main.ml` объявляет маршрут и передаёт скомпилированные routes в существующее
-Opium-приложение:
+`main.ml` объявляет маршрут и подключает скомпилированные routes к
+Opium-приложению:
 
 ```ocaml
 open! Base
 open Typed_endpoint
 
 module Endpoint = Make (Typed_endpoint_opium)
+module Io = Endpoint.Io
 
+open Io.Let_syntax
 open Endpoint
 
+module Greeting = struct
+  type t = { name : string } [@@deriving yojson, jsonschema]
+
+  let metadata : t Metadata.t =
+    Metadata.v ~schema:t_jsonschema ~description:"Name to greet" ()
+  ;;
+end
+
 let route =
-  get / "health"
-  |> documented ~operation_id:"health"
-  |> accepts Request.empty
-  |> returns (case `OK (Response.text ~description:"Health status" ()))
-  |> handle @@ fun ok () -> respond ok "ok"
+  post / "hello"
+  |> documented ~operation_id:"sayHello"
+  |> accepts (Request.json (module Greeting))
+  |> returns
+       (case `OK (Response.text ~description:"Greeting" ())
+        <|> case `Unprocessable_entity (Response.text ~description:"Empty name" ()))
+  ==> fun ok invalid () body ->
+      let%bind result = Request_body.read body in
+      match result with
+      | Error error -> Request_body.reject error
+      | Ok greeting when String.is_empty greeting.name ->
+        respond invalid "name is required"
+      | Ok greeting -> respond ok ("Hello, " ^ greeting.name)
 ;;
 
 let routes =
-  compile_exn [ Group.make ~description:"Hello" [ route ] ] |> Compiled.app
+  compile_exn
+    [ Group.make_with_context
+        ~description:"Hello"
+        ~context:(Context.return ())
+        [ route ]
+    ]
+  |> Compiled.app
 ;;
 
 let () =
@@ -155,17 +197,25 @@ let () =
 ;;
 ```
 
-Запустите сервер и проверьте endpoint:
+Запустите сервер:
 
 ```sh
 dune exec ./main.exe
-curl -i http://127.0.0.1:8080/health
 ```
 
-Ответ содержит статус `200`, `Content-Type: text/plain; charset=utf-8` и тело
-`ok`.
+В другом терминале проверьте три варианта ответа:
 
-`Response.case` статически связывает status и payload с конкретной веткой
+```sh
+curl -i -X POST http://127.0.0.1:8080/hello -H 'Content-Type: application/json' --data '{"name":"Ada"}'
+curl -i -X POST http://127.0.0.1:8080/hello -H 'Content-Type: application/json' --data '{"name":""}'
+curl -i -X POST http://127.0.0.1:8080/hello -H 'Content-Type: application/json' --data '{'
+```
+
+Первый запрос возвращает `200` и `Hello, Ada`, второй — объявленный `422`,
+третий — автоматический JSON-ответ `400` для невалидного тела. Текстовые ответы
+имеют `Content-Type: text/plain; charset=utf-8`.
+
+Функция `case` статически связывает status и payload с конкретной веткой
 handler. Capability другого endpoint может быть сохранена и передана в другой
 handler, поэтому перед рендерингом библиотека дополнительно проверяет её
 принадлежность объявленным cases и отвергает чужую capability с
@@ -185,43 +235,38 @@ opam exec -- dune runtest examples/petstore/test
 opam exec -- dune exec examples/petstore/servers/opium_server.exe
 ```
 
-## Сборка
+## Совместимость и ограничения
 
-Для сборки требуется Dune 3.14 или новее. Ядро, библиотека
-`typed-endpoint-testing` и адаптер Opium поддерживают OCaml
-4.14.1 и новее. Petstore также поддерживает OCaml 4.14.1; Dream и Eio
-требуют OCaml 5.1.1 или новее.
-Для полной проверки проекта локальный switch можно создать так:
+Требуется Dune 3.14 или новее.
+
+| Пакеты | Минимальный OCaml | Версии HTTP-библиотек |
+| --- | --- | --- |
+| `typed-endpoint`, `typed-endpoint-ppx`, `typed-endpoint-testing` | 4.14.1 | — |
+| `typed-endpoint-opium` | 4.14.1 | Opium >= 0.17.1 и < 0.19.0 |
+| `typed-endpoint-dream` | 5.1.1 | Dream 1.0.0~alpha8 |
+| `typed-endpoint-eio` | 5.1.1 | cohttp-eio 6.3.0, Eio >= 1.2 |
+
+Petstore с Opium также работает на OCaml 4.14.1. Сейчас один endpoint объявляет
+один формат request body; multipart/form-data и streaming responses не входят
+в API. Подробности — в [руководстве по эксплуатации](doc/production.mld).
+
+## Разработка
+
+Для полной локальной проверки в switch OCaml 5.1.1 или новее:
 
 ```sh
-make create_switch
 make deps_all
 make check
-make release-check
-make release-artifacts
-make release-install-check
 ```
 
-Для проверки библиотек на OCaml 4.14.1 используйте отдельный switch и
-выбирайте только их цели Dune. При сборке компилятора из исходников с GCC 15
-задайте C17 режим через `CC`:
+`make check` включает форматирование, сборку, тесты, odoc, install targets и
+проверку пакетов. Подготовка релиза и проверка OCaml 4.14.1 описаны в
+[руководстве по эксплуатации](doc/production.mld).
 
-```sh
-CC='gcc -std=gnu17' opam switch create /tmp/typed-endpoint-ocaml-4.14.1 4.14.1
-OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam install --deps-only ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-testing.opam ./typed-endpoint-opium.opam
-OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing @install opium/test/adapter_test.exe
-OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam exec -- dune exec --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing opium/test/adapter_test.exe
-```
+## Документация
 
-`make check` проверяет форматирование, сборку, тесты, odoc, install targets и
-сгенерированные opam-файлы. CI намеренно не добавлен.
-
-`make release-artifacts` создаёт локальный source archive, SHA-256 и заготовки
-шести пакетов для opam-repository в `_release/`. `make release-install-check`
-распаковывает этот archive и проверяет install targets всех пакетов, тесты,
-документацию и внешние consumer-проекты в активном switch с OCaml >= 5.1.1.
-Отдельный compiler при этом не устанавливается. Распакованный исходный код
-остаётся в `_release/` для проверки результата.
-
-На Ubuntu транзитивным TLS-зависимостям Opium нужен `libgmp-dev`; Dream также
-может потребовать `libev-dev` и `libssl-dev`.
+- [Быстрый старт и DTO](doc/quickstart.mld)
+- [Эксплуатация и ограничения](doc/production.mld)
+- [История изменений](CHANGES.md)
+- [План развития](doc/roadmap.md)
+- [Сообщение об уязвимости](SECURITY.md)

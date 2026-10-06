@@ -197,21 +197,47 @@ Benchmark нужен для сравнения изменений на одно�
 
 {1 Поддержка и release gate}
 
-Минимальная версия OCaml для всех пакетов — 5.1.1. Eio adapter сохраняет
-[cohttp-eio 6.3.0] и требует [eio >= 1.2], совместимый с этой версией
-компилятора. Версия конкретного adapter меняется отдельной migration с
-повторным запуском общего conformance suite. Ядро не
-обещает совместимость с framework API вне соответствующего adapter package.
+Ядро, PPX, testing backend и Opium adapter поддерживают OCaml >= 4.14.1;
+Petstore с Opium также собирается на 4.14.1. Dream и Eio adapters требуют
+OCaml >= 5.1.1. Eio adapter сохраняет [cohttp-eio 6.3.0] и требует
+[eio >= 1.2]. Версия конкретного adapter меняется отдельной migration с
+повторным запуском общего conformance suite. Ядро не обещает совместимость с
+framework API вне соответствующего adapter package.
+
+{2 Проверка OCaml 4.14.1}
+
+Используйте отдельный switch и выбирайте только пакеты, поддерживающие 4.14.1.
+При сборке компилятора из исходников с GCC 15 задайте режим C17 через [CC]:
+
+{[
+CC='gcc -std=gnu17' opam switch create /tmp/typed-endpoint-ocaml-4.14.1 4.14.1
+OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam install --deps-only ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-testing.opam ./typed-endpoint-opium.opam
+OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing @install opium/test/adapter_test.exe
+OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam exec -- dune exec --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing opium/test/adapter_test.exe
+]}
+
+На Ubuntu транзитивным TLS-зависимостям Opium нужен [libgmp-dev]; Dream также
+может потребовать [libev-dev] и [libssl-dev].
+
+{2 Подготовка релиза}
 
 Перед тегом выполняется [make release-check]: форматирование, build, tests,
 odoc, package smoke tests, install targets, opam lint и проверка whitespace.
-Затем [make release-artifacts] создаёт source archive, а
-[make release-install-check] проверяет распакованный archive в уже активном
-switch OCaml >= 5.1.1, не устанавливая отдельный compiler. В [_release] также
-создаются локальные package definitions и URL/checksum для
-будущего opam-repository PR. Изменения публичного API фиксируются в
-[CHANGES.md] и migration guide. Правила private security reporting описаны в
-[SECURITY.md]. CI не добавляется этой задачей.
+Эта цель уже включает [make check], поэтому отдельно повторять её не нужно:
+
+{[
+make release-check
+make release-artifacts
+make release-install-check
+]}
+
+[make release-artifacts] создаёт в [_release] source archive, SHA-256 и
+заготовки шести пакетов для opam-repository. [make release-install-check]
+распаковывает archive и проверяет install targets, тесты, документацию и
+внешние consumer-проекты в активном switch OCaml >= 5.1.1; отдельный compiler
+не устанавливается. Распакованный исходный код остаётся в [_release] для
+проверки. Изменения публичного API фиксируются в [CHANGES.md] и migration
+guide. Правила private security reporting описаны в [SECURITY.md].
 
 Разделение чистого контракта и server handler, а также сетевой typed client
 сознательно отложены. Текущий production-hardening не вводит параллельный DSL и
