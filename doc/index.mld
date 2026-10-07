@@ -6,5 +6,6 @@ Typed-endpoint связывает типизированную декларац�
 
 Начните с {!page-quickstart}. Границы ядра и адаптеров описаны в
 {!page-architecture}, а эксплуатационные ограничения — в
-{!page-production}. Изменения prerelease API собраны в
+{!page-production}. Оценка поддержки стандарта приведена в
+{!page-openapi_coverage}. Изменения prerelease API собраны в
 {!page-migration_prerelease}.
