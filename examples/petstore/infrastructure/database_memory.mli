@@ -19,6 +19,10 @@ module Make (Io : Base.Monad.S) : sig
   module User_repository :
     User_repository.S with type 'a io = 'a Io.t and type connection = connection
 
+  (** Stateless session storage participating in the same transactions. *)
+  module Session_repository :
+    Session_repository.S with type 'a io = 'a Io.t and type connection = connection
+
   (** Creates an empty isolated database. *)
   val create : unit -> t
 end

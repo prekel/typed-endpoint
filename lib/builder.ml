@@ -290,6 +290,66 @@ end
 
 exception Runtime_error of Runtime_error.t
 
+module Wire_number = struct
+  let digit = function
+    | '0' .. '9' -> true
+    | _ -> false
+  ;;
+
+  let integer value =
+    let start =
+      if
+        (not (String.is_empty value))
+        && (Char.equal value.[0] '-' || Char.equal value.[0] '+')
+      then
+        1
+      else
+        0
+    in
+    start < String.length value
+    && String.for_all (String.drop_prefix value start) ~f:digit
+  ;;
+
+  let number value =
+    let length = String.length value in
+    let index = ref 0 in
+    let consume_digits () =
+      let start = !index in
+      while !index < length && digit value.[!index] do
+        Int.incr index
+      done;
+      !index - start
+    in
+    if !index < length && (Char.equal value.[!index] '-' || Char.equal value.[!index] '+')
+    then
+      Int.incr index;
+    let whole = consume_digits () in
+    let fraction =
+      if !index < length && Char.equal value.[!index] '.' then (
+        Int.incr index;
+        consume_digits ())
+      else
+        0
+    in
+    let mantissa = whole + fraction > 0 in
+    let exponent =
+      if
+        !index < length && (Char.equal value.[!index] 'e' || Char.equal value.[!index] 'E')
+      then (
+        Int.incr index;
+        if
+          !index < length
+          && (Char.equal value.[!index] '-' || Char.equal value.[!index] '+')
+        then
+          Int.incr index;
+        consume_digits () > 0)
+      else
+        true
+    in
+    mantissa && exponent && !index = length
+  ;;
+end
+
 module Parameter = struct
   module type S = sig
     type t
@@ -334,7 +394,12 @@ module Parameter = struct
       ?tags
       ~description
       ~of_string:(fun value ->
-        match Int.of_string_opt value with
+        match
+          if Wire_number.integer value then
+            Int.of_string_opt value
+          else
+            None
+        with
         | Some value -> Ok value
         | None -> Error "expected an integer")
       ()
@@ -347,7 +412,12 @@ module Parameter = struct
       ?tags
       ~description
       ~of_string:(fun value ->
-        try Ok (Int64.of_string value) with
+        try
+          if Wire_number.integer value then
+            Ok (Int64.of_string value)
+          else
+            Error "expected a 64-bit integer"
+        with
         | _ -> Error "expected a 64-bit integer")
       ()
   ;;
@@ -360,7 +430,12 @@ module Parameter = struct
       ~description
       ~of_string:(fun value ->
         try
-          let value = Float.of_string value in
+          let value =
+            if Wire_number.number value then
+              Float.of_string value
+            else
+              failwith "invalid decimal"
+          in
           if Stdlib.Float.is_finite value then
             Ok value
           else
@@ -432,7 +507,12 @@ module Header = struct
       ?tags
       ~description
       ~of_string:(fun value ->
-        match Int.of_string_opt value with
+        match
+          if Wire_number.integer value then
+            Int.of_string_opt value
+          else
+            None
+        with
         | Some value -> Ok value
         | None -> Error "expected an integer")
       ~to_string:Int.to_string
@@ -446,7 +526,12 @@ module Header = struct
       ?tags
       ~description
       ~of_string:(fun value ->
-        try Ok (Int64.of_string value) with
+        try
+          if Wire_number.integer value then
+            Ok (Int64.of_string value)
+          else
+            Error "expected a 64-bit integer"
+        with
         | _ -> Error "expected a 64-bit integer")
       ~to_string:Int64.to_string
       ()
@@ -723,6 +808,7 @@ module Make (B : Backend.S) = struct
       | JSON :
           { payload : (module Request_payload.S with type t = 'a)
           ; max_body_bytes : int
+          ; media_types : string list
           }
           -> 'a Request_body.t t
       | PlainText :
@@ -741,10 +827,18 @@ module Make (B : Backend.S) = struct
     let json
           (type a)
           ?(max_body_bytes = default_max_body_bytes)
+          ?(media_types = [ "application/json" ])
           (module R : Request_payload.S with type t = a)
       : a Request_body.t t
       =
-      JSON { payload = (module R); max_body_bytes }
+      JSON
+        { payload = (module R)
+        ; max_body_bytes
+        ; media_types =
+            List.dedup_and_sort
+              (List.map media_types ~f:String.lowercase)
+              ~compare:String.compare
+        }
     ;;
 
     let text ?(max_body_bytes = default_max_body_bytes) ~description ()
@@ -792,8 +886,6 @@ module Make (B : Backend.S) = struct
     let return value =
       { resolve = (fun _request -> Io.return (Ok value)); responses = []; security = [] }
     ;;
-
-    let empty = return ()
 
     let map context ~f =
       { context with
@@ -950,7 +1042,7 @@ module Make (B : Backend.S) = struct
     | `OPTIONS -> "options"
     | `TRACE -> "trace"
     | `CONNECT -> "connect"
-    | `Other method_ -> String.lowercase method_
+    | `Other method_ -> String.uppercase method_
   ;;
 
   let rec apply_path : type h f. (h, f) path -> h -> B.req -> (f, Decode_error.t) Result.t
@@ -1053,13 +1145,6 @@ module Make (B : Backend.S) = struct
       |> String.lowercase)
   ;;
 
-  let is_json_media_type = function
-    | "application/json" -> true
-    | value ->
-      String.is_prefix value ~prefix:"application/"
-      && String.is_suffix value ~suffix:"+json"
-  ;;
-
   let request_argument : type req. req Request.t -> B.req -> req =
     fun spec req0 ->
     match spec with
@@ -1095,14 +1180,19 @@ module Make (B : Backend.S) = struct
           let%map body = B.body_to_string ~max_bytes:max_body_bytes req0 in
           Result.map_error body ~f:(fun `Too_large ->
             Decode_error.Body_too_large { max_bytes = max_body_bytes })))
-    | Request.JSON { payload = (module Rq); max_body_bytes } ->
+    | Request.JSON { payload = (module Rq); max_body_bytes; media_types } ->
       Request_body.create (fun () ->
         let actual = media_type req0 in
-        if not (Option.value_map actual ~default:false ~f:is_json_media_type) then
+        if
+          not
+            (Option.value_map
+               actual
+               ~default:false
+               ~f:(List.mem media_types ~equal:String.equal))
+        then
           return
             (Error
-               (Decode_error.Unsupported_media_type
-                  { expected = [ "application/json"; "application/*+json" ]; actual }))
+               (Decode_error.Unsupported_media_type { expected = media_types; actual }))
         else (
           let%bind body = B.body_to_string ~max_bytes:max_body_bytes req0 in
           match body with
@@ -1122,13 +1212,21 @@ module Make (B : Backend.S) = struct
   ;;
 
   let validate_response_header name value =
-    if String.mem value '\r' || String.mem value '\n' then
-      raise
-        (Runtime_error
-           (Invalid_response_header
-              { name; reason = "value contains a carriage return or line feed" }))
-    else
-      name, value
+    let reason =
+      if String.mem value '\r' || String.mem value '\n' then
+        Some "value contains a carriage return or line feed"
+      else if
+        String.exists value ~f:(fun char ->
+          let code = Char.to_int char in
+          (code < 0x20 && not (Char.equal char '\t')) || code = 0x7f)
+      then
+        Some "value contains a forbidden control character"
+      else
+        None
+    in
+    match reason with
+    | Some reason -> raise (Runtime_error (Invalid_response_header { name; reason }))
+    | None -> name, value
   ;;
 
   let encode_response_header : type a. a Header.t -> a -> (string * string) option =
@@ -1272,11 +1370,12 @@ module Make (B : Backend.S) = struct
         Text_body { metadata; max_body_bytes }
       | Request.Binary { metadata; max_body_bytes } ->
         Binary_body { metadata; max_body_bytes }
-      | Request.JSON { payload = (module Rq); max_body_bytes } ->
+      | Request.JSON { payload = (module Rq); max_body_bytes; media_types } ->
         Json_body
           { schema = schema_of_metadata Rq.metadata
           ; metadata = documentation_of_metadata Rq.metadata
           ; max_body_bytes
+          ; media_types
           }
     ;;
 
@@ -1509,14 +1608,7 @@ module Make (B : Backend.S) = struct
     List.compare Int.compare (specificity left) (specificity right)
   ;;
 
-  let path_to_template path =
-    String.split path ~on:'/'
-    |> List.map ~f:(fun segment ->
-      match String.chop_prefix segment ~prefix:":" with
-      | None -> segment
-      | Some name -> "{" ^ name ^ "}")
-    |> String.concat ~sep:"/"
-  ;;
+  let path_to_template = Contract.path_to_template
 
   let route_metadata ~(group : Operation_metadata.t) (route : Operation_metadata.t option)
     : Operation_metadata.t
@@ -1601,6 +1693,10 @@ module Make (B : Backend.S) = struct
           { meth : string
           ; path : string
           }
+      | Invalid_openapi_method of
+          { meth : string
+          ; path : string
+          }
       | Mismatched_path_parameters of
           { meth : string
           ; path : string
@@ -1627,15 +1723,32 @@ module Make (B : Backend.S) = struct
       | Invalid_no_content_response of
           { meth : string
           ; path : string
+          ; status : int
           }
       | Invalid_body_limit of
           { meth : string
           ; path : string
           ; max_body_bytes : int
           }
+      | Invalid_json_media_types of
+          { meth : string
+          ; path : string
+          ; media_types : string list
+          }
+      | Reserved_request_header of
+          { meth : string
+          ; path : string
+          ; name : string
+          }
       | Invalid_header_name of
           { meth : string
           ; path : string
+          ; name : string
+          }
+      | Reserved_response_header of
+          { meth : string
+          ; path : string
+          ; status : int
           ; name : string
           }
       | Duplicate_response_header of
@@ -1655,6 +1768,15 @@ module Make (B : Backend.S) = struct
       | Invalid_security_scheme_name of string
       | Conflicting_security_scheme of string
       | Invalid_security_scope of
+          { scheme : string
+          ; scope : string
+          }
+      | Invalid_security_scheme_parameter of
+          { scheme : string
+          ; parameter : string
+          }
+      | Invalid_security_authorization_url of string
+      | Duplicate_oauth_scope of
           { scheme : string
           ; scope : string
           }
@@ -1926,43 +2048,7 @@ module Make (B : Backend.S) = struct
 
   let returns responses requested = Ready { requested; responses }
 
-  let handle handler ready =
-    let (Ready { requested = { documented; request }; responses }) = ready in
-    make_route
-      ~context:Context.empty
-      ~invoke:(fun handler () body -> responses.Response.apply handler body)
-      ~meth:documented.meth
-      ?summary:documented.summary
-      ?tags:documented.tags
-      ?deprecated:documented.deprecated
-      ?operation_id:documented.operation_id
-      ?description:documented.description
-      ?decode_error:documented.decode_error
-      ~request
-      ~path:documented.path
-      ~responses:responses.Response.declarations
-      handler
-  ;;
-
-  let handle_with ~context handler ready =
-    let (Ready { requested = { documented; request }; responses }) = ready in
-    make_route
-      ~context
-      ~invoke:(fun handler context body -> responses.Response.apply handler context body)
-      ~meth:documented.meth
-      ?summary:documented.summary
-      ?tags:documented.tags
-      ?deprecated:documented.deprecated
-      ?operation_id:documented.operation_id
-      ?description:documented.description
-      ?decode_error:documented.decode_error
-      ~request
-      ~path:documented.path
-      ~responses:responses.Response.declarations
-      handler
-  ;;
-
-  let handle_in_group handler ready =
+  let ( ==> ) ready handler =
     let (Ready { requested = { documented; request }; responses }) = ready in
     Group.Contextual_route
       (fun context ->
@@ -1982,6 +2068,4 @@ module Make (B : Backend.S) = struct
           ~responses:responses.Response.declarations
           handler)
   ;;
-
-  let ( ==> ) ready handler = handle_in_group handler ready
 end

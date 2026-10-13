@@ -120,3 +120,11 @@ module Page = struct
     ; total_pages : int
     }
 end
+
+module Session = struct
+  type t =
+    { token : string
+    ; username : string
+    ; expires_at : float
+    }
+end

@@ -6,6 +6,8 @@ module App =
   Petstore_app.Routes.Make (Backend) (Database) (Database.Pet_repository)
     (Database.Order_repository)
     (Database.User_repository)
+    (Database.Session_repository)
+    (Petstore_server_support.Session_runtime)
 
 module Endpoint = App.Endpoint
 module Access_log = Petstore_server_support.Access_log
@@ -62,7 +64,7 @@ let () =
   let compiled =
     App.compile
       ~interceptors:[ access_log ]
-      ~auth:(Petstore_app.Routes.auth_from_env ())
+      ~auth:(Petstore_app.Routes.auth_from_env_exn ())
       ~database:(Database.create ())
       ()
   in

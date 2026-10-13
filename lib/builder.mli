@@ -447,7 +447,7 @@ end
 
 (** Bidirectional codecs and declarations for scalar HTTP headers. Header names
     are validated during compilation; values emitted by responses are rejected
-    at runtime if they contain CR or LF. *)
+    at runtime if they contain CR, LF, or another forbidden control character. *)
 module Header : sig
   (** Codec for one header value and the schema exposed in OpenAPI. *)
   module type S = sig
@@ -641,9 +641,12 @@ module Make (B : Backend.S) : sig
     val empty : unit t
 
     (** On [Request_body.read], requires a JSON media type, reads no more than
-            [max_body_bytes], and invokes the DTO decoder. *)
+            [max_body_bytes], and invokes the DTO decoder. [media_types] defaults to
+            [["application/json"]]; explicit vendor JSON types are shared with
+            OpenAPI. Invalid declarations are rejected by [compile]. *)
     val json
       :  ?max_body_bytes:int
+      -> ?media_types:string list
       -> (module Request_payload.S with type t = 'a)
       -> 'a Request_body.t t
 
@@ -760,8 +763,8 @@ module Make (B : Backend.S) : sig
       end
     end
 
-    (** The raw backend request. Pass it to {!handle_with} explicitly
-            when framework-neutral dependencies are insufficient. *)
+    (** The raw backend request. Attach it with {!Group.make_with_context}
+        when framework-neutral dependencies are insufficient. *)
     val request : B.req t
   end
 
@@ -835,7 +838,8 @@ module Make (B : Backend.S) : sig
     (** Abstract route-group value consumed by {!compile}. *)
     type t
 
-    (** Creates a group of routes with shared metadata. [decode_error]
+    (** Creates a group of runtime-only routes from {!Unsafe.route} with shared
+        metadata. Typed endpoints use {!make_with_context}. [decode_error]
             overrides the application policy for fallible routes unless an
             endpoint supplies its own policy. *)
     val make
@@ -964,17 +968,9 @@ module Make (B : Backend.S) : sig
     -> ('handler, 'response_handler, 'request) requested
     -> ('handler, 'terminal, 'request) ready
 
-  (** Finalizes a route whose handler receives no explicit context. *)
-  val handle : 'handler -> ('handler, 'request -> reply B.io, 'request) ready -> route
-
-  (** Finalizes a route and supplies a typed context to its handler. *)
-  val handle_with
-    :  context:'context Context.t
-    -> 'handler
-    -> ('handler, 'context -> 'request -> reply B.io, 'request) ready
-    -> route
-
-  (** Infix finalizer for grouped routes. *)
+  (** Finalizes an endpoint whose handler receives its group context before
+      the request body. Use {!Group.make_with_context} with [Context.return ()]
+      when no dependencies are needed. *)
   val ( ==> )
     :  ('handler, 'context -> 'request -> reply B.io, 'request) ready
     -> 'handler
@@ -1008,6 +1004,10 @@ module Make (B : Backend.S) : sig
           { meth : string
           ; path : string
           } (** A typed route is not canonical or contains wildcard syntax. *)
+      | Invalid_openapi_method of
+          { meth : string
+          ; path : string
+          } (** A typed route uses a method OpenAPI 3.1 cannot describe. *)
       | Mismatched_path_parameters of
           { meth : string
           ; path : string
@@ -1030,19 +1030,39 @@ module Make (B : Backend.S) : sig
           { meth : string
           ; path : string
           ; status : int
-          } (** A declared status is outside the HTTP range 100 through 599. *)
+          } (** A declared status is outside the final HTTP range 200 through 599. *)
       | Invalid_no_content_response of
           { meth : string
           ; path : string
+          ; status : int
           }
       | Invalid_body_limit of
           { meth : string
           ; path : string
           ; max_body_bytes : int
           }
+      | Invalid_json_media_types of
+          { meth : string
+          ; path : string
+          ; media_types : string list
+          }
+      (** JSON media types must be a non-empty list of concrete application/json
+          or application/subtype+json tokens, without parameters or wildcards. *)
+      | Reserved_request_header of
+          { meth : string
+          ; path : string
+          ; name : string
+          }
+      (** Accept, Content-Type, and Authorization belong to body/security contracts. *)
       | Invalid_header_name of
           { meth : string
           ; path : string
+          ; name : string
+          }
+      | Reserved_response_header of
+          { meth : string
+          ; path : string
+          ; status : int
           ; name : string
           }
       | Duplicate_response_header of
@@ -1062,6 +1082,17 @@ module Make (B : Backend.S) : sig
       | Invalid_security_scheme_name of string
       | Conflicting_security_scheme of string
       | Invalid_security_scope of
+          { scheme : string
+          ; scope : string
+          }
+      | Invalid_security_scheme_parameter of
+          { scheme : string
+          ; parameter : string
+          }
+      | Invalid_security_authorization_url of string
+      (** The scheme declares an invalid absolute HTTP(S) authorization URI,
+          including a malformed host literal, percent escape, or fragment. *)
+      | Duplicate_oauth_scope of
           { scheme : string
           ; scope : string
           }

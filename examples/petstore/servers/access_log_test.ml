@@ -102,3 +102,13 @@ let () =
   in
   Access_log.finish broken_request ~status:200
 ;;
+
+let () =
+  let module Runtime = Petstore_server_support.Session_runtime in
+  let first = Runtime.token () |> Result.ok_or_failwith in
+  let second = Runtime.token () |> Result.ok_or_failwith in
+  assert (String.length first = 64);
+  assert (String.for_all first ~f:Char.is_hex_digit);
+  assert (not (String.equal first second));
+  assert (Float.(Runtime.now () > 0.))
+;;

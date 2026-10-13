@@ -151,19 +151,29 @@ let decode_error =
       Error_payload.{ kind = error_kind error; message = error_message error })
 ;;
 
-let group ?decode_error routes = Group.make ?decode_error ~description:"Test API" routes
+let group ?decode_error routes =
+  Group.make_with_context
+    ~context:(Context.return ())
+    ?decode_error
+    ~description:"Test API"
+    routes
+;;
 
 let echo_route ?(max_body_bytes = 64) () =
   let ok = case `OK (Response.json (module Item)) in
   post / "items"
   |> documented ~operation_id:"echoItem"
-  |> accepts (Request.json ~max_body_bytes (module Item))
+  |> accepts
+       (Request.json
+          ~max_body_bytes
+          ~media_types:[ "application/json"; "application/vnd.test+json" ]
+          (module Item))
   |> returns ok
-  |> handle @@ fun ok body ->
-     let%bind item = Request_body.read body in
-     match item with
-     | Ok item -> respond ok item
-     | Error error -> Request_body.reject error
+  ==> fun ok () body ->
+  let%bind item = Request_body.read body in
+  match item with
+  | Ok item -> respond ok item
+  | Error error -> Request_body.reject error
 ;;
 
 let binary_route =
@@ -172,11 +182,11 @@ let binary_route =
   |> documented ~operation_id:"uploadBinary"
   |> accepts (Request.binary ~max_body_bytes:4 ~description:"Opaque bytes" ())
   |> returns ok
-  |> handle @@ fun ok body ->
-     let%bind bytes = Request_body.read body in
-     match bytes with
-     | Ok bytes -> respond ok (Int.to_string (String.length bytes))
-     | Error error -> Request_body.reject error
+  ==> fun ok () body ->
+  let%bind bytes = Request_body.read body in
+  match bytes with
+  | Ok bytes -> respond ok (Int.to_string (String.length bytes))
+  | Error error -> Request_body.reject error
 ;;
 
 let call = Typed_endpoint_testing.Client.call
@@ -201,23 +211,29 @@ let%expect_test "request body stays unread until read and is read only once" =
     |> documented
     |> accepts (Request.text ~description:"Body" ())
     |> returns (case `OK (Response.text ~description:"Result" ()))
-    |> handle @@ fun ok _body -> respond ok "ignored"
+    ==> fun ok () _body -> respond ok "ignored"
   in
   let repeated =
     post / "repeated"
     |> documented
     |> accepts (Request.text ~max_body_bytes:4 ~description:"Body" ())
     |> returns (case `OK (Response.text ~description:"Result" ()))
-    |> handle @@ fun ok body ->
-       let%bind first = Request_body.read body in
-       let%bind second = Request_body.read body in
-       match first, second with
-       | Ok first, Ok second -> respond ok (first ^ second)
-       | Error error, Error _ -> Request_body.reject error
-       | _ -> failwith "memoized body returned inconsistent results"
+    ==> fun ok () body ->
+    let%bind first = Request_body.read body in
+    let%bind second = Request_body.read body in
+    match first, second with
+    | Ok first, Ok second -> respond ok (first ^ second)
+    | Error error, Error _ -> Request_body.reject error
+    | _ -> failwith "memoized body returned inconsistent results"
   in
   let app =
-    compile_exn [ Group.make ~description:"Body" [ ignored; repeated ] ] |> Compiled.app
+    compile_exn
+      [ Group.make_with_context
+          ~context:(Context.return ())
+          ~description:"Body"
+          [ ignored; repeated ]
+      ]
+    |> Compiled.app
   in
   Counting_backend.reads := 0;
   let ignored_response =
@@ -257,11 +273,11 @@ let%expect_test "deferred rejection uses endpoint, group, then compile policy" =
     |> documented ?decode_error
     |> accepts (Request.text ~description:"Body" ())
     |> returns (case `OK (Response.empty ~description:"OK" ()))
-    |> handle @@ fun ok body ->
-       let%bind result = Request_body.read body in
-       match result with
-       | Ok _ -> respond ok ()
-       | Error error -> Request_body.reject error
+    ==> fun ok () body ->
+    let%bind result = Request_body.read body in
+    match result with
+    | Ok _ -> respond ok ()
+    | Error error -> Request_body.reject error
   in
   let compiled =
     compile_exn
@@ -463,8 +479,8 @@ let primitive_route =
   |> documented
   |> accepts Request.empty
   |> returns ok
-  |> handle @@ fun id enabled ok () ->
-     respond ok (Int.to_string id ^ ":" ^ Bool.to_string enabled)
+  ==> fun id enabled ok () () ->
+  respond ok (Int.to_string id ^ ":" ^ Bool.to_string enabled)
 ;;
 
 let staged_route =
@@ -479,8 +495,8 @@ let staged_route =
        ~description:"Exercises the URI-first staged facade."
   |> accepts Request.empty
   |> returns ok
-  |> handle @@ fun id enabled ok () ->
-     respond ok (Int.to_string id ^ ":" ^ Bool.to_string enabled)
+  ==> fun id enabled ok () () ->
+  respond ok (Int.to_string id ^ ":" ^ Bool.to_string enabled)
 ;;
 
 let%expect_test "staged URI DSL preserves handler order and OpenAPI" =
@@ -521,9 +537,9 @@ let%expect_test "typed request and response headers drive runtime and OpenAPI" =
     |> documented ~operation_id:"typedHeaders"
     |> accepts Request.empty
     |> returns ok
-    |> handle @@ fun version request_id ok () ->
-       let request_id = Option.value request_id ~default:"none" in
-       respond ok ("ok", Int.to_string version ^ ":" ^ request_id)
+    ==> fun version request_id ok () () ->
+    let request_id = Option.value request_id ~default:"none" in
+    respond ok ("ok", Int.to_string version ^ ":" ^ request_id)
   in
   let compiled = compile_exn [ group [ route ] ] in
   let response =
@@ -566,11 +582,8 @@ let%expect_test "response header values reject line breaks without echoing the v
     let ok =
       case `OK (Response.text ~description:"Response" () |> Response.with_header unsafe)
     in
-    get / "unsafe-header"
-    |> documented
-    |> accepts Request.empty
-    |> returns ok
-    |> handle @@ fun ok () -> respond ok ("bad\r\nInjected: yes", "body")
+    get / "unsafe-header" |> documented |> accepts Request.empty |> returns ok
+    ==> fun ok () () -> respond ok ("bad\r\nInjected: yes", "body")
   in
   let app = compile_exn [ group [ route ] ] |> Compiled.app in
   (try ignore (call app `GET "/unsafe-header" : Typed_endpoint_testing.response) with
@@ -579,13 +592,28 @@ let%expect_test "response header values reject line breaks without echoing the v
     {| invalid response header X-Value: value contains a carriage return or line feed |}]
 ;;
 
+let%expect_test "response header values reject NUL and other forbidden controls" =
+  let unsafe =
+    Header.required "X-Value" (Header.string ~description:"Validated value" ())
+  in
+  let route =
+    let ok =
+      case `OK (Response.text ~description:"Response" () |> Response.with_header unsafe)
+    in
+    get / "nul-header" |> documented |> accepts Request.empty |> returns ok
+    ==> fun ok () () -> respond ok ("value\000tail", "body")
+  in
+  let app = compile_exn [ group [ route ] ] |> Compiled.app in
+  (try ignore (call app `GET "/nul-header" : Typed_endpoint_testing.response) with
+   | Runtime_error error -> Stdlib.print_endline (Runtime_error.to_string error));
+  [%expect
+    {| invalid response header X-Value: value contains a forbidden control character |}]
+;;
+
 let empty_response_route =
   let ok = case `OK (Response.empty ~description:"No representation" ()) in
-  get / "empty"
-  |> documented
-  |> accepts Request.empty
-  |> returns ok
-  |> handle @@ fun ok () -> respond ok ()
+  get / "empty" |> documented |> accepts Request.empty |> returns ok ==> fun ok () () ->
+  respond ok ()
 ;;
 
 let%expect_test "testing client exposes representation and routing headers" =
@@ -616,15 +644,12 @@ let%expect_test "static routes take precedence over path captures" =
     |> documented
     |> accepts Request.empty
     |> returns ok
-    |> handle @@ fun value ok () -> respond ok ("capture:" ^ value)
+    ==> fun value ok () () -> respond ok ("capture:" ^ value)
   in
   let fixed =
     let ok = case `OK (Response.text ~description:"Static" ()) in
-    get / "priority" / "fixed"
-    |> documented
-    |> accepts Request.empty
-    |> returns ok
-    |> handle @@ fun ok () -> respond ok "static"
+    get / "priority" / "fixed" |> documented |> accepts Request.empty |> returns ok
+    ==> fun ok () () -> respond ok "static"
   in
   let app = compile_exn [ group [ captured; fixed ] ] |> Compiled.app in
   let fixed = call app `GET "/priority/fixed" in
@@ -685,18 +710,20 @@ let dependency_context =
 
 let dependency_route =
   let ok = case `OK (Response.text ~description:"Injected value" ()) in
-  get / "dependency"
-  |> documented
-  |> accepts Request.empty
-  |> returns ok
-  |> handle_with ~context:dependency_context @@ fun ok value () ->
-     respond ok (Int.to_string value)
+  get / "dependency" |> documented |> accepts Request.empty |> returns ok
+  ==> fun ok value () -> respond ok (Int.to_string value)
 ;;
 
 let%expect_test "Context applicative composes dependency injection" =
   let response =
-    compile_exn [ group [ dependency_route ] ] |> Compiled.app |> fun app ->
-    call app `GET "/dependency"
+    compile_exn
+      [ Group.make_with_context
+          ~context:dependency_context
+          ~description:"Test API"
+          [ dependency_route ]
+      ]
+    |> Compiled.app
+    |> fun app -> call app `GET "/dependency"
   in
   Stdlib.Printf.printf
     "%d %s"
@@ -857,15 +884,20 @@ let secured_guard =
 
 let secured_route =
   let ok = case `OK (Response.text ~description:"OK" ()) in
-  get / "secure"
-  |> documented
-  |> accepts Request.empty
-  |> returns ok
-  |> handle_with ~context:secured_guard @@ fun ok () () -> respond ok "ok"
+  get / "secure" |> documented |> accepts Request.empty |> returns ok ==> fun ok () () ->
+  respond ok "ok"
 ;;
 
 let%expect_test "guard security is rendered as OR alternatives" =
-  let document = compile_exn [ group [ secured_route ] ] |> Compiled.openapi in
+  let document =
+    compile_exn
+      [ Group.make_with_context
+          ~context:secured_guard
+          ~description:"Test API"
+          [ secured_route ]
+      ]
+    |> Compiled.openapi
+  in
   let open Yojson.Safe.Util in
   let security =
     document |> member "paths" |> member "/secure" |> member "get" |> member "security"
@@ -889,11 +921,8 @@ end
 
 let conflict_route =
   let ok = case `OK (Response.json (module Conflicting_item)) in
-  get / "conflict"
-  |> documented
-  |> accepts Request.empty
-  |> returns ok
-  |> handle @@ fun ok () -> respond ok "conflict"
+  get / "conflict" |> documented |> accepts Request.empty |> returns ok
+  ==> fun ok () () -> respond ok "conflict"
 ;;
 
 let%expect_test "conflicting component schemas are rejected" =
@@ -917,11 +946,8 @@ let%expect_test "routes with indistinguishable capture shapes are rejected" =
   let string = Parameter.string ~description:"Identifier" () in
   let route name =
     let ok = case `OK (Response.text ~description:"Pet" ()) in
-    get / "pets" /: arg name string
-    |> documented
-    |> accepts Request.empty
-    |> returns ok
-    |> handle @@ fun _id ok () -> respond ok "pet"
+    get / "pets" /: arg name string |> documented |> accepts Request.empty |> returns ok
+    ==> fun _id ok () () -> respond ok "pet"
   in
   print_compile_errors [ group [ route "id"; route "name" ] ];
   [%expect {| ambiguous route: get /pets/:name conflicts with /pets/:id |}]
@@ -929,18 +955,20 @@ let%expect_test "routes with indistinguishable capture shapes are rejected" =
 
 let%expect_test "group prefixes must contain canonical static segments" =
   print_compile_errors
-    [ Group.make ~prefix:[ "/v1" ] ~description:"Invalid prefix" [ primitive_route ] ];
+    [ Group.make_with_context
+        ~context:(Context.return ())
+        ~prefix:[ "/v1" ]
+        ~description:"Invalid prefix"
+        [ primitive_route ]
+    ];
   [%expect {| invalid group prefix segment: /v1 |}]
 ;;
 
 let%expect_test "typed routes reject wildcards and undeclared captures" =
   let route segment =
     let ok = case `OK (Response.text ~description:"Response" ()) in
-    get / segment
-    |> documented
-    |> accepts Request.empty
-    |> returns ok
-    |> handle @@ fun ok () -> respond ok "response"
+    get / segment |> documented |> accepts Request.empty |> returns ok ==> fun ok () () ->
+    respond ok "response"
   in
   print_compile_errors [ group [ route "*"; route ":undeclared" ] ];
   [%expect
@@ -949,17 +977,65 @@ let%expect_test "typed routes reject wildcards and undeclared captures" =
     path captures do not match declared parameters: get /:undeclared; declared [], captures [undeclared] |}]
 ;;
 
+let%expect_test "typed paths reject query and fragment delimiters" =
+  let route segment =
+    let ok = case `OK (Response.text ~description:"Response" ()) in
+    get / segment |> documented |> accepts Request.empty |> returns ok ==> fun ok () () ->
+    respond ok "response"
+  in
+  print_compile_errors [ group [ route "items?draft=true"; route "items#latest" ] ];
+  [%expect
+    {|
+    invalid typed route path: get /items?draft=true
+    invalid typed route path: get /items#latest |}]
+;;
+
+let%expect_test "typed routes reject methods outside the OpenAPI Path Item set" =
+  let route meth path =
+    let ok = case `OK (Response.text ~description:"Response" ()) in
+    Endpoint.meth meth |> fun uri ->
+    uri / path |> documented |> accepts Request.empty |> returns ok ==> fun ok () () ->
+    respond ok "response"
+  in
+  print_compile_errors
+    [ group [ route (`Other "PROPFIND") "custom"; route `CONNECT "tunnel" ] ];
+  [%expect
+    {|
+    HTTP method is not supported by OpenAPI: PROPFIND /custom
+    HTTP method is not supported by OpenAPI: connect /tunnel |}]
+;;
+
+let%expect_test "response payloads are rejected for bodyless status codes" =
+  let route status path =
+    let invalid = case (`Code status) (Response.text ~description:"Invalid" ()) in
+    get / path |> documented |> accepts Request.empty |> returns invalid
+    ==> fun invalid () () -> respond invalid "body"
+  in
+  print_compile_errors
+    [ group [ route 101 "continue"; route 205 "reset"; route 304 "cached" ] ];
+  [%expect
+    {|
+    invalid response status 101: get /continue
+    response status 101 must use an empty payload: get /continue
+    response status 205 must use an empty payload: get /reset
+    response status 304 must use an empty payload: get /cached
+    |}]
+;;
+
 let%expect_test "a root route is joined to its group prefix without a trailing slash" =
   let route =
     let ok = case `OK (Response.text ~description:"Root" ()) in
-    get
-    |> documented
-    |> accepts Request.empty
-    |> returns ok
-    |> handle @@ fun ok () -> respond ok "root"
+    get |> documented |> accepts Request.empty |> returns ok ==> fun ok () () ->
+    respond ok "root"
   in
   let compiled =
-    compile_exn [ Group.make ~prefix:[ "v1" ] ~description:"Version root" [ route ] ]
+    compile_exn
+      [ Group.make_with_context
+          ~context:(Context.return ())
+          ~prefix:[ "v1" ]
+          ~description:"Version root"
+          [ route ]
+      ]
   in
   let response = call (Compiled.app compiled) `GET "/v1" in
   let open Yojson.Safe.Util in
@@ -981,7 +1057,7 @@ let%expect_test "duplicate parameters in one location are rejected" =
     |> documented
     |> accepts Request.empty
     |> returns ok
-    |> handle @@ fun _first _second ok () -> respond ok "result"
+    ==> fun _first _second ok () () -> respond ok "result"
   in
   print_compile_errors [ group [ route ] ];
   [%expect {| duplicate query parameter tag: get /search |}]
@@ -998,7 +1074,7 @@ let%expect_test "header declarations validate names and duplicates" =
     |> documented
     |> accepts Request.empty
     |> returns ok
-    |> handle @@ fun _value ok () -> respond ok "ok"
+    ==> fun _value ok () () -> respond ok "ok"
   in
   let duplicate_route =
     let ok =
@@ -1008,11 +1084,8 @@ let%expect_test "header declarations validate names and duplicates" =
          |> Response.with_header duplicate
          |> Response.with_header duplicate)
     in
-    get / "duplicate-header"
-    |> documented
-    |> accepts Request.empty
-    |> returns ok
-    |> handle @@ fun ok () -> respond ok ("first", ("second", "ok"))
+    get / "duplicate-header" |> documented |> accepts Request.empty |> returns ok
+    ==> fun ok () () -> respond ok ("first", ("second", "ok"))
   in
   print_compile_errors [ group [ invalid_route; duplicate_route ] ];
   [%expect
@@ -1021,14 +1094,29 @@ let%expect_test "header declarations validate names and duplicates" =
     duplicate response header X-Value for status 200: get /duplicate-header |}]
 ;;
 
+let%expect_test "Content-Type cannot be declared as an OpenAPI response header" =
+  let content_type =
+    Header.required "Content-Type" (Header.string ~description:"Media type" ())
+  in
+  let route =
+    let ok =
+      case
+        `OK
+        (Response.text ~description:"Response" () |> Response.with_header content_type)
+    in
+    get / "reserved-content-type" |> documented |> accepts Request.empty |> returns ok
+    ==> fun ok () () -> respond ok ("application/custom", "body")
+  in
+  print_compile_errors [ group [ route ] ];
+  [%expect
+    {| response header Content-Type is reserved for status 200: get /reserved-content-type |}]
+;;
+
 let%expect_test "response status must be a valid HTTP status" =
   let route =
     let invalid = case (`Code 99) (Response.text ~description:"Invalid" ()) in
-    get / "invalid-status"
-    |> documented
-    |> accepts Request.empty
-    |> returns invalid
-    |> handle @@ fun invalid () -> respond invalid "invalid"
+    get / "invalid-status" |> documented |> accepts Request.empty |> returns invalid
+    ==> fun invalid () () -> respond invalid "invalid"
   in
   print_compile_errors [ group [ route ] ];
   [%expect {| invalid response status 99: get /invalid-status |}]
@@ -1042,7 +1130,7 @@ let%expect_test "duplicate response case statuses are rejected" =
     |> documented
     |> accepts Request.empty
     |> returns (first <|> second)
-    |> handle @@ fun first _second () -> respond first "first"
+    ==> fun first _second () () -> respond first "first"
   in
   print_compile_errors [ group [ route ] ];
   [%expect {| duplicate response status 200: get /duplicate-response |}]
@@ -1052,24 +1140,18 @@ let%expect_test "an escaped response capability cannot be used by another endpoi
   let escaped = ref None in
   let source =
     let source = case `OK (Response.text ~description:"Source" ()) in
-    get / "response-source"
-    |> documented
-    |> accepts Request.empty
-    |> returns source
-    |> handle @@ fun source () ->
-       escaped := Some source;
-       respond source "source"
+    get / "response-source" |> documented |> accepts Request.empty |> returns source
+    ==> fun source () () ->
+    escaped := Some source;
+    respond source "source"
   in
   let target =
     let declared = case `OK (Response.text ~description:"Declared" ()) in
-    get / "undeclared-case"
-    |> documented
-    |> accepts Request.empty
-    |> returns declared
-    |> handle @@ fun _declared () ->
-       match !escaped with
-       | Some other -> respond other "other"
-       | None -> failwith "source endpoint was not called"
+    get / "undeclared-case" |> documented |> accepts Request.empty |> returns declared
+    ==> fun _declared () () ->
+    match !escaped with
+    | Some other -> respond other "other"
+    | None -> failwith "source endpoint was not called"
   in
   let app = compile_exn [ group [ source; target ] ] |> Compiled.app in
   ignore (call app `GET "/response-source" : Typed_endpoint_testing.response);
@@ -1088,16 +1170,15 @@ let%expect_test "positional response capabilities retain status and payload type
     |> returns
          (case `OK (Response.json (module Item))
           <|> case `Not_found (Response.json (module Error_payload)))
-    |> handle
-       @@
-       fun missing
-         (ok : ([ `OK ], Item.t) Response.case)
-         (not_found : ([ `Not_found ], Error_payload.t) Response.case)
-         () ->
-       match missing with
-       | Some true ->
-         respond not_found Error_payload.{ kind = "missing"; message = "gone" }
-       | Some false | None -> respond ok Item.{ id = 7; name = "present" }
+    ==>
+    fun missing
+      (ok : ([ `OK ], Item.t) Response.case)
+      (not_found : ([ `Not_found ], Error_payload.t) Response.case)
+      ()
+      () ->
+    match missing with
+    | Some true -> respond not_found Error_payload.{ kind = "missing"; message = "gone" }
+    | Some false | None -> respond ok Item.{ id = 7; name = "present" }
   in
   let app = compile_exn [ group [ route ] ] |> Compiled.app in
   let response = call app `GET "/case-choice" in
@@ -1124,8 +1205,8 @@ let%expect_test "typed response cases cover arbitrary statuses" =
     |> documented
     |> accepts Request.empty
     |> returns (accepted <|> conflict <|> unavailable <|> redirect)
-    |> handle @@ fun accepted _conflict _unavailable _redirect () ->
-       respond accepted Item.{ id = 202; name = "accepted" }
+    ==> fun accepted _conflict _unavailable _redirect () () ->
+    respond accepted Item.{ id = 202; name = "accepted" }
   in
   let compiled = compile_exn [ group [ route ] ] in
   let response = call (Compiled.app compiled) `GET "/status-families" in
@@ -1173,14 +1254,53 @@ let%expect_test "unknown OAuth scopes are rejected" =
   in
   let route =
     let ok = case `OK (Response.text ~description:"OK" ()) in
-    get / "scope"
-    |> documented
-    |> accepts Request.empty
-    |> returns ok
-    |> handle_with ~context:guard @@ fun ok () () -> respond ok "ok"
+    get / "scope" |> documented |> accepts Request.empty |> returns ok ==> fun ok () () ->
+    respond ok "ok"
   in
-  print_compile_errors [ group [ route ] ];
+  print_compile_errors
+    [ Group.make_with_context ~context:guard ~description:"Test API" [ route ] ];
   [%expect {| invalid security scope write for scheme oauth |}]
+;;
+
+let%expect_test "security schemes validate wire names, URLs, and unique scopes" =
+  let api_key =
+    Security.Scheme.api_key
+      ~name:"invalid_key"
+      ~parameter:"Bad Key"
+      ~location:`Header
+      ~description:"Invalid header name"
+      ()
+  in
+  let oauth =
+    Security.Scheme.oauth2_implicit
+      ~name:"invalid_oauth"
+      ~authorization_url:"https://@/authorize"
+      ~scopes:[ "read", "Read access"; "read", "Duplicate read access" ]
+      ~description:"Invalid OAuth scheme"
+      ()
+  in
+  let route scheme path =
+    let guard =
+      Guard.v
+        ~security:[ Security.require scheme ]
+        ~status:`Unauthorized
+        ~response:(Response.json (module Error_payload))
+        ~check:(fun _request -> return (Ok ()))
+        ()
+    in
+    let ok = case `OK (Response.text ~description:"OK" ()) in
+    let route =
+      get / path |> documented |> accepts Request.empty |> returns ok ==> fun ok () () ->
+      respond ok "ok"
+    in
+    Group.make_with_context ~context:guard ~description:"Test API" [ route ]
+  in
+  print_compile_errors [ route api_key "invalid-key"; route oauth "invalid-oauth" ];
+  [%expect
+    {|
+    invalid API-key header name Bad Key for security scheme invalid_key
+    invalid OAuth authorization URL for security scheme invalid_oauth
+    duplicate OAuth scope read for security scheme invalid_oauth |}]
 ;;
 
 let%expect_test "conflicting security scheme definitions are rejected" =
@@ -1203,19 +1323,29 @@ let%expect_test "conflicting security scheme definitions are rejected" =
   in
   let route =
     let ok = case `OK (Response.text ~description:"OK" ()) in
-    get / "scheme-conflict"
-    |> documented
-    |> accepts Request.empty
-    |> returns ok
-    |> handle_with ~context:(Context.both (guard first) (guard second))
-       @@ fun ok ((), ()) () -> respond ok "ok"
+    get / "scheme-conflict" |> documented |> accepts Request.empty |> returns ok
+    ==> fun ok ((), ()) () -> respond ok "ok"
   in
-  print_compile_errors [ group [ route ] ];
+  print_compile_errors
+    [ Group.make_with_context
+        ~context:(Context.both (guard first) (guard second))
+        ~description:"Test API"
+        [ route ]
+    ];
   [%expect {| conflicting security scheme: auth |}]
 ;;
 
 let%expect_test "OpenAPI rendering is deterministic and configurable" =
-  let compiled = compile_exn [ group ~decode_error [ echo_route (); secured_route ] ] in
+  let compiled =
+    compile_exn
+      [ group ~decode_error [ echo_route () ]
+      ; Group.make_with_context
+          ~context:secured_guard
+          ~decode_error
+          ~description:"Test API"
+          [ secured_route ]
+      ]
+  in
   let config =
     Openapi.Config.v
       ~title:"Example"
@@ -1232,4 +1362,25 @@ let%expect_test "OpenAPI rendering is deterministic and configurable" =
     (first |> member "info" |> member "title" |> to_string)
     (first |> member "servers" |> index 0 |> member "url" |> to_string);
   [%expect {| equal=true title=Example server=https://api.example.test |}]
+;;
+
+let%expect_test "JSON request bodies document structured JSON suffix media types" =
+  let document =
+    compile_exn [ group ~decode_error [ echo_route () ] ] |> Compiled.openapi
+  in
+  let content =
+    let open Yojson.Safe.Util in
+    document
+    |> member "paths"
+    |> member "/items"
+    |> member "post"
+    |> member "requestBody"
+    |> member "content"
+  in
+  let open Yojson.Safe.Util in
+  Stdlib.Printf.printf
+    "json=%b suffix=%b"
+    (not (Yojson.Safe.equal (member "application/json" content) `Null))
+    (not (Yojson.Safe.equal (member "application/vnd.test+json" content) `Null));
+  [%expect {| json=true suffix=true |}]
 ;;

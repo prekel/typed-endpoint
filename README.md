@@ -27,7 +27,7 @@ Deriver `typed-endpoint-ppx` перенесён и адаптирован на �
   400/413/415;
 - именованные схемы попадают в `components/schemas`, конфликт имён отклоняется;
 - компиляция отклоняет неоднозначные route-shape, повторные параметры и
-  status-коды вне диапазона HTTP;
+  финальные status-коды вне 200–599; ответы 204/205/304 требуют пустого тела;
 - `Guard` одновременно задаёт runtime-проверку и OpenAPI security requirement;
 - route-aware interceptors получают типизированный `Route_info` с шаблоном
   пути, tags и security, но без application service locator;
@@ -91,6 +91,12 @@ handler — `Request_body.t`. Вызов `Request_body.read` возвращае�
 эффекте backend; `Request_body.reject` применяет настроенный ответ при ошибке.
 Тело и `Content-Type` проверяются только при первом чтении.
 
+`Request.json` по умолчанию принимает только `application/json`. Для vendor
+JSON перечислите конкретные типы через
+`~media_types:[ "application/json"; "application/vnd.example+json" ]`:
+runtime и OpenAPI используют один список и один codec. Суффиксный wildcard
+`application/*+json` не поддерживается.
+
 Если один guard или набор зависимостей используется несколькими маршрутами,
 контекст один раз прикрепляется через `Group.make_with_context`. Его тип
 остаётся связан с handler каждого маршрута.
@@ -107,22 +113,63 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 Так старые Opium endpoint можно заменять по одному без передачи server lifecycle
 библиотеке.
 
-## Установка и первый сервер
+## Установка из GitHub
 
-Чтобы установить версию `v0.2.0` из исходников, получите тег и установите
-нужные для примера пакеты:
+Все шесть пакетов находятся в одном репозитории. Их зависимости друг от друга
+требуют одинаковую версию, поэтому закрепляйте их на одном теге. Например,
+для установки всех пакетов из `v0.2.1` в switch OCaml 5.1.1 или новее:
 
-```sh
-git clone --branch v0.2.0 --depth 1 https://github.com/prekel/typed-endpoint.git
-cd typed-endpoint
-opam install ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-opium.opam
+```bash
+typed_endpoint_packages=(
+  typed-endpoint
+  typed-endpoint-ppx
+  typed-endpoint-testing
+  typed-endpoint-opium
+  typed-endpoint-dream
+  typed-endpoint-eio
+)
+for package in "${typed_endpoint_packages[@]}"; do
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.2.1'
+done
+opam install "${typed_endpoint_packages[@]}"
 ```
+
+Если нужны только некоторые пакеты, оставьте в списке их имена и зависимости
+из этого репозитория. Для первого сервера ниже достаточно `typed-endpoint`,
+`typed-endpoint-ppx` и `typed-endpoint-opium`; они поддерживают OCaml 4.14.1.
+При установке адаптеров с `--with-test` добавьте `typed-endpoint-testing`.
+
+Чтобы обновить существующие pins до `v0.2.1`, сначала закрепите все выбранные
+пакеты на этом теге, затем выполните общий upgrade. При переходе на следующий
+опубликованный тег замените `next_tag`:
+
+```bash
+typed_endpoint_packages=(
+  typed-endpoint
+  typed-endpoint-ppx
+  typed-endpoint-testing
+  typed-endpoint-opium
+  typed-endpoint-dream
+  typed-endpoint-eio
+)
+next_tag=v0.2.1
+for package in "${typed_endpoint_packages[@]}"; do
+  opam pin add -yn "$package" "git+https://github.com/prekel/typed-endpoint.git#$next_tag"
+done
+opam upgrade "${typed_endpoint_packages[@]}"
+```
+
+`-n` откладывает установку до общего `opam install` или `opam upgrade`, а `-y`
+подтверждает замену существующего pin. Тег указывается после `#` в Git URL.
+Изменения API версии `v0.2.1` описаны в [истории изменений](CHANGES.md).
+
+## Первый сервер
 
 Создайте каталог приложения:
 
 ```sh
-mkdir ../hello_typed_endpoint
-cd ../hello_typed_endpoint
+mkdir hello_typed_endpoint
+cd hello_typed_endpoint
 ```
 
 Минимальный `dune-project`:
@@ -224,11 +271,16 @@ handler, поэтому перед рендерингом библиотека �
 ## Petstore
 
 В [examples/petstore](examples/petstore/README.md) находится расширенный пример
-с полным route surface Swagger Petstore v3: разделы `pet`, `store` и `user`,
+на основе Swagger Petstore v3: разделы `pet`, `store` и `user`,
 бинарная загрузка изображений, отдельное пагинированное расширение,
 OAuth/API-key guards, DI доменных сервисов, страница выбора Swagger UI, Scalar,
 RapiDoc, Redoc и Stoplight Elements на `/docs`, `/openapi.json` и runtime-only
 `/health`. Один DSL запускается через testing, Opium, Dream и Eio.
+
+Login принимает обязательные credentials в JSON через `POST /user/login` и
+создаёт сессию на один час; `POST /user/logout` отзывает её. Независимый demo
+bearer сохранён. Ответы пользователя не содержат пароль. Эти и остальные
+отличия от исходного Petstore описаны в README примера.
 
 ```sh
 opam exec -- dune runtest examples/petstore/test
@@ -246,9 +298,11 @@ opam exec -- dune exec examples/petstore/servers/opium_server.exe
 | `typed-endpoint-dream` | 5.1.1 | Dream 1.0.0~alpha8 |
 | `typed-endpoint-eio` | 5.1.1 | cohttp-eio 6.3.0, Eio >= 1.2 |
 
-Petstore с Opium также работает на OCaml 4.14.1. Сейчас один endpoint объявляет
-один формат request body; multipart/form-data и streaming responses не входят
-в API. Подробности — в [руководстве по эксплуатации](doc/production.mld).
+Petstore с Opium также работает на OCaml 4.14.1. Один endpoint объявляет один
+формат request body; для JSON можно перечислить несколько конкретных media
+types с одним codec. Альтернативные форматы JSON/XML, multipart/form-data и
+streaming responses не входят в API. Подробности — в
+[руководстве по эксплуатации](doc/production.mld).
 
 ## Разработка
 
@@ -267,6 +321,8 @@ make check
 
 - [Быстрый старт и DTO](doc/quickstart.mld)
 - [Эксплуатация и ограничения](doc/production.mld)
+- [Покрытие OpenAPI 3.1](doc/openapi_coverage.mld)
+- [Миграция API](doc/migration_prerelease.mld)
 - [История изменений](CHANGES.md)
 - [План развития](doc/roadmap.md)
 - [Сообщение об уязвимости](SECURITY.md)

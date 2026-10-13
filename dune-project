@@ -2,7 +2,7 @@
 
 (name typed-endpoint)
 
-(version 0.2.0)
+(version 0.2.1)
 
 (generate_opam_files true)
 
@@ -81,6 +81,7 @@
   (ppx_let (>= v0.16.0))
   (ppx_deriving_yojson :with-test)
   (typed-endpoint-ppx :with-test)
+  (ppxlib (and (>= 0.35.0) :with-test))
   (ocamlfind :with-test)
   (ppx_expect :with-test))
  (tags

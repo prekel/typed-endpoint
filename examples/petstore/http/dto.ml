@@ -2,28 +2,73 @@ open! Base
 open Typed_endpoint
 
 module Schema_scalar = struct
+  let int32_min = Int64.(to_int_exn (max (of_int Int.min_value) (-2147483648L)))
+  let int32_max = Int64.(to_int_exn (min (of_int Int.max_value) 2147483647L))
+
   module Int64 = struct
     type t = int [@@deriving yojson]
 
-    let t_jsonschema = Json_schema.integer_exn ~format:`Int64 ()
+    let t_jsonschema =
+      Json_schema.integer_exn
+        ~format:`Int64
+        ~minimum:Int.min_value
+        ~maximum:Int.max_value
+        ()
+    ;;
   end
 
   module Int32 = struct
     type t = int [@@deriving yojson]
 
-    let t_jsonschema = Json_schema.integer_exn ~format:`Int32 ()
+    let decode_int = of_yojson
+
+    let of_yojson json =
+      Result.bind (decode_int json) ~f:(fun value ->
+        if value >= int32_min && value <= int32_max then
+          Ok value
+        else
+          Error "integer outside int32 range")
+    ;;
+
+    let t_jsonschema =
+      Json_schema.integer_exn ~format:`Int32 ~minimum:int32_min ~maximum:int32_max ()
+    ;;
   end
 
   module Positive_int64 = struct
     type t = int [@@deriving yojson]
 
-    let t_jsonschema = Json_schema.integer_exn ~format:`Int64 ~minimum:1 ()
+    let decode_int = of_yojson
+
+    let of_yojson json =
+      Result.bind (decode_int json) ~f:(fun value ->
+        if value > 0 then
+          Ok value
+        else
+          Error "expected a positive integer")
+    ;;
+
+    let t_jsonschema =
+      Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ()
+    ;;
   end
 
   module Positive_int32 = struct
     type t = int [@@deriving yojson]
 
-    let t_jsonschema = Json_schema.integer_exn ~format:`Int32 ~minimum:1 ()
+    let decode_int = of_yojson
+
+    let of_yojson json =
+      Result.bind (decode_int json) ~f:(fun value ->
+        if value > 0 && value <= int32_max then
+          Ok value
+        else
+          Error "expected a positive int32")
+    ;;
+
+    let t_jsonschema =
+      Json_schema.integer_exn ~format:`Int32 ~minimum:1 ~maximum:int32_max ()
+    ;;
   end
 
   module Pet_status = struct
@@ -253,7 +298,14 @@ module Inventory = struct
 
   let metadata =
     Metadata.v
-      ~schema:(Json_schema.dictionary ~values:(Json_schema.integer_exn ~format:`Int32 ()))
+      ~schema:
+        (Json_schema.dictionary
+           ~values:
+             (Json_schema.integer_exn
+                ~format:`Int32
+                ~minimum:0
+                ~maximum:Schema_scalar.int32_max
+                ()))
       ~description:"Pet quantities keyed by lifecycle status"
       ()
   ;;
@@ -337,7 +389,7 @@ module Order = struct
   ;;
 end
 
-module User = struct
+module User_input = struct
   type t =
     { id : Schema_scalar.Int64.t option [@default None]
     ; username : string option [@default None]
@@ -351,7 +403,11 @@ module User = struct
   [@@deriving yojson, jsonschema]
 
   let metadata =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"User" ~description:"A Petstore user" ()
+    Metadata.v
+      ~schema:t_jsonschema
+      ~schema_name:"UserInput"
+      ~description:"User account input"
+      ()
   ;;
 
   let to_domain ?username:user_identity user =
@@ -374,6 +430,27 @@ module User = struct
               }
           }
   ;;
+end
+
+module User = struct
+  type t =
+    { id : Schema_scalar.Int64.t option [@default None]
+    ; username : string option [@default None]
+    ; first_name : string option [@key "firstName"] [@default None]
+    ; last_name : string option [@key "lastName"] [@default None]
+    ; email : string option [@default None]
+    ; phone : string option [@default None]
+    ; user_status : Schema_scalar.Int32.t option [@key "userStatus"] [@default None]
+    }
+  [@@deriving yojson, jsonschema]
+
+  let metadata =
+    Metadata.v
+      ~schema:t_jsonschema
+      ~schema_name:"User"
+      ~description:"Public user account"
+      ()
+  ;;
 
   let of_domain ({ username; attributes } : Domain.User.t) =
     { id = attributes.id
@@ -381,21 +458,48 @@ module User = struct
     ; first_name = attributes.first_name
     ; last_name = attributes.last_name
     ; email = attributes.email
-    ; password = attributes.password
     ; phone = attributes.phone
     ; user_status = attributes.user_status
     }
   ;;
 end
 
+module Non_empty_string = struct
+  type t = string
+
+  let t_jsonschema = Json_schema.string_exn ~min_length:1 ()
+  let to_yojson value = `String value
+
+  let of_yojson = function
+    | `String value when not (String.is_empty value) -> Ok value
+    | _ -> Error "expected a non-empty string"
+  ;;
+end
+
+module Login_request = struct
+  type t =
+    { username : Non_empty_string.t
+    ; password : Non_empty_string.t
+    }
+  [@@deriving yojson, jsonschema]
+
+  let metadata =
+    Metadata.v
+      ~schema:t_jsonschema
+      ~schema_name:"LoginRequest"
+      ~description:"Required login credentials"
+      ()
+  ;;
+end
+
 module User_list = struct
-  type t = User.t list [@@deriving yojson, jsonschema]
+  type t = User_input.t list [@@deriving yojson, jsonschema]
 
   let metadata =
     Metadata.v ~schema:t_jsonschema ~description:"Users to create atomically" ()
   ;;
 
-  let to_domain users = users |> List.map ~f:User.to_domain |> Result.all
+  let to_domain users = users |> List.map ~f:User_input.to_domain |> Result.all
 end
 
 module Login_token = struct

@@ -6,7 +6,8 @@ open Typed_endpoint
 module Make
     (B : Backend.S)
     (Pets : Pet_service.S with type 'a io = 'a B.io)
-    (_ : Order_service.S with type 'a io = 'a B.io and type database = Pets.database) : sig
+    (_ : Order_service.S with type 'a io = 'a B.io and type database = Pets.database)
+    (_ : Session_service.S with type 'a io = 'a B.io and type database = Pets.database) : sig
   (** Endpoint instance owning the returned group types. *)
   module Endpoint : module type of Typed_endpoint.Make (B)
 

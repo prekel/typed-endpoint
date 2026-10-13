@@ -4,9 +4,11 @@ open Typed_endpoint
 module Make
     (B : Backend.S)
     (Pets : Pet_service.S with type 'a io = 'a B.io)
-    (Orders : Order_service.S with type 'a io = 'a B.io and type database = Pets.database) =
+    (Orders : Order_service.S with type 'a io = 'a B.io and type database = Pets.database)
+    (Sessions :
+       Session_service.S with type 'a io = 'a B.io and type database = Pets.database) =
 struct
-  module Common = Controller_context.Make (B)
+  module Common = Controller_context.Make (B) (Sessions)
   module Endpoint = Common.Endpoint
   module Io = B.Io
   open Io.Let_syntax

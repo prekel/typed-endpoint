@@ -111,7 +111,7 @@ module Ppx_option_alias = struct
   type maybe_string = string option [@@deriving yojson, jsonschema]
   type required_alias = { value : maybe_string } [@@deriving yojson, jsonschema]
 
-  type optional_alias = { value : maybe_string [@jsonschema.option] }
+  type optional_alias = { value : maybe_string [@default None] }
   [@@deriving yojson, jsonschema]
 end
 
@@ -465,7 +465,9 @@ let%expect_test "an option alias remains required unless marked optional" =
     {|
     {
       "type": "object",
-      "properties": { "value": { "type": [ "string", "null" ] } },
+      "properties": {
+        "value": { "default": null, "type": [ "string", "null" ] }
+      },
       "required": [],
       "additionalProperties": true
     }
@@ -490,6 +492,19 @@ let%test "cross-module recursive schema keeps its definitions with the reference
   let reference = Yojson.Safe.Util.member "$ref" dependency in
   match definitions, reference with
   | `Assoc [ ("node", `Assoc _) ], `String "#/$defs/node" -> true
+  | _ -> false
+;;
+
+let%test "recursive schemas give local references their own resource root" =
+  match Json_schema.to_yojson Schema_dependency.node_jsonschema with
+  | `Assoc fields ->
+    (match
+       ( List.Assoc.find fields "$id" ~equal:String.equal
+       , List.Assoc.find fields "$ref" ~equal:String.equal )
+     with
+     | Some (`String id), Some (`String "#/$defs/node") ->
+       String.is_prefix id ~prefix:"urn:typed-endpoint:schema:"
+     | _ -> false)
   | _ -> false
 ;;
 
@@ -533,6 +548,35 @@ let%test "schema equality preserves array order" =
 let%test "nullable is idempotent" =
   let nullable = Json_schema.nullable (Json_schema.string_exn ()) in
   Json_schema.equal nullable (Json_schema.nullable nullable)
+;;
+
+let%test_unit "nullable preserves string enum and const constraints" =
+  let enum_schema =
+    Json_schema.string_exn ~enum:[ "first"; "second" ] ()
+    |> Json_schema.nullable
+    |> Json_schema.to_yojson
+    |> Yojson.Safe.to_basic
+  in
+  let const_schema =
+    Json_schema.Unsafe.of_yojson (`Assoc [ "const", `String "fixed" ])
+    |> Json_schema.nullable
+    |> Json_schema.to_yojson
+    |> Yojson.Safe.to_basic
+  in
+  let validator schema =
+    match Jsonschema.create_validator_from_json ~schema () with
+    | Ok validator -> validator
+    | Error error ->
+      Stdlib.failwith (Stdlib.Format.asprintf "%a" Jsonschema.pp_compile_error error)
+  in
+  let enum_validator = validator enum_schema in
+  let const_validator = validator const_schema in
+  assert (Result.is_ok (Jsonschema.validate enum_validator `Null));
+  assert (Result.is_ok (Jsonschema.validate enum_validator (`String "first")));
+  assert (Result.is_error (Jsonschema.validate enum_validator (`String "other")));
+  assert (Result.is_ok (Jsonschema.validate const_validator `Null));
+  assert (Result.is_ok (Jsonschema.validate const_validator (`String "fixed")));
+  assert (Result.is_error (Jsonschema.validate const_validator (`String "other")))
 ;;
 
 let print_error = function
@@ -583,4 +627,55 @@ let%test_unit "smart and PPX schemas satisfy the Draft 2020-12 meta-schema" =
     | Error error ->
       Stdlib.failwith
         (Int.to_string index ^ ": " ^ Jsonschema.Validation_error.to_string error))
+;;
+
+let%test "a shared default makes an option alias optional in decoder and schema" =
+  let decoder = Ppx_option_alias.optional_alias_of_yojson (`Assoc []) in
+  let schema = Json_schema.to_yojson Ppx_option_alias.optional_alias_jsonschema in
+  match decoder, Yojson.Safe.Util.member "required" schema with
+  | Ok { value = None }, `List [] -> true
+  | _ -> false
+;;
+
+module Generic_recursive = struct
+  type 'a tree =
+    { value : 'a
+    ; children : 'a tree list
+    }
+  [@@deriving yojson, jsonschema]
+end
+
+module Mutual_recursive = struct
+  type a = { next : b option }
+  and b = { previous : a option } [@@deriving yojson, jsonschema]
+end
+
+let%test_unit "recursive generic and mutual schemas validate their wire values" =
+  let validate schema value =
+    let validator =
+      Jsonschema.create_validator_from_json
+        ~schema:(Yojson.Safe.to_basic (Json_schema.to_yojson schema))
+        ()
+      |> Result.map_error ~f:(fun error ->
+        Stdlib.Format.asprintf "%a" Jsonschema.pp_compile_error error)
+      |> Result.ok_or_failwith
+    in
+    assert (Result.is_ok (Jsonschema.validate validator (Yojson.Safe.to_basic value)))
+  in
+  validate
+    (Generic_recursive.tree_jsonschema (Json_schema.integer_exn ()))
+    (`Assoc
+        [ "value", `Int 1
+        ; "children", `List [ `Assoc [ "value", `Int 2; "children", `List [] ] ]
+        ]);
+  validate
+    Mutual_recursive.a_jsonschema
+    (`Assoc [ "next", `Assoc [ "previous", `Assoc [ "next", `Null ] ] ]);
+  validate
+    Ppx_cross_module_dependency.t_jsonschema
+    (`Assoc
+        [ ( "node"
+          , `Assoc [ "value", `Int 1; "next", `Assoc [ "value", `Int 2; "next", `Null ] ]
+          )
+        ])
 ;;

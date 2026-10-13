@@ -9,6 +9,9 @@
   dto
   pet_repository
   order_repository
+  session_runtime
+  session_repository
+  session_service
   user_repository
   database_memory
   pet_service

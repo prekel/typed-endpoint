@@ -68,11 +68,18 @@ let path_segments path =
 let route_segment segment =
   match String.chop_prefix segment ~prefix:":" with
   | Some name -> Param name
-  | None -> Static segment
+  | None -> Static (Uri.pct_decode segment)
 ;;
 
 let route meth path handler =
-  [ { meth; path = List.map (path_segments path) ~f:route_segment; handler } ]
+  [ { meth
+    ; path =
+        List.map
+          (String.split path ~on:'/' |> List.filter ~f:(Fn.non String.is_empty))
+          ~f:route_segment
+    ; handler
+    }
+  ]
 ;;
 
 let rec match_path pattern path params =
@@ -229,19 +236,7 @@ module Backend_conformance = struct
     let text description = Response.text ~description ()
 
     let endpoint uri request response handler =
-      uri
-      |> documented
-      |> accepts request
-      |> returns (case `OK response)
-      |> handle handler
-    ;;
-
-    let endpoint_with ~context uri request response handler =
-      uri
-      |> documented
-      |> accepts request
-      |> returns (case `OK response)
-      |> handle_with ~context handler
+      uri |> documented |> accepts request |> returns (case `OK response) ==> handler
     ;;
 
     let bounded =
@@ -249,7 +244,7 @@ module Backend_conformance = struct
         (post / "bounded")
         (Request.text ~max_body_bytes:4 ~description:"Bounded body" ())
         (text "Echo")
-        (fun ok body ->
+        (fun ok () body ->
            let%bind result = Request_body.read body in
            match result with
            | Ok body -> respond ok body
@@ -257,13 +252,8 @@ module Backend_conformance = struct
     ;;
 
     let header_route =
-      endpoint_with
-        ~context:Context.request
-        (get / "header")
-        Request.empty
-        (text "Header")
-        (fun ok request () ->
-           respond ok (Option.value (B.header request "x-conformance") ~default:"none"))
+      endpoint (get / "header") Request.empty (text "Header") (fun ok request () ->
+        respond ok (Option.value (B.header request "x-conformance") ~default:"none"))
     ;;
 
     let typed_request_header =
@@ -284,7 +274,8 @@ module Backend_conformance = struct
         Request.empty
         (Response.text ~description:"Typed headers" ()
          |> Response.with_header typed_response_header)
-        (fun version ok () -> respond ok ("present", "version:" ^ Int.to_string version))
+        (fun version ok () () ->
+           respond ok ("present", "version:" ^ Int.to_string version))
     ;;
 
     let empty_route =
@@ -292,7 +283,7 @@ module Backend_conformance = struct
         (get / "empty")
         Request.empty
         (Response.empty ~description:"Empty" ())
-        (fun ok () -> respond ok ())
+        (fun ok () () -> respond ok ())
     ;;
 
     let decoded =
@@ -303,7 +294,7 @@ module Backend_conformance = struct
          /! arg "enabled" (Typed_endpoint.Parameter.bool ~description:"Enabled" ()))
         Request.empty
         (text "Decoded")
-        (fun id enabled ok () ->
+        (fun id enabled ok () () ->
            respond ok (Int.to_string id ^ ":" ^ Bool.to_string enabled))
     ;;
 
@@ -314,7 +305,7 @@ module Backend_conformance = struct
          /: arg "value" (Typed_endpoint.Parameter.string ~description:"Value" ()))
         Request.empty
         (text "Captured")
-        (fun value ok () -> respond ok ("capture:" ^ value))
+        (fun value ok () () -> respond ok ("capture:" ^ value))
     ;;
 
     let fixed =
@@ -322,33 +313,92 @@ module Backend_conformance = struct
         (get / "priority" / "fixed")
         Request.empty
         (text "Static")
-        (fun ok () -> respond ok "static")
+        (fun ok () () -> respond ok "static")
     ;;
 
     let method_get =
-      endpoint (get / "methods") Request.empty (text "GET") (fun ok () ->
+      endpoint (get / "methods") Request.empty (text "GET") (fun ok () () ->
         respond ok "get")
     ;;
 
     let method_post =
-      endpoint (post / "methods") Request.empty (text "POST") (fun ok () ->
+      endpoint (post / "methods") Request.empty (text "POST") (fun ok () () ->
         respond ok "post")
+    ;;
+
+    module Json_payload = struct
+      type t = Yojson.Safe.t
+
+      let of_yojson value = Ok value
+      let to_yojson value = value
+
+      let metadata =
+        Typed_endpoint.Metadata.v
+          ~schema:Typed_endpoint.Json_schema.any
+          ~description:"JSON"
+          ()
+      ;;
+    end
+
+    let vendor_json =
+      endpoint
+        (post / "vendor-json")
+        (Request.json
+           ~media_types:[ "application/json"; "application/vnd.conformance+json" ]
+           (module Json_payload))
+        (Response.json (module Json_payload))
+        (fun ok () body ->
+           let%bind result = Request_body.read body in
+           match result with
+           | Ok value -> respond ok value
+           | Error error -> Request_body.reject error)
+    ;;
+
+    let literal_braces =
+      endpoint
+        (get / "literal" / "{id}")
+        Request.empty
+        (text "Literal braces")
+        (fun ok () () -> respond ok "literal")
+    ;;
+
+    let encoded_segments = [ "encoded-braces", "%7Bid%7D"; "encoded-percent", "%252F" ]
+
+    let encoded_routes =
+      List.map encoded_segments ~f:(fun (name, segment) ->
+        endpoint
+          (get
+           / name
+           / segment
+           /: arg
+                "value"
+                (Typed_endpoint.Parameter.string ~description:"Captured value" ()))
+          Request.empty
+          (text "Encoded static segment")
+          (fun value ok () () -> respond ok value))
     ;;
 
     let app =
       compile_exn
-        [ Group.make
+        [ Group.make_with_context
+            ~context:(Context.return ())
             ~description:"Backend conformance"
-            [ bounded
-            ; header_route
-            ; typed_headers
-            ; empty_route
-            ; decoded
-            ; captured
-            ; fixed
-            ; method_get
-            ; method_post
-            ]
+            ([ vendor_json
+             ; literal_braces
+             ; bounded
+             ; typed_headers
+             ; empty_route
+             ; decoded
+             ; captured
+             ; fixed
+             ; method_get
+             ; method_post
+             ]
+             @ encoded_routes)
+        ; Group.make_with_context
+            ~context:Context.request
+            ~description:"Request access"
+            [ header_route ]
         ]
       |> Compiled.app
     ;;
@@ -368,6 +418,49 @@ module Backend_conformance = struct
     ;;
 
     let run () =
+      let%bind () =
+        List.fold
+          encoded_segments
+          ~init:(B.Io.return ())
+          ~f:(fun checks (name, segment) ->
+            let%bind () = checks in
+            let%bind response =
+              H.call app `GET ("/" ^ name ^ "/" ^ segment ^ "/value%252F")
+            in
+            check (Int.equal (H.status response) 200) ("encoded static segment: " ^ name);
+            let%bind actual = body response in
+            check
+              (String.equal actual "value%2F")
+              ("capture decoded exactly once: " ^ name);
+            let%map missing = H.call app `GET ("/" ^ name ^ "/different/value%252F") in
+            check
+              (Int.equal (H.status missing) 404)
+              ("static segment became a capture: " ^ name))
+      in
+      let%bind literal = H.call app `GET "/literal/%7Bid%7D" in
+      check (Int.equal (H.status literal) 200) "escaped literal braces status";
+      let%bind literal_body = body literal in
+      check (String.equal literal_body "literal") "escaped literal braces body";
+      let%bind vendor =
+        H.call
+          app
+          ~headers:[ "content-type", "application/vnd.conformance+json; charset=utf-8" ]
+          ~body:{|{"value":1}|}
+          `POST
+          "/vendor-json"
+      in
+      check (Int.equal (H.status vendor) 200) "declared vendor JSON type";
+      let%bind vendor_body = body vendor in
+      check (String.equal vendor_body {|{"value":1}|}) "vendor JSON payload";
+      let%bind undeclared =
+        H.call
+          app
+          ~headers:[ "content-type", "application/other+json" ]
+          ~body:"{}"
+          `POST
+          "/vendor-json"
+      in
+      check (Int.equal (H.status undeclared) 415) "undeclared vendor JSON type";
       let open B.Io.Let_syntax in
       let%bind echoed =
         H.call app ~headers:[ "content-type", "text/plain" ] ~body:"data" `POST "/bounded"

@@ -1,18 +1,22 @@
 open! Base
 open Typed_endpoint
 
+module Decimal_int =
+  (val Parameter.int ~description:"Decimal integer" () : Parameter.S with type t = int)
+
 module Pet_id = struct
   type t = int
 
   let of_string value =
-    match Int.of_string_opt value with
+    match Result.ok (Decimal_int.of_string value) with
     | Some id when id > 0 -> Ok id
     | _ -> Error "petId must be a positive integer"
   ;;
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:(Json_schema.integer_exn ~format:`Int64 ~minimum:1 ())
+      ~schema:
+        (Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ())
       ~description:"ID of the pet"
       ()
   ;;
@@ -22,14 +26,15 @@ module Order_id = struct
   type t = int
 
   let of_string value =
-    match Int.of_string_opt value with
+    match Result.ok (Decimal_int.of_string value) with
     | Some id when id > 0 -> Ok id
     | _ -> Error "orderId must be a positive integer"
   ;;
 
   let metadata : t Metadata.t =
     Metadata.v
-      ~schema:(Json_schema.integer_exn ~format:`Int64 ~minimum:1 ())
+      ~schema:
+        (Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ())
       ~description:"ID of the order"
       ()
   ;;
@@ -97,7 +102,7 @@ module Page = struct
   type t = int
 
   let of_string value =
-    match Int.of_string_opt value with
+    match Result.ok (Decimal_int.of_string value) with
     | Some page when page >= 1 && page <= Domain.Page_request.max_page -> Ok page
     | _ ->
       Error ("page must be between 1 and " ^ Int.to_string Domain.Page_request.max_page)
@@ -120,7 +125,7 @@ module Limit = struct
   type t = int
 
   let of_string value =
-    match Int.of_string_opt value with
+    match Result.ok (Decimal_int.of_string value) with
     | Some limit when limit >= 1 && limit <= Domain.Page_request.max_limit -> Ok limit
     | _ ->
       Error ("limit must be between 1 and " ^ Int.to_string Domain.Page_request.max_limit)

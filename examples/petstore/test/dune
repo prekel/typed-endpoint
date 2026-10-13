@@ -24,3 +24,8 @@
  (name database_memory_test)
  (package typed-endpoint-testing)
  (libraries base petstore_app))
+
+(test
+ (name session_test)
+ (package typed-endpoint-testing)
+ (libraries base petstore_app typed-endpoint-testing yojson unix))

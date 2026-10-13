@@ -16,8 +16,8 @@ test/            тесты сервисов и HTTP-контракта без �
 существующий OCaml API сохраняется: например, `Petstore_app.Domain` и
 `Petstore_app.Routes` не получают дополнительного уровня вложенности.
 
-Пример реализует полный набор путей и `operationId` официального Swagger
-Petstore v3:
+Пример основан на путях и `operationId` Swagger Petstore v3, с явно описанными
+ниже отличиями HTTP-контракта:
 
 - `pet` — создание, полное и частичное обновление, поиск по статусу и тегам,
   получение, удаление и загрузка изображения;
@@ -25,26 +25,25 @@ Petstore v3:
 - `user` — одиночное и пакетное создание, login/logout, получение, обновление
   и удаление пользователя.
 
-Канонический контракт взят из
+За основу взят контракт из
 [OpenAPI-декларации Swagger Petstore](https://github.com/swagger-api/swagger-petstore/blob/master/src/main/resources/openapi.yaml).
 Домен и сервисы не зависят от HTTP-фреймворка. HTTP-часть разделена на
 `Pet_controller`, `Store_controller` и `User_controller`; `Routes` только
 собирает их группы и служебные endpoints.
 
-Все 20 публичных операций объявлены через плоский staged DSL экземпляра
-`Endpoint`: URI собирается
-операторами `/`, `/:`, `/?` и `/!`, затем последовательно задаются
+Все публичные операции (21) объявлены через плоский staged DSL экземпляра
+`Endpoint`: URI собирается операторами `/`, `/:`, `/?` и `/!`, затем задаются
 `documented`, `accepts`, `returns` и grouped handler `==>`. Служебные
 `/health`, `/docs` и `/openapi.json` остаются `Unsafe.route`, поскольку они
 намеренно не публикуются в OpenAPI.
 
 ## DI и слои приложения
 
-Зависимости задаются явно на двух разных уровнях:
+Модули выбираются статически, runtime-ресурсы передаются явно:
 
-1. `Pet_repository.S`, `Order_repository.S` и `User_repository.S` являются
-   stateless-портами хранения с абстрактными эффектом `'a io` и типом
-   `connection`; каждая операция явно принимает `~conn`;
+1. `Pet_repository.S`, `Order_repository.S`, `User_repository.S` и
+   `Session_repository.S` являются stateless-портами хранения с абстрактными
+   эффектом `'a io` и типом `connection`; каждая операция явно принимает `~conn`;
 2. `Database.S` абстрагирует долгоживущий pool/state, выдачу соединения и
    транзакции;
 3. функторы `*_service.Make` получают database и реализации портов.
@@ -54,7 +53,7 @@ Petstore v3:
 4. функторы контроллеров получают stateless-модули готовых сервисов;
 5. `Routes.Make` связывает весь статический граф database/repository → service →
    controller и проверяет, что каждый узел использует эффект выбранного
-   backend;
+   backend; `Session_runtime.S` задаёт часы и генерацию токенов;
 6. серверный composition root создаёт единственный application runtime resource
    `Database.t` и передаёт его в `App.compile` именованным аргументом.
 
@@ -71,17 +70,19 @@ module App =
     (Database.Pet_repository)
     (Database.Order_repository)
     (Database.User_repository)
+    (Database.Session_repository)
+    (Petstore_server_support.Session_runtime)
 
 let compiled =
   App.compile
-    ~auth:(Petstore_app.Routes.auth_from_env ())
+    ~auth:(Petstore_app.Routes.auth_from_env_exn ())
     ~database:(Database.create ())
     ()
 ```
 
 В production composition root вместо `Database_memory.Make` можно подставить
 Caqti-адаптер. В нём `Database.t` представляет pool, а
-`Database.connection` — scoped connection Caqti. Три repository adapters не
+`Database.connection` — scoped connection Caqti. Четыре repository adapters не
 хранят pool: они реализуют запросы с явным `~conn`. Пул приобретается и
 освобождается в executable, а его значение передаётся в `App.compile`.
 Сервисы и контроллеры при этом остаются stateless и автоматически строятся
@@ -92,20 +93,23 @@ Caqti-адаптер. В нём `Database.t` представляет pool, а
 остаётся: состояние in-memory database или production pool существует только
 во время работы процесса.
 
-`Pet_service`, `Order_service` и `User_service` работают только с типами из
-`Domain`: они не знают о JSON, Swagger DTO и HTTP-кодах. Преобразование DTO и
-выбор статуса выполняют контроллеры. Ошибки инфраструктуры отображаются в
-объявленный HTTP 503 с очищенным сообщением. Контроллер вместе с guard
-прикрепляется к группе через `Group.make_with_context`: `Context` доставляет
+`Pet_service`, `Order_service`, `User_service` и `Session_service` работают
+с типами из `Domain`: они не знают о JSON, Swagger DTO и HTTP-кодах.
+Преобразование DTO и выбор статуса выполняют контроллеры. Ошибки хранения
+в результатах сервисов отображаются в объявленный HTTP 503 с очищенным
+сообщением; ошибка поиска сессии в guard отклоняет аутентификацию с 401.
+Контроллер вместе с guard прикрепляется к группе через
+`Group.make_with_context`: `Context` доставляет
 уже собранную dependency в handler на уровне запроса, но не выбирает и не
 создаёт application services. OpenAPI security и runtime guard используют одну
 декларацию. В context передаётся `Database.t`, но никогда не scoped
 `Database.connection`: границу транзакции определяет application service.
 
 Успешная проверка защищённой группы создаёт
-`Typed_endpoint.Principal.t`: identity различает OAuth и API key, а scopes
-сохраняются рядом с ним. Через applicative context handler одновременно
-получает principal, `X-Request-Id` текущего запроса и статически выбранный
+`Typed_endpoint.Principal.t`: identity различает пользовательскую сессию,
+demo bearer и API key; для сессии сохраняются username и идентификатор сессии.
+Scopes сохраняются рядом с identity. Через applicative context handler
+одновременно получает principal, `X-Request-Id` текущего запроса и выбранный
 `Database.t`. Это request-scoped record, а не service locator: repository и
 application services по-прежнему выбираются только функтором composition root.
 
@@ -132,10 +136,14 @@ GET /pet/search?status=available&page=2&limit=20
 Структурированные request/response body представлены JSON. XML и
 `application/x-www-form-urlencoded` варианты официальной декларации намеренно
 не дублируются. `uploadFile` использует настоящий
-`application/octet-stream`; login возвращает JSON-строку и типизированные
-`X-Rate-Limit`/`X-Expires-After` response headers. Поэтому пример повторяет
-route surface и основные схемы, но не заявляет побайтную идентичность исходному
-OpenAPI 3.0.4. Генерируемый документ остаётся OpenAPI 3.1.
+`application/octet-stream`. Login и logout используют POST вместо GET:
+секреты передаются в JSON body, а logout отзывает предъявленную сессию.
+Фиктивные rate-limit/expiration headers удалены. Поэтому пример не заявляет
+полную идентичность исходному OpenAPI 3.0.4. Генерируемый документ — OpenAPI 3.1.
+В User responses отсутствует поле `password`; входные поля описывает `UserInput`.
+Числовые DTO учитывают диапазон OCaml `int` и ограничения int32.
+`POST /user/createWithList` и `POST /user/createWithArray` создают пользователей
+атомарно и возвращают массив публичных User DTO без паролей.
 
 Проверка без сервера и сокетов:
 
@@ -153,7 +161,27 @@ opam exec -- dune exec examples/petstore/servers/eio_server.exe
 
 По умолчанию принимаются `Authorization: Bearer demo-token` и
 `api_key: demo-key`. Значения можно заменить через `PETSTORE_BEARER_TOKEN` и
-`PETSTORE_API_KEY`. Исходный OpenAPI доступен по `/openapi.json`, health check —
+`PETSTORE_API_KEY`; пустой API key останавливает запуск.
+
+`POST /user/login` принимает обязательный body:
+
+```json
+{"username":"alice","password":"secret"}
+```
+
+Успешный вход возвращает JSON-строку с новым 256-битным токеном. Она действует
+один час и передаётся как `Authorization: Bearer <token>`; регистр слова Bearer
+не важен; между схемой и токеном допустимы один или несколько пробелов.
+Регистр токена сохраняется. Сессии хранятся в database и исчезают при
+перезапуске in-memory примера. Для входа пользователь должен быть предварительно
+создан через user API.
+`POST /user/logout` отзывает только предъявленную сессию; остальные сессии
+пользователя продолжают работать. Истёкшие, отозванные и неизвестные токены
+получают 401. Независимый demo bearer остаётся пригодным для разработки:
+его logout возвращает 200 без отзыва. Источники времени и OS entropy выбираются
+в composition root, а в тестах заменяются детерминированными реализациями.
+
+Сгенерированный OpenAPI доступен по `/openapi.json`, health check —
 по `/health`.
 
 ## Access log

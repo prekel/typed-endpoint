@@ -164,9 +164,8 @@ module Order : sig
 end
 
 (** JSON codec and domain conversion for Petstore users. *)
-module User : sig
-  (** Swagger Petstore user representation. All wire fields are optional, but
-      creation requires a non-empty username. *)
+module User_input : sig
+  (** Wire fields are optional; user creation requires a non-empty username. *)
   type t =
     { id : int option
     ; username : string option
@@ -184,15 +183,45 @@ module User : sig
   (** Converts a request DTO to a domain user. The optional [username] argument
       is the authoritative identity from a path parameter during updates. *)
   val to_domain : ?username:string -> t -> (Domain.User.t, string) Result.t
+end
+
+(** Public user representation, without password. Integer fields are bounded
+    by OCaml [int]; int32 fields additionally enforce the signed 32-bit range. *)
+module User : sig
+  (** Wire fields are optional; user creation requires a non-empty username. *)
+  type t =
+    { id : int option
+    ; username : string option
+    ; first_name : string option
+    ; last_name : string option
+    ; email : string option
+    ; phone : string option
+    ; user_status : int option
+    }
+
+  (** JSON decoder, encoder, and schema for this wire record. *)
+  include Json_payload.S with type t := t
 
   (** Converts a domain user profile to the official camelCase wire shape. *)
   val of_domain : Domain.User.t -> t
 end
 
-(** JSON codec for a batch of user-creation requests. *)
+(** Required credentials carried only in the login request body. *)
+module Login_request : sig
+  type t =
+    { username : string
+    ; password : string
+    }
+
+  val of_yojson : Yojson.Safe.t -> (t, string) Result.t
+  val to_yojson : t -> Yojson.Safe.t
+  val t_jsonschema : t Json_schema.t
+  val metadata : t Metadata.t
+end
+
 module User_list : sig
   (** JSON request body accepted by [createUsersWithListInput]. *)
-  type t = User.t list
+  type t = User_input.t list
 
   (** JSON decoder, encoder, and schema for the list. *)
   include Json_payload.S with type t := t
@@ -203,7 +232,7 @@ end
 
 (** Encoder and schema for the login response. *)
 module Login_token : sig
-  (** JSON string returned by the official login operation. *)
+  (** Opaque JSON string identifying an independent one-hour login session. *)
   type t = string
 
   (** JSON encoder and response schema. *)

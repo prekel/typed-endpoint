@@ -1,5 +1,70 @@
 # История изменений
 
+## 0.2.1 — 2026-10-13
+
+### Добавлено
+
+- `Request.json ~media_types` объявляет конкретные JSON media types с одним
+  codec; runtime и OpenAPI используют один список.
+- Petstore создаёт независимые пользовательские сессии на один час.
+  Repository port и сервис остаются stateless; часы и генератор токенов
+  выбираются через `Session_runtime.S` в composition root. Серверы используют
+  256 бит OS entropy, тесты — детерминированные реализации.
+- Добавлен `POST /user/createWithArray`; оба пакетных user endpoints возвращают
+  публичные DTO без паролей.
+- Добавлены регрессии HTTP-контракта, JSON Schema/PPX и Petstore sessions;
+  расширены независимые wire tests и общий backend conformance suite.
+
+### Изменено
+
+- Маршруты завершаются только через `==>`; `handle` и `handle_with` удалены
+  из публичного API. Контекст задаётся через `Group.make_with_context`,
+  включая `Context.return ()` для маршрутов без зависимостей.
+- `Request.json` по умолчанию принимает только `application/json`. Для vendor
+  JSON требуется явный `~media_types`; wildcard и `application/+json` запрещены.
+- `[@jsonschema.option]` требует общего `[@default]`, включая alias-типы,
+  чтобы необязательность поля совпадала с Yojson decoder.
+- Petstore login перенесён на `POST /user/login` с обязательными username и
+  password в JSON body; `POST /user/logout` отзывает предъявленную сессию.
+  Независимый demo bearer сохранён; для него logout возвращает 200 без отзыва.
+- Входной `UserInput` отделён от публичного `User`: пароли исключены из всех
+  user responses. Фиктивные `X-Rate-Limit` и `X-Expires-After` удалены из
+  runtime и OpenAPI.
+- `Routes.Make` принимает session repository и runtime modules; конфигурация
+  загружается через `auth_from_env_exn`, отклоняющий пустой `PETSTORE_API_KEY`.
+- PPX генерирует `$id` в виде URN без пути к checkout. Title Petstore согласован
+  с OpenAPI 3.1; примеры и migration guide приведены к текущему API.
+- README описывает установку и обновление всех пакетов через GitHub pins
+  на один тег, включая `v0.2.1`.
+
+### Исправлено
+
+- `Json_schema.nullable` сохраняет `enum`/`const`; корневой `$id` сохраняется
+  при встраивании рекурсивных схем в OpenAPI.
+- Типизированные маршруты отклоняют 1xx как финальный результат, тела для
+  204/205/304, методы вне OpenAPI Path Item, неверные captures, пробельные и
+  управляющие символы, `?`/`#` и неверные percent escapes. Статические фигурные
+  скобки экранируются одинаково в OpenAPI и `Route_info`.
+- Числовые параметры и headers принимают десятичный wire-формат; OCaml hex,
+  underscores, hex-float, NaN и infinity отклоняются.
+- Запрещены reserved request headers `Accept`/`Content-Type`/`Authorization`
+  и response headers `Content-Type`/`Content-Length`/`Transfer-Encoding`/
+  `Trailer`/`Connection`. Проверяются запрещённые response control characters,
+  API-key header names и повторяющиеся OAuth scopes.
+- OAuth authorization URLs отклоняют неверные IPv6/IPvFuture literals,
+  запрещённые URI-символы, malformed percent escapes и fragments.
+- Диапазоны Petstore DTO для int32/int64 учитывают фактический OCaml `int`.
+  Пустой `api_key` отклоняется при аутентификации.
+- Petstore Bearer parser сравнивает scheme без учёта регистра, принимает один
+  или несколько SP-разделителей по RFC 6750, проверяет синтаксис токена и
+  сохраняет его регистр.
+- Eio разбирает router markers до однократного декодирования static segments;
+  Dream сопоставляет экранированные фигурные скобки и literal percent values.
+  Общий conformance suite проверяет сохранность captures без повторного decode.
+- Исправлен пример `Parameter.v` в quickstart; все 35 исправленных дефектов
+  отмечены в roadmap. Ядро, PPX, testing, Opium и Petstore проверены отдельно
+  на OCaml 4.14.1.
+
 ## 0.2.0 — 2026-10-02
 
 ### Добавлено

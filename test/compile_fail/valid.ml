@@ -8,5 +8,14 @@ let route =
   |> documented
   |> accepts Request.empty
   |> returns (case `OK (Response.text ~description:"Response" ()))
-  |> handle @@ fun ok () -> respond ok "ok"
+  ==> fun ok () () -> respond ok "ok"
+;;
+
+let compiled =
+  compile_exn
+    [ Group.make_with_context
+        ~context:(Context.return ())
+        ~description:"Valid group"
+        [ route ]
+    ]
 ;;

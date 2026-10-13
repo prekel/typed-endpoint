@@ -18,7 +18,10 @@ include
 (** Builds a Dream handler from compiled typed-endpoint routes.
 
     Routes sharing a path are grouped so Dream performs path matching once;
-    dispatch then selects the declared HTTP method. A matched path with no
+    Escaped literal braces and percent signs are decoded once. Decoding never
+    introduces captures, wildcards, or extra path segments; literals requiring
+    those characters still follow Dream's native route grammar.
+    Dispatch then selects the declared HTTP method. A matched path with no
     matching method returns [405] with an [Allow] header. Requests unmatched by
     this router continue according to Dream router semantics.
 

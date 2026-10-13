@@ -63,11 +63,11 @@ let route =
   |> documented
   |> accepts (Request.text ~description:"Body" ())
   |> returns (case `OK (Response.text ~description:"Echo" ()))
-  |> handle @@ fun ok body ->
-     let%bind result = Request_body.read body in
-     match result with
-     | Ok body -> respond ok body
-     | Error error -> Request_body.reject error
+  ==> fun ok () body ->
+  let%bind result = Request_body.read body in
+  match result with
+  | Ok body -> respond ok body
+  | Error error -> Request_body.reject error
 ;;
 
 let captured =
@@ -84,7 +84,12 @@ let fixed =
 let app =
   compile_exn
     ~decode_error:decode_errors
-    [ Group.make ~description:"Opium adapter test" [ route; captured; fixed ] ]
+    [ Group.make_with_context
+        ~context:(Context.return ())
+        ~description:"Opium adapter test"
+        [ route ]
+    ; Group.make ~description:"Runtime routes" [ captured; fixed ]
+    ]
   |> Compiled.app
   |> fun routes -> Typed_endpoint_opium.mount routes Opium.App.empty |> Opium.App.to_rock
 ;;
@@ -98,7 +103,12 @@ let handler =
 
 let () =
   let document =
-    compile_exn [ Group.make ~description:"Default decode error" [ route ] ]
+    compile_exn
+      [ Group.make_with_context
+          ~context:(Context.return ())
+          ~description:"Default decode error"
+          [ route ]
+      ]
     |> Compiled.openapi
   in
   let open Yojson.Safe.Util in

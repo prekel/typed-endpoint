@@ -1,12 +1,15 @@
 open! Base
 
-(** Demo credentials consumed by controller guards. A real application would
-    inject a token verifier instead of storing accepted secrets here. *)
+(** Independent development credentials accepted alongside login sessions. *)
 type t =
   { bearer_token : string
   ; api_key : string
   }
 
 (** Reads credentials from [PETSTORE_BEARER_TOKEN] and [PETSTORE_API_KEY], with
-    local-development defaults. *)
-val from_env : unit -> t
+    local-development defaults. Raises [Invalid_argument] for an empty API key. *)
+val from_env_exn : unit -> t
+
+(** Parses the case-insensitive scheme, one or more SP separators, and a
+    non-empty RFC 6750 token. Token bytes remain case-sensitive. *)
+val bearer_token : string -> string option

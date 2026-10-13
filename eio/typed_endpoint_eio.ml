@@ -52,11 +52,15 @@ let path_segments path =
 let parse_route_segment segment =
   match String.chop_prefix segment ~prefix:":" with
   | Some name -> Param name
-  | None -> Static segment
+  | None -> Static (Uri.pct_decode segment)
 ;;
 
 let route meth path handler =
-  let path = path_segments path |> List.map ~f:parse_route_segment in
+  let path =
+    String.split path ~on:'/'
+    |> List.filter ~f:(Fn.non String.is_empty)
+    |> List.map ~f:parse_route_segment
+  in
   [ { meth; path; handler } ]
 ;;
 

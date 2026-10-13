@@ -5,7 +5,6 @@
 {[
 module Endpoint = Typed_endpoint.Make (Typed_endpoint_testing)
 module Io = Endpoint.Io
-
 open Io.Let_syntax
 open Endpoint
 ]}
@@ -17,10 +16,8 @@ JSON-модуль реализует [Request_payload.S] и/или [Response_pay
 
 {[
 let metadata : t Typed_endpoint.Metadata.t =
-  Metadata.v
-    ~schema:t_jsonschema
-    ~schema_name:"Pet"
-    ~description:"A pet"
+  Metadata.v ~schema:t_jsonschema ~schema_name:"Pet" ~description:"A pet"
+;;
 ]}
 
 [Json_schema.t] скрывает представление схемы от публичного HTTP API и
@@ -51,7 +48,8 @@ let page =
     ~schema:(Json_schema.integer_exn ~format:`Int32 ~minimum:1 ~maximum:100 ~default:1 ())
     ~description:"One-based page number"
     ~of_string:parse_page
-    ~to_string:Int.to_string
+    ()
+;;
 ]}
 
 Функции без суффикса [_exn] возвращают [Result] и подходят для динамической
@@ -99,17 +97,16 @@ let get_pet =
   / "pet"
   /: arg "petId" (Parameter.int64 ~description:"Pet ID" ())
   /? arg "verbose" (Parameter.bool ~description:"Verbose response" ())
-  |> documented
-       ~operation_id:"getPetById"
-       ~summary:"Finds a pet"
+  |> documented ~operation_id:"getPetById" ~summary:"Finds a pet"
   |> accepts Request.empty
   |> returns
        (case `OK (Response.json (module Pet))
         <|> case `Not_found (Response.json (module Api_response)))
-  |> handle @@ fun pet_id verbose ok not_found () ->
-  match find_pet pet_id verbose with
-  | Some pet -> respond ok pet
-  | None -> respond not_found (Api_response.not_found pet_id)
+  ==> fun pet_id verbose ok not_found () () ->
+     match find_pet pet_id verbose with
+     | Some pet -> respond ok pet
+     | None -> respond not_found (Api_response.not_found pet_id)
+;;
 ]}
 
 [/] добавляет static segment, [/:] — required path capture, [/?] — optional
@@ -117,15 +114,25 @@ query и [/!] — required query. Порядок операторов однов
 curried аргументов handler. [<|>] объединяет декларации для [returns], после
 чего handler получает response capabilities позиционно в том же порядке.
 Каждая capability типизирована status и payload; [respond] принимает её и
-значение ровно соответствующего payload-типа. Для route,
-который затем входит в [Group.make_with_context], последний шаг можно записать
-через [==>]; standalone route завершается [handle], а route со своим
-контекстом — [handle_with]. Backend request не добавляется неявно: при
-необходимости передайте [Context.request] в [handle_with]. [Dependency] и
+значение ровно соответствующего payload-типа. Маршрут завершается [==>],
+а его контекст задаётся через [Group.make_with_context]. Handler получает
+контекст после response capabilities и перед request body. Для маршрутов без
+зависимостей используйте [Context.return ()]: аргумент контекста имеет тип [unit].
+Backend request не добавляется неявно: при необходимости передайте
+[Context.request] в [Group.make_with_context]. [Dependency] и
 [Guard] добавляют остальные typed context values. Несколько контекстов удобно
 сводить операторами из [Context.Applicative_infix]; [Context.all] собирает
 однородный список. При использовании [ppx_let] композицию можно писать через
 [Context.Let_syntax] и [let%map ... and ...].
+
+{[
+let api =
+  Group.make_with_context
+    ~context:(Context.return ())
+    ~description:"Pets"
+    [ get_pet ]
+;;
+]}
 
 Асинхронные handlers используют тот же [ppx_let] через [Io.Let_syntax]. Тип
 [Io.t] совпадает с backend [io]: это [Lwt.t] для Dream и Opium и identity для
@@ -151,11 +158,8 @@ scalar headers. Request headers добавляются после path/query ч�
 [header] и становятся следующими аргументами handler.
 
 {[
-let version =
-  Header.required "X-Api-Version" (Header.int ~description:"API version" ())
-
-let result =
-  Header.required "X-Result" (Header.string ~description:"Result marker" ())
+let version = Header.required "X-Api-Version" (Header.int ~description:"API version" ())
+let result = Header.required "X-Result" (Header.string ~description:"Result marker" ())
 
 let route =
   get / "versioned"
@@ -163,25 +167,40 @@ let route =
   |> documented
   |> accepts Request.empty
   |> returns
-       (case
-          `OK
-          (Response.text ~description:"Version" ()
-           |> Response.with_header result))
-  |> handle @@ fun version ok () ->
-  respond ok ("accepted", Int.to_string version)
+       (case `OK (Response.text ~description:"Version" () |> Response.with_header result))
+  ==> fun version ok () () -> respond ok ("accepted", Int.to_string version)
+;;
 ]}
 
 [Response.with_header] меняет payload type на [(header, body)]. Несколько
 headers образуют вложенные пары в порядке декларации. Имя проверяется при
-[compile], а CR/LF в runtime-значении отклоняется через [Runtime_error], чтобы
-не допустить header injection. Та же декларация попадает в OpenAPI.
+[compile], а CR, LF и другие запрещённые control characters в runtime-значении
+отклоняются через [Runtime_error], чтобы не допустить header injection. Та же
+декларация попадает в OpenAPI.
+
+[Accept], [Content-Type] и [Authorization] нельзя объявлять request header
+parameters; для них используйте payload и [Security]/[Guard]. Response headers
+[Content-Type], [Content-Length], [Transfer-Encoding], [Trailer], [Connection]
+управляются payload/transport и отклоняются при [compile]. Финальные response
+statuses должны быть в диапазоне 200--599; 204, 205 и 304 требуют пустого тела.
 
 В framework-free тесте request можно выполнить одной функцией:
 
 {[
-let response =
-  Typed_endpoint_testing.Client.call
-    (Compiled.app compiled)
-    `GET
-    "/health"
+let response = Typed_endpoint_testing.Client.call (Compiled.app compiled) `GET "/health"
 ]}
+
+{1 Конкретные JSON media types}
+
+[Request.json] по умолчанию принимает только [application/json]. Для vendor
+JSON перечислите конкретные типы через [~media_types]; runtime и OpenAPI будут
+использовать один список:
+
+{[
+Request.json
+  ~media_types:[ "application/json"; "application/vnd.example+json" ]
+  (module Item)
+]}
+
+Для отсутствующего option field в DTO используйте [@default None].
+[@jsonschema.option] без общего [@default] не поддерживается.

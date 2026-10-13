@@ -212,7 +212,8 @@ type request_body =
       { schema : Schema.t
       ; metadata : Documentation.t
       ; max_body_bytes : int
-      } (** An [application/json] entity decoded according to [schema]. *)
+      ; media_types : string list
+      } (** A declared JSON entity decoded according to [schema]. *)
   | Text_body of
       { metadata : Documentation.t
       ; max_body_bytes : int
@@ -316,6 +317,10 @@ module Compile_error : sig
         { meth : string
         ; path : string
         } (** A typed route is not canonical or contains router wildcard syntax. *)
+    | Invalid_openapi_method of
+        { meth : string
+        ; path : string
+        } (** A typed route uses a method that OpenAPI 3.1 cannot describe. *)
     | Mismatched_path_parameters of
         { meth : string
         ; path : string
@@ -341,21 +346,40 @@ module Compile_error : sig
         { meth : string
         ; path : string
         ; status : int
-        } (** An explicit response status is outside the HTTP range 100 through 599. *)
+        }
+    (** An explicit response status is outside the final HTTP range 200 through 599. *)
     | Invalid_no_content_response of
         { meth : string
         ; path : string
-        } (** Status 204 was associated with a text or JSON representation. *)
+        ; status : int
+        }
+    (** A status that forbids content was associated with a text or JSON representation. *)
     | Invalid_body_limit of
         { meth : string
         ; path : string
         ; max_body_bytes : int
         } (** A JSON or text request-body limit is zero or negative. *)
+    | Invalid_json_media_types of
+        { meth : string
+        ; path : string
+        ; media_types : string list
+        }
+    | Reserved_request_header of
+        { meth : string
+        ; path : string
+        ; name : string
+        }
     | Invalid_header_name of
         { meth : string
         ; path : string
         ; name : string
         } (** A request or response header name is not an RFC token. *)
+    | Reserved_response_header of
+        { meth : string
+        ; path : string
+        ; status : int
+        ; name : string
+        } (** A response declares a payload or transport-owned header. *)
     | Duplicate_response_header of
         { meth : string
         ; path : string
@@ -382,6 +406,17 @@ module Compile_error : sig
         }
     (** A requirement references an undeclared OAuth 2 scope, or attaches a
         scope to a scheme kind that does not support scopes. *)
+    | Invalid_security_scheme_parameter of
+        { scheme : string
+        ; parameter : string
+        } (** An API-key security scheme uses an invalid header field name. *)
+    | Invalid_security_authorization_url of string
+    (** An OAuth authorization URL is not a valid absolute HTTP(S) URI without
+        a fragment. Host literals and percent escapes must follow RFC 3986. *)
+    | Duplicate_oauth_scope of
+        { scheme : string
+        ; scope : string
+        } (** An OAuth security scheme declares the same scope name more than once. *)
 
   (** Returns a stable, human-readable diagnostic for a compile error. *)
   val to_string : t -> string
@@ -437,3 +472,6 @@ val compile : group list -> (Compiled.t, Compile_error.t list) Result.t
 (** Equivalent to {!compile}, raising [Failure] with all diagnostics joined by
     semicolons when validation fails. *)
 val compile_exn : group list -> Compiled.t
+
+(** Canonical OpenAPI-style path, with escaped static braces. *)
+val path_to_template : string -> string

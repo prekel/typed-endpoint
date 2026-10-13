@@ -26,7 +26,28 @@ type app_builder = route list
 
 let empty = []
 let combine = List.append
-let route meth path handler = [ { meth; path; handler } ]
+
+let route meth path handler =
+  let path =
+    String.split path ~on:'/'
+    |> List.map ~f:(fun segment ->
+      if String.is_prefix segment ~prefix:":" || String.is_prefix segment ~prefix:"*" then
+        segment
+      else (
+        let decoded = Dream.from_percent_encoded segment in
+        if
+          String.mem decoded '/'
+          || String.is_prefix decoded ~prefix:":"
+          || String.is_prefix decoded ~prefix:"*"
+        then
+          segment
+        else
+          decoded))
+    |> String.concat ~sep:"/"
+  in
+  [ { meth; path; handler } ]
+;;
+
 let param = Dream.param
 let query = Dream.queries
 let header request name = Dream.header request name

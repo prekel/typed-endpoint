@@ -70,13 +70,13 @@ let route =
   |> documented
   |> accepts (Request.text ~description:"Body" ())
   |> returns (case `OK (Response.text ~description:"OK" ()))
-  |> handle_with ~context:Context.request @@ fun id ok request body ->
-     let%bind result = Request_body.read body in
-     match result with
-     | Error error -> Request_body.reject error
-     | Ok body ->
-       let query = Dream.query request "q" |> Option.value ~default:"none" in
-       respond ok (String.concat ~sep:":" [ id; query; body ])
+  ==> fun id ok request body ->
+  let%bind result = Request_body.read body in
+  match result with
+  | Error error -> Request_body.reject error
+  | Ok body ->
+    let query = Dream.query request "q" |> Option.value ~default:"none" in
+    respond ok (String.concat ~sep:":" [ id; query; body ])
 ;;
 
 let custom =
@@ -97,10 +97,15 @@ let fixed =
 let handler =
   compile_exn
     ~decode_error:decode_errors
-    [ Group.make
+    [ Group.make_with_context
         ~prefix:[ "v1" ]
+        ~context:Context.request
         ~description:"Dream test"
-        [ route; custom; captured; fixed ]
+        [ route ]
+    ; Group.make
+        ~prefix:[ "v1" ]
+        ~description:"Runtime routes"
+        [ custom; captured; fixed ]
     ]
   |> Compiled.app
   |> Typed_endpoint_dream.router

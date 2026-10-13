@@ -2,10 +2,23 @@ open! Base
 module Backend = Typed_endpoint_testing
 module Database = Petstore_app.Database_memory.Make (Backend.Io)
 
+module Session_runtime = struct
+  let clock = ref 0.
+  let counter = ref 0
+  let now () = !clock
+
+  let token () =
+    Int.incr counter;
+    Ok ("session-" ^ Int.to_string !counter)
+  ;;
+end
+
 module App =
   Petstore_app.Routes.Make (Backend) (Database) (Database.Pet_repository)
     (Database.Order_repository)
     (Database.User_repository)
+    (Database.Session_repository)
+    (Session_runtime)
 
 module Endpoint = App.Endpoint
 
@@ -21,6 +34,8 @@ module Failing_app =
   Petstore_app.Routes.Make (Backend) (Database) (Failing_pet_repository)
     (Database.Order_repository)
     (Database.User_repository)
+    (Database.Session_repository)
+    (Session_runtime)
 
 let auth = Petstore_app.Routes.{ bearer_token = "test-token"; api_key = "test-key" }
 let compiled = App.compile ~auth ~database:(Database.create ()) ()
@@ -205,14 +220,27 @@ let test_user_api () =
   assert_status 200 created;
   let found = request `GET "/user/alice" in
   assert_status 200 found;
-  let logged_in = request `GET "/user/login?username=alice&password=secret" in
+  let logged_in =
+    request
+      ~headers:(json [])
+      ~body:{|{"username":"alice","password":"secret"}|}
+      `POST
+      "/user/login"
+  in
   assert_status 200 logged_in;
-  assert (Yojson.Safe.equal (response_json logged_in) (`String "alice-session-token"));
+  assert (not (Yojson.Safe.equal (response_json logged_in) (`String "test-token")));
+  let login_token = Yojson.Safe.Util.(response_json logged_in |> to_string) in
+  assert_status
+    200
+    (request
+       ~headers:[ "authorization", "Bearer " ^ login_token ]
+       `GET
+       "/pet/findByStatus?status=available");
   assert (
     Option.equal
       String.equal
       (Typed_endpoint_testing.Response.header logged_in "X-Rate-Limit")
-      (Some "1000"));
+      None);
   let update =
     user_json ~username:"ignored" ~first_name:"Alicia" ~password:"new-secret" ()
   in
@@ -244,7 +272,7 @@ let test_user_api () =
     String.equal
       Yojson.Safe.Util.(response_json bulk |> member "username" |> to_string)
       "carol");
-  assert_status 200 (request `GET "/user/logout");
+  assert_status 200 (request ~headers:bearer_headers `POST "/user/logout");
   assert_status 200 (request `DELETE "/user/alice");
   assert_status 404 (request `GET "/user/alice")
 ;;
@@ -275,8 +303,9 @@ let test_openapi () =
     ; "/store/order/{orderId}", "delete", "deleteOrder"
     ; "/user", "post", "createUser"
     ; "/user/createWithList", "post", "createUsersWithListInput"
-    ; "/user/login", "get", "loginUser"
-    ; "/user/logout", "get", "logoutUser"
+    ; "/user/createWithArray", "post", "createUsersWithArrayInput"
+    ; "/user/login", "post", "loginUser"
+    ; "/user/logout", "post", "logoutUser"
     ; "/user/{username}", "get", "getUserByName"
     ; "/user/{username}", "put", "updateUser"
     ; "/user/{username}", "delete", "deleteUser"

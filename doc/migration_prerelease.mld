@@ -1,7 +1,9 @@
-{0 Миграция prerelease API}
+{0 Миграция API}
 
-Релиза до этих изменений не было, поэтому compatibility aliases намеренно не
-добавлены. Этот документ нужен пользователям текущей ветки разработки.
+Документ описывает изменения API до версии 0.2.1 включительно. Разделы об
+HTTP-контрактах и Petstore sessions относятся к переходу с 0.2.0 на 0.2.1;
+предыдущие разделы также помогают перенести код с более ранних версий.
+Compatibility aliases для удалённых [handle] и [handle_with] не добавлены.
 
 {1 JSON Schema}
 
@@ -70,7 +72,7 @@ let route =
   |> returns
        (case `OK (Response.json (module Pet))
         <|> case `Not_found (Response.json (module Api_response)))
-  |> handle @@ fun id ok not_found () ->
+  ==> fun id ok not_found () () ->
   match find_pet id with
   | Some pet -> respond ok pet
   | None -> respond not_found (Api_response.not_found id)
@@ -83,6 +85,34 @@ payload; порядок её аргументов совпадает с поря
 описывает любой именованный status или
 extension-код вида [`Code n], поэтому отдельные семейства 2xx/4xx/5xx больше не
 нужны.
+
+{1 Единственный способ привязки handler}
+
+Маршруты завершаются оператором [==>]. Функции [handle] и [handle_with]
+удалены из публичного API. Handler получает контекст после response
+capabilities и перед request body; [Group.make_with_context] задаёт контекст
+всей группы. При отсутствии зависимостей используйте [Context.return ()] и
+аргумент [()] в handler:
+
+{[
+let health =
+  get / "health"
+  |> documented
+  |> accepts Request.empty
+  |> returns (case `OK (Response.text ~description:"Health" ()))
+  ==> fun ok () () -> respond ok "ok"
+
+let api =
+  Group.make_with_context
+    ~context:(Context.return ())
+    ~description:"Health API"
+    [ health ]
+]}
+
+Для прежних маршрутов с собственным контекстом перенесите его в
+[Group.make_with_context]. Сырой request передаётся через [Context.request],
+guards и application dependencies — через их типизированный [Context.t].
+[Group.make] собирает runtime-only маршруты из [Unsafe.route].
 
 {1 Плоский namespace и HTTP-типы}
 
@@ -168,9 +198,71 @@ post / "items"
 |> documented
 |> accepts Request.empty
 |> returns (case `Created response)
-|> handle @@ fun created () -> respond created (location_value, item)
+==> fun created () () -> respond created (location_value, item)
 ]}
 
 Optional header использует ['a option] и при [None] отсутствует на wire.
 Повторные или синтаксически неверные имена обнаруживаются при [compile]; CR/LF
-в закодированном response value приводят к [Runtime_error].
+и другие запрещённые control characters в закодированном response value
+приводят к [Runtime_error]. Допустимый HTAB сохраняется.
+
+{1 Уточнение HTTP-контрактов}
+
+[Request.json] теперь принимает только [application/json] по умолчанию.
+Чтобы продолжать принимать vendor JSON, объявите конкретные media types:
+
+{[
+Request.json
+  ~media_types:[ "application/json"; "application/vnd.example+json" ]
+  (module Dto)
+]}
+
+Тот же список публикуется в OpenAPI. Суффиксный wildcard [application/*+json]
+не используется; [application/+json] невалиден.
+
+Для необязательного record field используйте общий [@default None]. Атрибут
+[@jsonschema.option] без общего [@default] отклоняется, включая option aliases.
+Рекурсивные PPX-схемы получают URN вместо [$id] с путём исходного файла.
+Схемы с [enum]/[const] сохраняют эти ограничения при [Json_schema.nullable],
+а при встраивании рекурсивной схемы в OpenAPI сохраняется её корневой [$id].
+
+1xx нельзя объявлять финальным ответом handler; 204, 205 и 304 требуют пустого
+payload. Captures используют буквы ASCII, цифры, подчёркивание и непустые
+части, разделённые точками. Статические сегменты и prefixes не допускают
+пробелы, controls, [?], [#] и неверные percent escapes. Числовые параметры
+принимают десятичный формат без OCaml literals и underscores.
+
+Не объявляйте [Accept], [Content-Type] или [Authorization] как request header
+parameters; используйте payload и [Security]/[Guard]. Response headers
+[Content-Type], [Content-Length], [Transfer-Encoding], [Trailer] и [Connection]
+управляются payload/transport и отклоняются при compile.
+
+OAuth authorization URLs должны быть абсолютными HTTP(S) URI без fragment;
+некорректные percent escapes и IP literals отклоняются. Проверьте отсутствие
+повторяющихся OAuth scopes и корректность имён API-key headers.
+
+Static segments и captures проходят однократный percent decode. Eio больше
+не декодирует static segments дважды; Dream корректно сопоставляет escaped
+braces и literal percent values. Literal braces сохраняют отличие от captures
+в OpenAPI и [Route_info].
+
+{1 Petstore sessions}
+
+Вместо GET login с query credentials используйте POST [/user/login] с JSON
+[{"username":"alice","password":"secret"}]. Оба поля обязательны. Ответ —
+JSON-строка нового токена со сроком жизни один час. POST [/user/logout] с bearer
+отзывает только эту сессию. Demo bearer сохранён отдельно, и logout для него
+возвращает 200 без отзыва.
+
+Неизвестные, истёкшие и отозванные токены получают 401. Scheme Bearer
+сравнивается без учёта регистра; токен сохраняет регистр. Разделитель между
+scheme и токеном — один или несколько SP, согласно RFC 6750.
+
+Создание и обновление пользователя принимают [Dto.User_input] с password;
+ответы используют [Dto.User] без password. Пакетные маршруты
+[/user/createWithList] и [/user/createWithArray] возвращают массив публичных
+User DTO. Фиктивные [X-Rate-Limit] и [X-Expires-After] удалены из OpenAPI и
+ответа login.
+[Routes.Make] дополнительно принимает [Session_repository] и [Session_runtime],
+выбранные в composition root. Вместо [auth_from_env] используется
+[auth_from_env_exn], который отклоняет пустой [PETSTORE_API_KEY].

@@ -8,6 +8,6 @@ let route =
   |> documented
   |> accepts Request.empty
   |> returns (case `OK (Response.text ~description:"Response" ()))
-  |> handle @@ fun (not_found : ([ `Not_found ], string) Response.case) () ->
-     respond not_found "missing"
+  ==> fun (not_found : ([ `Not_found ], string) Response.case) () () ->
+  respond not_found "missing"
 ;;

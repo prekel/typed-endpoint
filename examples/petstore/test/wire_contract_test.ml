@@ -2,10 +2,23 @@ open! Base
 module Backend = Typed_endpoint_testing
 module Database = Petstore_app.Database_memory.Make (Backend.Io)
 
+module Session_runtime = struct
+  let clock = ref 0.
+  let counter = ref 0
+  let now () = !clock
+
+  let token () =
+    Int.incr counter;
+    Ok ("session-" ^ Int.to_string !counter)
+  ;;
+end
+
 module App =
   Petstore_app.Routes.Make (Backend) (Database) (Database.Pet_repository)
     (Database.Order_repository)
     (Database.User_repository)
+    (Database.Session_repository)
+    (Session_runtime)
 
 module Endpoint = App.Endpoint
 
@@ -61,18 +74,73 @@ let () =
        (Some (`String "Alice")))
     "camelCase response field";
   check (Option.is_none (field "first_name" created_json)) "snake_case field leaked";
-  let login = send `GET "/user/login?username=alice&password=secret" in
+  check (Option.is_none (field "password" created_json)) "password leaked from create";
+  let found = send `GET "/user/alice" in
+  check
+    (Option.is_none (field "password" (Yojson.Safe.from_string (body found))))
+    "password leaked from GET";
+  let login =
+    send
+      ~headers:[ "content-type", "application/json" ]
+      ~body:{|{"username":"alice","password":"secret"}|}
+      `POST
+      "/user/login"
+  in
   check_json_response login 200;
-  check (String.equal (body login) {|"alice-session-token"|}) "login token encoding";
+  check (String.equal (body login) {|"session-1"|}) "login token encoding";
+  check (Option.is_none (header login "x-rate-limit")) "fictional rate-limit header";
+  check (Option.is_none (header login "x-expires-after")) "fictional expiration header";
+  let missing_password =
+    send
+      ~headers:[ "content-type", "application/json" ]
+      ~body:{|{"username":"alice"}|}
+      `POST
+      "/user/login"
+  in
+  check_json_response missing_password 400;
+  let get_login = send `GET "/user/login?username=alice&password=secret" in
+  check (Int.equal (status get_login) 404) "GET login still authenticates";
+  let authorized =
+    send
+      ~headers:[ "authorization", "bEaReR session-1" ]
+      `GET
+      "/pet/findByStatus?status=available"
+  in
+  check_json_response authorized 200;
+  let logout =
+    send ~headers:[ "authorization", "Bearer session-1" ] `POST "/user/logout"
+  in
+  check (Int.equal (status logout) 200 && String.is_empty (body logout)) "session logout";
+  check (Option.is_none (header logout "Content-Type")) "logout Content-Type";
+  check_json_response
+    (send
+       ~headers:[ "authorization", "Bearer session-1" ]
+       `GET
+       "/pet/findByStatus?status=available")
+    401;
   check
-    (Option.equal String.equal (header login "x-rate-limit") (Some "1000"))
-    "login rate-limit header";
+    (Int.equal
+       (status
+          (send ~headers:[ "authorization", "Bearer wire-token" ] `POST "/user/logout"))
+       200)
+    "demo logout";
+  check_json_response
+    (send
+       ~headers:[ "authorization", "bearer wire-token" ]
+       `GET
+       "/pet/findByStatus?status=available")
+    200;
+  let bulk =
+    send
+      ~headers:[ "content-type", "application/json" ]
+      ~body:{|[{"username":"bob","password":"one"}]|}
+      `POST
+      "/user/createWithArray"
+  in
+  check_json_response bulk 200;
   check
-    (Option.equal
-       String.equal
-       (header login "X-Expires-After")
-       (Some "2030-01-01T00:00:00Z"))
-    "login expiration header";
+    (Option.is_none (field "password" (Yojson.Safe.from_string (body bulk))))
+    "password leaked from batch";
   let invalid_path = send `GET "/user/%20" in
   check_json_response invalid_path 400;
   let invalid_json = Yojson.Safe.from_string (body invalid_path) in

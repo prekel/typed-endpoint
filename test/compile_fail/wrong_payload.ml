@@ -8,5 +8,5 @@ let route =
   |> documented
   |> accepts Request.empty
   |> returns (case `OK (Response.text ~description:"Response" ()))
-  |> handle @@ fun ok () -> respond ok 42
+  ==> fun ok () () -> respond ok 42
 ;;

@@ -76,17 +76,16 @@ let route =
   |> documented
   |> accepts (Request.text ~description:"Body" ())
   |> returns (case `OK (Response.text ~description:"OK" ()))
-  |> handle_with ~context:(Context.both authenticated (Dependency.value "items"))
-     @@ fun id query ok (user, service) body ->
-     let%bind result = Request_body.read body in
-     match result with
-     | Error error -> Request_body.reject error
-     | Ok body ->
-       respond
-         ok
-         (String.concat
-            ~sep:":"
-            [ service; user; id; Option.value query ~default:"none"; body ])
+  ==> fun id query ok (user, service) body ->
+  let%bind result = Request_body.read body in
+  match result with
+  | Error error -> Request_body.reject error
+  | Ok body ->
+    respond
+      ok
+      (String.concat
+         ~sep:":"
+         [ service; user; id; Option.value query ~default:"none"; body ])
 ;;
 
 let captured =
@@ -103,7 +102,13 @@ let fixed =
 let app =
   compile_exn
     ~decode_error:decode_errors
-    [ Group.make ~prefix:[ "v1" ] ~description:"Eio test" [ route; captured; fixed ] ]
+    [ Group.make_with_context
+        ~prefix:[ "v1" ]
+        ~context:(Context.both authenticated (Dependency.value "items"))
+        ~description:"Eio test"
+        [ route ]
+    ; Group.make ~prefix:[ "v1" ] ~description:"Runtime routes" [ captured; fixed ]
+    ]
   |> Compiled.app
 ;;
 
@@ -202,4 +207,38 @@ let () =
       (Http.Header.get (Typed_endpoint_eio.Response.headers with_header) "x-test")
       (Some "replacement"));
   Conformance.run ()
+;;
+
+let () =
+  List.iter [ "%3Aid"; "%2A"; "a%2Fb" ] ~f:(fun segment ->
+    let route =
+      get / "static" / segment
+      |> documented
+      |> accepts Request.empty
+      |> returns (case `OK (Response.text ~description:"Static" ()))
+      ==> fun ok () () -> respond ok "static"
+    in
+    let compiled =
+      compile_exn
+        [ Group.make_with_context
+            ~context:(Context.return ())
+            ~description:"Encoded static segments"
+            [ route ]
+        ]
+    in
+    let app = Compiled.app compiled in
+    let dispatch path =
+      Typed_endpoint_eio.dispatch
+        app
+        ~request:(Http.Request.make ~meth:`GET path)
+        ~body:""
+    in
+    assert (
+      Poly.equal
+        (Typed_endpoint_eio.Response.status (dispatch ("/static/" ^ segment)))
+        `OK);
+    assert (
+      Poly.equal
+        (Typed_endpoint_eio.Response.status (dispatch "/static/different"))
+        `Not_found))
 ;;

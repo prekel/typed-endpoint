@@ -2,20 +2,27 @@
 
 {1 Ограничения body}
 
-JSON принимается для [application/json] и [application/*+json] с параметрами.
+JSON по умолчанию принимается для [application/json]; конкретные vendor types
+задаются через [Request.json ~media_types]. Content-Type допускает параметры.
+Runtime и OpenAPI используют один список типов с одним codec и схемой;
+суффиксный wildcard [application/*+json] и [application/+json] запрещены.
 Текст принимается как [text/plain]. Backend обязан остановить буферизацию после
 [max_body_bytes]; декларация нулевого или отрицательного лимита не компилируется.
 Multipart, form data и streaming response пока не входят в API.
 
 {1 URI и query}
 
-Backend передаёт path capture и query value в codec уже после percent-decoding.
+Backend передаёт path capture и query value в codec после однократного
+percent-decoding: например, [%252F] превращается в [%2F], а не в [/].
 Параметр [/?] или [/!] является scalar: отсутствие обрабатывается согласно его
 optional/required типу, одно вхождение декодируется, а два и более вхождения
 одного имени возвращают 400 [Duplicate_parameter]. Библиотека не выбирает
 молча первое или последнее значение, поэтому поведение одинаково у Opium,
 Dream, Eio и testing. Запятая внутри одного query value остаётся частью строки;
 например [tags=a,b] не считается двумя вхождениями.
+
+Числовые параметры и headers используют десятичный wire-формат: OCaml hex
+literals, underscores, hex-float, NaN и infinity отклоняются.
 
 [Accept] пока не используется для server-side content negotiation. Endpoint
 возвращает representation, указанное выбранным response constructor. Если API
@@ -58,10 +65,16 @@ description и schema из той же декларации.
 
 Имена request/response headers проверяются как HTTP token во время [compile].
 Имена сравниваются регистронезависимо; повтор в одном response отклоняется.
-Закодированное runtime-значение не может содержать CR или LF: вместо отправки
-потенциально инъецированного ответа выбрасывается [Runtime_error] без включения
-самого значения в diagnostic. Исключение должно попасть во внешний application
-error boundary.
+Закодированное runtime-значение не может содержать CR, LF или другой запрещённый
+control character: вместо отправки потенциально инъецированного ответа
+выбрасывается [Runtime_error] без включения самого значения в diagnostic.
+Исключение должно попасть во внешний application error boundary.
+
+Request headers [Accept], [Content-Type], [Authorization] не могут быть typed
+header parameters: representation задаётся payload, авторизация — [Security]
+и [Guard]. Response headers [Content-Type], [Content-Length],
+[Transfer-Encoding], [Trailer], [Connection] принадлежат payload/transport
+и отклоняются при [compile]. Допустимый HTAB в response value сохраняется.
 
 {1 OpenAPI}
 
@@ -96,6 +109,12 @@ keyword, которого ещё нет в DSL. Не используйте ег
 вариантом, например [`Date_time], [`Int64] или [`Double]; [`Custom name]
 остаётся явной точкой расширения.
 
+Для необязательного record field используйте общий [@default], например
+[@default None]; [@jsonschema.option] без него отклоняется, в том числе для
+option aliases. PPX генерирует URN из namespace и позиции объявления, без
+пути к checkout. Корневой [$id] рекурсивной схемы сохраняется при встраивании
+в OpenAPI, а [Json_schema.nullable] сохраняет ограничения [enum] и [const].
+
 Тесты библиотеки сравнивают схемы smart constructors с PPX структурно, не
 учитывая порядок полей JSON object. Все standalone и встроенные в Petstore
 OpenAPI schema fragments дополнительно проверяются Draft 2020-12
@@ -108,16 +127,30 @@ runtime ядра.
 вида [/pets/:id] и [/pets/:name] также конфликтуют: их runtime-shape совпадает,
 даже если имена capture различаются. В одном endpoint нельзя повторять имя
 path-, query- или header-параметра, а явный status должен лежать в диапазоне
-100--599.
+200--599. Промежуточные 1xx нельзя объявлять финальным результатом handler;
+204, 205 и 304 требуют пустого payload.
 При допустимом пересечении [/pets/find] имеет приоритет над [/pets/:id]
 независимо от порядка объявления; маршруты одинаковой специфичности сохраняют
 исходный порядок.
-Prefix группы принимает только непустые статические сегменты без [/], [:], [*]
-и dot-navigation. Typed route не принимает wildcard-синтаксис, а список
-отрендеренных [:capture] сверяется со списком типизированных path-параметров.
+Prefix группы принимает только непустые статические сегменты без [/],
+dot-navigation и начальных [:] или [*]. Typed route не принимает
+wildcard-синтаксис; список отрендеренных [:capture] сверяется со списком
+типизированных path-параметров.
+Capture names допускают ASCII letters, digits, underscore и непустые части,
+разделённые точками. Статические сегменты и group prefixes отклоняют пробелы,
+controls, [?], [#] и невалидные percent escapes. Статические braces экранируются
+в OpenAPI и [Route_info], сохраняя отличие от captures.
 Корневой route внутри prefix нормализуется в [/v1], а не [/v1/].
 Перед публикацией документа задайте [Openapi.Config] с title, version,
 description и servers.
+
+Имена API-key headers проверяются как HTTP field-name, повторяющиеся OAuth
+scopes отклоняются. OAuth authorization URL проверяется как абсолютный
+HTTP(S) URI: authority, IPv6/IPvFuture literals, path и query должны
+соответствовать RFC 3986. Пробелы, controls и символы вроде [<] или [>]
+требуют percent encoding. Fragment запрещён для authorization endpoint по
+RFC 6749; encoded [%23] в path/query допустим. Ошибка обнаруживается во время
+[compile]; DNS и доступность сервера не проверяются.
 
 Backend возвращает текст с [Content-Type: text/plain; charset=utf-8], HTML с
 [text/html; charset=utf-8], JSON с [application/json], а body-less response без
@@ -174,7 +207,8 @@ adapter tests оставляйте преобразование request/response
 [Typed_endpoint_testing.Backend_conformance] задаёт единый black-box suite для
 всех backend: bounded body, response representations, typed и raw
 case-insensitive headers, duplicate scalar query, 404/405 с [Allow], статический
-приоритет, path capture, decode errors и порядок
+приоритет, escaped static segments, однократный decode path capture,
+конкретные JSON media types, decode errors и порядок
 [Backend.S.combine]. Каждый adapter test предоставляет только harness для
 создания request и чтения response. Прохождение suite является обязательной
 частью готовности нового backend.
@@ -210,13 +244,15 @@ framework API вне соответствующего adapter package.
 {2 Проверка OCaml 4.14.1}
 
 Используйте отдельный switch и выбирайте только пакеты, поддерживающие 4.14.1.
-При сборке компилятора из исходников с GCC 15 задайте режим C17 через [CC]:
+При сборке компилятора из исходников с GCC 15 задайте режим C11 через [CC].
+Собирайте в отдельном build directory, чтобы не смешивать артефакты разных
+компиляторов. Не копируйте готовый switch: его конфигурация может сохранить
+пути к старому окружению.
 
 {[
-CC='gcc -std=gnu17' opam switch create /tmp/typed-endpoint-ocaml-4.14.1 4.14.1
-OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam install --deps-only ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-testing.opam ./typed-endpoint-opium.opam
-OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing @install opium/test/adapter_test.exe
-OPAMSWITCH=/tmp/typed-endpoint-ocaml-4.14.1 opam exec -- dune exec --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing opium/test/adapter_test.exe
+CC='gcc -std=gnu11' opam switch create /tmp/typed-endpoint-ocaml-4.14.1 ocaml-base-compiler.4.14.1
+opam install --switch=/tmp/typed-endpoint-ocaml-4.14.1 --deps-only --with-test ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-testing.opam ./typed-endpoint-opium.opam
+opam exec --switch=/tmp/typed-endpoint-ocaml-4.14.1 -- dune build --root . --build-dir /tmp/typed-endpoint-build414 --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing @install @runtest examples/petstore/servers/opium_server.exe
 ]}
 
 На Ubuntu транзитивным TLS-зависимостям Opium нужен [libgmp-dev]; Dream также

@@ -65,12 +65,9 @@ let () =
        ^ valid
        ^ "\n"
        ^ diagnostics);
-    require_failure ~root ~fixture:wrong_payload ~expected:"is not compatible with type";
+    require_failure ~root ~fixture:wrong_payload ~expected:"expected of type";
     require_failure ~root ~fixture:wrong_status ~expected:"Response.case";
-    require_failure
-      ~root
-      ~fixture:wrong_handler
-      ~expected:"is not compatible with type unit";
+    require_failure ~root ~fixture:wrong_handler ~expected:"Response.case";
     require_failure ~root ~fixture:wrong_stage ~expected:"This expression has type"
   | _ -> Stdlib.failwith "expected workspace root and five compile-fail fixtures"
 ;;

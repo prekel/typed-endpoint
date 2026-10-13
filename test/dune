@@ -1,13 +1,13 @@
 (library
  (name typed_endpoint_test)
  (package typed-endpoint-testing)
- (modules invariants json_schema_test schema_dependency typed_schema_signature)
- (libraries
-  base
-  jsonschema
-  typed-endpoint
-  typed-endpoint-testing
-  yojson)
+ (modules
+  invariants
+  bug_regressions
+  json_schema_test
+  schema_dependency
+  typed_schema_signature)
+ (libraries base jsonschema typed-endpoint typed-endpoint-testing yojson)
  (inline_tests)
  (preprocess
   (pps ppx_let ppx_deriving_yojson typed-endpoint-ppx ppx_expect)))
@@ -38,3 +38,16 @@
    %{dep:compile_fail/wrong_status.ml}
    %{dep:compile_fail/wrong_handler_arguments.ml}
    %{dep:compile_fail/wrong_stage_order.ml})))
+
+(executable
+ (name schema_ppx)
+ (modules schema_ppx)
+ (libraries base typed-endpoint-ppx ppxlib.runner))
+
+(test
+ (name ppx_contract_test)
+ (modules ppx_contract_test)
+ (package typed-endpoint-testing)
+ (libraries base unix)
+ (action
+  (run %{test} %{exe:schema_ppx.exe})))

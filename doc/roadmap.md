@@ -1,8 +1,8 @@
 # Согласованный план развития
 
 Этот файл фиксирует решения, принятые после сравнения `typed-endpoint` с
-Servant, Tapir, Smithy4s, http4s и ZIO. Это backlog, а не описание уже
-существующего публичного API.
+Servant, Tapir, Smithy4s, http4s и ZIO. Здесь перечислены выполненные работы и
+backlog; существующий публичный API описан в руководствах и `.mli`.
 
 Все пункты, обозначающие работу, оформляются чекбоксами: `[ ]` — не выполнено,
 `[x]` — выполнено. Новые пункты добавляются с `[ ]`.
@@ -94,8 +94,9 @@ OpenAPI остаётся внешним описанием и основой д�
 - [x] Добавлены QCheck properties для percent-decoding, регистра headers, повторных
   query values и приоритета static route, а также отдельный негейтящий router
   benchmark.
-- [x] Petstore login публикует и возвращает `X-Rate-Limit` и `X-Expires-After`; wire
-  tests проверяют значения без повторного использования application codecs.
+- [x] Petstore login покрыт независимыми wire tests для статуса, токена и
+  отсутствия секретов в ответах; фиктивные `X-Rate-Limit` и `X-Expires-After`
+  удалены.
 - [x] Добавлены changelog, security policy, migration guide и `make release-check`.
 - [x] Матрица поддерживаемых adapter versions и эксплуатационные границы подробно
   описаны в `doc/production.mld`.
@@ -165,6 +166,83 @@ field names, status, headers, content types, decode-error shape, пустые о
 - [x] Добавить отдельный `typed-endpoint-ppx` для OCaml 4.14.1 с wire-семантикой
   `ppx_deriving_yojson`, сохранив generic-типы схем и импорт внешнего JSON.
 - [x] Перенести Petstore, включая Opium entrypoint и тесты, на OCaml 4.14.1.
+
+## Баги
+
+### Первое ревью — исправлено
+
+Все 35 находок из двух ревью исправлены и отмечены ниже. Исправления входят
+в версию 0.2.1 и описаны в `CHANGES.md`.
+
+Повторная проверка 2026-10-13 сверила оба списка с реализацией и регрессиями:
+HTTP-контракт — `test/bug_regressions.ml` и `test/invariants.ml`, JSON Schema/PPX —
+`test/json_schema_test.ml` и `test/ppx_contract_test.ml`, Petstore —
+`examples/petstore/test/session_test.ml`, `app_test.ml` и `wire_contract_test.ml`.
+Дополнительно исправлены двойной percent decode в Eio, экранированные static
+segments в Dream и SP-разделители в Bearer. Общий backend conformance suite
+проверяет escaped braces и literal percent values во всех адаптерах.
+
+- [x] Petstore login выдаёт bearer token, который принимают защищённые маршруты.
+- [x] Сохраняются `enum` и `const` у схемы при добавлении `null` через
+  `Json_schema.nullable`.
+- [x] Сохраняется корневой `$id` для рекурсивных `$ref` при встраивании схемы в
+  OpenAPI.
+- [x] Финальные ответы 1xx отклоняются; статусы 204, 205 и 304 требуют пустого тела.
+- [x] Неподдерживаемые HTTP methods отклоняются в типизированных маршрутах;
+  недопустимые ключи OpenAPI Path Item не генерируются.
+- [x] `?` и `#` отклоняются в typed path.
+- [x] Исправлен пример в quickstart: убран несуществующий аргумент `~to_string`
+  у `Parameter.v`.
+- [x] Запрещённые управляющие символы в response header values отклоняются,
+  включая CR/LF; допустимый HTAB сохраняется.
+- [x] Пользовательский `Content-Type` запрещён в response headers; runtime
+  задаёт его из payload в соответствии с OpenAPI.
+- [x] Имена API-key headers проверяются по синтаксису HTTP field-name.
+- [x] Повторяющиеся имена OAuth scopes отклоняются.
+- [x] Некорректные OAuth authorization URLs отклоняются.
+
+### Повторное ревью — исправлено
+
+- [x] 1xx запрещены как финальный результат handler: это промежуточные
+  HTTP-ответы; допустимый диапазон финальных статусов — 200–599.
+- [x] Статический сегмент пути `{id}` экранируется в OpenAPI и `Route_info`,
+  сохраняя отличие от типизированного path-параметра.
+- [x] Имена path captures проверяются на допустимый синтаксис URI template.
+- [x] `?` и `#` запрещены в group prefix.
+- [x] Статические path segments проверяются на пробелы, управляющие символы и
+  некорректные `%` escape-последовательности.
+- [x] Числовые параметры разбираются по десятичному wire-формату, не принимая
+  OCaml-специфичные hex-литералы, подчёркивания и hex-float.
+- [x] Некорректный JSON media type `application/+json` отклоняется.
+- [x] OpenAPI и runtime используют один список конкретных JSON media types
+  из `Request.json ~media_types`; суффиксный wildcard запрещён.
+- [x] Конфликтующие framing response headers запрещены, включая `Content-Length`
+  и `Transfer-Encoding`.
+- [x] Request header parameters `Accept`, `Content-Type` и `Authorization`
+  отклоняются, поскольку OpenAPI игнорирует их для параметров типа `header`.
+- [x] `[@jsonschema.option]` требует общего `[@default]`, чтобы необязательность
+  поля совпадала с Yojson decoder, включая alias-типы.
+- [x] PPX генерирует `$id` в виде URN без compile-time пути к исходному файлу;
+  перенос checkout не меняет идентификатор схемы.
+- [x] Диапазоны Petstore DTO для int32/int64 согласованы с фактическим OCaml
+  типом `int`.
+- [x] Пароль исключён из всех User responses, включая `GET /user/{username}`;
+  входные данные вынесены в `UserInput`.
+- [x] Login перенесён на `POST /user/login`: username и password передаются
+  в JSON body.
+- [x] Username и password обязательны в runtime и OpenAPI login-контракте.
+- [x] Каждый вход выдаёт независимый токен с пользовательской и сессионной
+  идентичностью и сроком жизни один час.
+- [x] `POST /user/logout` отзывает предъявленную сессию; независимый demo bearer
+  сохраняется и получает 200 без отзыва.
+- [x] Фиктивные `X-Rate-Limit` и `X-Expires-After` удалены из runtime и OpenAPI.
+- [x] HTTP bearer auth scheme сравнивается без учёта регистра; регистр токена
+  сохраняется.
+- [x] Пустой `PETSTORE_API_KEY` отклоняется при запуске, пустой `api_key` — при
+  аутентификации.
+- [x] Добавлен `POST /user/createWithArray`; отличия от Swagger Petstore v3
+  описаны в README примера.
+- [x] Title Petstore согласован с версией OpenAPI 3.1.0, которую выдаёт renderer.
 
 ## Не планируется сейчас
 

@@ -5,6 +5,16 @@ module List = Stdlib.List
 module Option = Stdlib.Option
 module String = Stdlib.String
 
+let schema_id ~namespace ~loc =
+  estring
+    ~loc
+    (Printf.sprintf
+       "urn:typed-endpoint:schema:%s:%d:%d"
+       namespace
+       loc.loc_start.pos_lnum
+       (loc.loc_start.pos_cnum - loc.loc_start.pos_bol))
+;;
+
 let deriver_name = "jsonschema"
 
 let schema_type ~loc typ =
@@ -100,16 +110,10 @@ let rec schema_of_core_type
                      ppx_dependency_schema]
                , is_rec )
              | false ->
-               let unique_id =
-                 estring
-                   ~loc
-                   (Printf.sprintf
-                      "file://%s:%d"
-                      loc.loc_start.pos_fname
-                      loc.loc_start.pos_lnum)
-               in
                ( [%expr
-                   Typed_endpoint.Json_schema.Deriver.with_id [%e unique_id] [%e schema]]
+                   Typed_endpoint.Json_schema.Deriver.with_id
+                     [%e schema_id ~namespace:config.schema_namespace ~loc]
+                     [%e schema]]
                , is_rec )))
        | Ptyp_tuple types ->
          let results = List.map (schema_of_core_type ~config ~recursive_types) types in
@@ -225,10 +229,14 @@ let schema_of_record
            | Some name -> name.txt
            | None -> pld_name.txt
          in
+         let has_optional_flag = Attribute.has_flag Attrs.jsonschema_option field in
          let drop_required =
-           Attribute.has_flag Attrs.jsonschema_option field
-           || Attrs.ld_default field |> Option.is_some
+           Attrs.yojson_default field.pld_attributes |> Option.is_some
          in
+         if has_optional_flag && not drop_required then
+           Location.raise_errorf
+             ~loc:field.pld_loc
+             "typed-endpoint-ppx: [@jsonschema.option] requires a shared [@default], for example [@default None]";
          let type_def, field_rec =
            match Attribute.get Attrs.jsonschema_ref field with
            | Some def -> Schema.type_ref ~loc def.txt, false
@@ -431,7 +439,9 @@ let apply_defs ~loc = function
 let str_type_decl ~ctxt ast flag_polymorphic_variant_tuple flag_ocaml_doc strict =
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
   let config : Attrs.config =
-    { Attrs.polymorphic_variant_tuple = flag_polymorphic_variant_tuple
+    { Attrs.schema_namespace =
+        Code_path.fully_qualified_path (Expansion_context.Deriver.code_path ctxt)
+    ; Attrs.polymorphic_variant_tuple = flag_polymorphic_variant_tuple
     ; Attrs.ocaml_doc = flag_ocaml_doc
     ; Attrs.strict = Option.value strict ~default:false
     }
@@ -480,7 +490,9 @@ let str_type_decl ~ctxt ast flag_polymorphic_variant_tuple flag_ocaml_doc strict
       if is_rec then
         [%expr
           let ppx_eds = ref [] in
-          [%e apply_defs ~loc (`Rec (type_name, [ type_name, raw_schema ]))]]
+          Typed_endpoint.Json_schema.Deriver.with_id
+            [%e schema_id ~namespace:config.schema_namespace ~loc]
+            [%e apply_defs ~loc (`Rec (type_name, [ type_name, raw_schema ]))]]
       else
         [%expr
           let ppx_eds = ref [] in
@@ -545,7 +557,9 @@ let str_type_decl ~ctxt ast flag_polymorphic_variant_tuple flag_ocaml_doc strict
            let schema =
              [%expr
                let ppx_eds = ref [] in
-               [%e apply_defs ~loc (`Rec (name, defs))]]
+               Typed_endpoint.Json_schema.Deriver.with_id
+                 [%e schema_id ~namespace:config.schema_namespace ~loc:td.ptype_loc]
+                 [%e apply_defs ~loc (`Rec (name, defs))]]
            in
            create_typed_value ~loc td params schema)
         raw_results

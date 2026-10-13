@@ -3,7 +3,13 @@ open Typed_endpoint
 module Endpoint = Make (Typed_endpoint_testing)
 open Endpoint
 
-let group routes = Group.make ~description:"Property tests" routes
+let group routes =
+  Group.make_with_context
+    ~context:(Context.return ())
+    ~description:"Property tests"
+    routes
+;;
+
 let call = Typed_endpoint_testing.Client.call
 
 let segment_route =
@@ -11,7 +17,7 @@ let segment_route =
   |> documented
   |> accepts Request.empty
   |> returns (case `OK (Response.text ~description:"Echo" ()))
-  |> handle @@ fun value ok () -> respond ok value
+  ==> fun value ok () () -> respond ok value
 ;;
 
 let query_route =
@@ -19,7 +25,7 @@ let query_route =
   |> documented
   |> accepts Request.empty
   |> returns (case `OK (Response.text ~description:"Value" ()))
-  |> handle @@ fun value ok () -> respond ok (Int.to_string value)
+  ==> fun value ok () () -> respond ok (Int.to_string value)
 ;;
 
 let version_header =
@@ -32,7 +38,7 @@ let header_route =
   |> documented
   |> accepts Request.empty
   |> returns (case `OK (Response.text ~description:"Version" ()))
-  |> handle @@ fun version ok () -> respond ok (Int.to_string version)
+  ==> fun version ok () () -> respond ok (Int.to_string version)
 ;;
 
 let priority_dynamic_route =
@@ -40,7 +46,7 @@ let priority_dynamic_route =
   |> documented
   |> accepts Request.empty
   |> returns (case `OK (Response.text ~description:"Route kind" ()))
-  |> handle @@ fun _value ok () -> respond ok "dynamic"
+  ==> fun _value ok () () -> respond ok "dynamic"
 ;;
 
 let priority_static_route =
@@ -48,7 +54,7 @@ let priority_static_route =
   |> documented
   |> accepts Request.empty
   |> returns (case `OK (Response.text ~description:"Route kind" ()))
-  |> handle @@ fun ok () -> respond ok "static"
+  ==> fun ok () () -> respond ok "static"
 ;;
 
 let app =

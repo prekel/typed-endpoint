@@ -1,15 +1,6 @@
 open! Base
 
-let path_to_openapi path =
-  String.split ~on:'/' path
-  |> List.map ~f:(fun segment ->
-    if String.is_prefix segment ~prefix:":" then
-      "{" ^ String.drop_prefix segment 1 ^ "}"
-    else
-      segment)
-  |> String.concat ~sep:"/"
-;;
-
+let path_to_openapi = Contract.path_to_template
 let yo_str value = `String value
 let yo_bool value = `Bool value
 let yo_list values = `List values
@@ -56,13 +47,15 @@ let render_request_body = function
          ; ( "content"
            , yo_obj [ "application/octet-stream", yo_obj [ "schema", binary_schema ] ] )
          ])
-  | Json_body { schema; metadata; _ } ->
+  | Json_body { schema; metadata; media_types; _ } ->
     Some
       (yo_obj
          [ "required", yo_bool true
          ; "description", yo_str metadata.description
          ; ( "content"
-           , yo_obj [ "application/json", yo_obj [ "schema", render_schema schema ] ] )
+           , yo_obj
+               (List.map media_types ~f:(fun media_type ->
+                  media_type, yo_obj [ "schema", render_schema schema ])) )
          ])
 ;;
 

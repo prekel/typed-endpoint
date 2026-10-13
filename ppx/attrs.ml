@@ -5,7 +5,8 @@ module Option = Stdlib.Option
 module String = Stdlib.String
 
 type config =
-  { polymorphic_variant_tuple : bool
+  { schema_namespace : string
+  ; polymorphic_variant_tuple : bool
   ; ocaml_doc : bool
   ; strict : bool
   }

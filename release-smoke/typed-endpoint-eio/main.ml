@@ -8,11 +8,17 @@ let route =
   |> documented ~operation_id:"health"
   |> accepts Request.empty
   |> returns (case `OK (Response.text ~description:"Health status" ()))
-  |> handle @@ fun ok () -> respond ok "ok"
+  ==> fun ok () () -> respond ok "ok"
 ;;
 
 let routes =
-  compile_exn [ Group.make ~description:"Release smoke" [ route ] ] |> Compiled.app
+  compile_exn
+    [ Group.make_with_context
+        ~context:(Context.return ())
+        ~description:"Release smoke"
+        [ route ]
+    ]
+  |> Compiled.app
 ;;
 
 let () = ignore routes

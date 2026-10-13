@@ -8,7 +8,7 @@ open Typed_endpoint
 (** Shared controller policies. Context composition injects a controller only
     after its guard succeeds, and also supplies matching OpenAPI security
     metadata to every route in the group. *)
-module Make (B : Backend.S) : sig
+module Make (B : Backend.S) (Sessions : Session_service.S with type 'a io = 'a B.io) : sig
   (** Endpoint instance whose context types are returned below. *)
   module Endpoint : module type of Typed_endpoint.Make (B)
 
@@ -33,13 +33,28 @@ module Make (B : Backend.S) : sig
   end
 
   (** Requires the official OAuth credentials and injects [dependency]. *)
-  val pet_oauth : auth:Auth.t -> 'a -> 'a Secured.t Endpoint.Context.t
+  val pet_oauth
+    :  auth:Auth.t
+    -> Sessions.database
+    -> Sessions.database Secured.t Endpoint.Context.t
 
   (** Accepts either the official OAuth credentials or API key. *)
-  val pet_lookup : auth:Auth.t -> 'a -> 'a Secured.t Endpoint.Context.t
+  val pet_lookup
+    :  auth:Auth.t
+    -> Sessions.database
+    -> Sessions.database Secured.t Endpoint.Context.t
 
   (** Requires the official API key and injects [dependency]. *)
-  val api_key : auth:Auth.t -> 'a -> 'a Secured.t Endpoint.Context.t
+  val api_key
+    :  auth:Auth.t
+    -> Sessions.database
+    -> Sessions.database Secured.t Endpoint.Context.t
+
+  (** Requires a login session or the separate demo bearer. *)
+  val session
+    :  auth:Auth.t
+    -> Sessions.database
+    -> Sessions.database Secured.t Endpoint.Context.t
 
   (** Injects [dependency] without an authorization guard. *)
   val public : 'a -> 'a Endpoint.Context.t

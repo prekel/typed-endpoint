@@ -53,12 +53,16 @@ Typed-endpoint генерирует документ OpenAPI [3.1.0] из ско
 - [operationId] — полностью: значение выводится и проверяется на уникальность
   при компиляции.
 - [parameters] — частично: есть path, query и header со схемой, обязательностью
-  и описанием; нет cookie, настройки [style]/[explode], [content] и примеров.
-- [requestBody] — частично: есть JSON, обычный текст и бинарное тело; каждый
-  запрос описывается одним media type с [required=true]. Нет форм, multipart,
-  необязательного body, нескольких media types и примеров.
-- [responses] — частично: есть конкретные HTTP-статусы, пустое тело, JSON,
-  обычный текст и заголовки. Нет [default] и диапазонов статусов, [links],
+  и описанием; reserved headers [Accept], [Content-Type] и [Authorization]
+  отклоняются. Нет cookie, настройки [style]/[explode], [content] и примеров.
+- [requestBody] — частично: есть JSON, обычный текст и бинарное тело с
+  [required=true]. Для JSON [Request.json ~media_types] публикует несколько
+  конкретных media types с одним codec и схемой; по умолчанию — [application/json].
+  Нет альтернативных форматов с разными codecs, форм, multipart,
+  необязательного body и примеров.
+- [responses] — частично: есть конкретные финальные HTTP-статусы 200--599,
+  пустое тело, JSON, обычный текст и заголовки; 204/205/304 требуют пустого тела.
+  Нет [default] и диапазонов статусов, [links],
   примеров и произвольных media types.
 - [callbacks] — отсутствует.
 - [deprecated] — полностью.

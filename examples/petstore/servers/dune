@@ -2,7 +2,7 @@
 
 (library
  (name petstore_server_support)
- (modules access_log)
+ (modules access_log session_runtime)
  (libraries base unix uri yojson))
 
 (executable

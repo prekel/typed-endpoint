@@ -157,6 +157,7 @@ type request_body =
       { schema : Schema.t
       ; metadata : Documentation.t
       ; max_body_bytes : int
+      ; media_types : string list
       }
   | Text_body of
       { metadata : Documentation.t
@@ -229,6 +230,10 @@ module Compile_error = struct
         { meth : string
         ; path : string
         }
+    | Invalid_openapi_method of
+        { meth : string
+        ; path : string
+        }
     | Mismatched_path_parameters of
         { meth : string
         ; path : string
@@ -255,15 +260,32 @@ module Compile_error = struct
     | Invalid_no_content_response of
         { meth : string
         ; path : string
+        ; status : int
         }
     | Invalid_body_limit of
         { meth : string
         ; path : string
         ; max_body_bytes : int
         }
+    | Invalid_json_media_types of
+        { meth : string
+        ; path : string
+        ; media_types : string list
+        }
+    | Reserved_request_header of
+        { meth : string
+        ; path : string
+        ; name : string
+        }
     | Invalid_header_name of
         { meth : string
         ; path : string
+        ; name : string
+        }
+    | Reserved_response_header of
+        { meth : string
+        ; path : string
+        ; status : int
         ; name : string
         }
     | Duplicate_response_header of
@@ -286,6 +308,15 @@ module Compile_error = struct
         { scheme : string
         ; scope : string
         }
+    | Invalid_security_scheme_parameter of
+        { scheme : string
+        ; parameter : string
+        }
+    | Invalid_security_authorization_url of string
+    | Duplicate_oauth_scope of
+        { scheme : string
+        ; scope : string
+        }
 
   let to_string = function
     | Duplicate_route { meth; path } -> "duplicate route: " ^ meth ^ " " ^ path
@@ -294,6 +325,8 @@ module Compile_error = struct
     | Invalid_group_prefix_segment segment -> "invalid group prefix segment: " ^ segment
     | Invalid_route_path { meth; path } ->
       "invalid typed route path: " ^ meth ^ " " ^ path
+    | Invalid_openapi_method { meth; path } ->
+      "HTTP method is not supported by OpenAPI: " ^ meth ^ " " ^ path
     | Mismatched_path_parameters { meth; path; declared; captures } ->
       let names values = "[" ^ String.concat values ~sep:", " ^ "]" in
       "path captures do not match declared parameters: "
@@ -317,12 +350,35 @@ module Compile_error = struct
       "duplicate response status " ^ Int.to_string status ^ ": " ^ meth ^ " " ^ path
     | Invalid_response_status { meth; path; status } ->
       "invalid response status " ^ Int.to_string status ^ ": " ^ meth ^ " " ^ path
-    | Invalid_no_content_response { meth; path } ->
-      "204 response must use an empty payload: " ^ meth ^ " " ^ path
+    | Invalid_no_content_response { meth; path; status } ->
+      "response status "
+      ^ Int.to_string status
+      ^ " must use an empty payload: "
+      ^ meth
+      ^ " "
+      ^ path
     | Invalid_body_limit { meth; path; max_body_bytes } ->
       "invalid body limit " ^ Int.to_string max_body_bytes ^ ": " ^ meth ^ " " ^ path
+    | Invalid_json_media_types { meth; path; media_types } ->
+      "invalid JSON media types "
+      ^ String.concat ~sep:", " media_types
+      ^ ": "
+      ^ meth
+      ^ " "
+      ^ path
+    | Reserved_request_header { meth; path; name } ->
+      "request header " ^ name ^ " is reserved: " ^ meth ^ " " ^ path
     | Invalid_header_name { meth; path; name } ->
       "invalid header name " ^ name ^ ": " ^ meth ^ " " ^ path
+    | Reserved_response_header { meth; path; status; name } ->
+      "response header "
+      ^ name
+      ^ " is reserved for status "
+      ^ Int.to_string status
+      ^ ": "
+      ^ meth
+      ^ " "
+      ^ path
     | Duplicate_response_header { meth; path; status; name } ->
       "duplicate response header "
       ^ name
@@ -347,6 +403,12 @@ module Compile_error = struct
     | Conflicting_security_scheme name -> "conflicting security scheme: " ^ name
     | Invalid_security_scope { scheme; scope } ->
       "invalid security scope " ^ scope ^ " for scheme " ^ scheme
+    | Invalid_security_scheme_parameter { scheme; parameter } ->
+      "invalid API-key header name " ^ parameter ^ " for security scheme " ^ scheme
+    | Invalid_security_authorization_url scheme ->
+      "invalid OAuth authorization URL for security scheme " ^ scheme
+    | Duplicate_oauth_scope { scheme; scope } ->
+      "duplicate OAuth scope " ^ scope ^ " for security scheme " ^ scheme
   ;;
 end
 
@@ -387,33 +449,70 @@ let full_path ~prefix path =
     prefix ^ path
 ;;
 
-let valid_group_prefix_segment segment =
+let valid_static_segment segment =
+  let is_hex = function
+    | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true
+    | _ -> false
+  in
+  let rec loop index =
+    if index = String.length segment then
+      true
+    else (
+      match
+        segment.[index]
+      with
+      | '%' ->
+        index + 2 < String.length segment
+        && is_hex segment.[index + 1]
+        && is_hex segment.[index + 2]
+        && loop (index + 3)
+      | '?' | '#' | '/' -> false
+      | c -> Char.to_int c > 32 && Char.to_int c <> 127 && loop (index + 1))
+  in
   (not (String.is_empty segment))
-  && (not (String.mem segment '/'))
-  && (not (String.is_prefix segment ~prefix:":"))
-  && (not (String.is_prefix segment ~prefix:"*"))
   && (not (String.equal segment "."))
-  && not (String.equal segment "..")
+  && (not (String.equal segment ".."))
+  && loop 0
+;;
+
+let valid_capture_name name =
+  String.split name ~on:'.'
+  |> List.for_all ~f:(fun part ->
+    (not (String.is_empty part))
+    && String.for_all part ~f:(function
+      | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
+      | _ -> false))
+;;
+
+let valid_group_prefix_segment segment =
+  valid_static_segment segment
+  && (not (String.is_prefix segment ~prefix:":"))
+  && not (String.is_prefix segment ~prefix:"*")
 ;;
 
 let valid_typed_route_path path =
-  if String.equal path "/" then
-    true
-  else if not (String.is_prefix path ~prefix:"/") then
-    false
-  else
-    String.drop_prefix path 1
-    |> String.split ~on:'/'
-    |> List.for_all ~f:(fun segment ->
-      (not (String.is_empty segment))
-      && (not (String.is_prefix segment ~prefix:"*"))
-      && (not (String.equal segment "."))
-      && (not (String.equal segment ".."))
-      &&
-      if String.is_prefix segment ~prefix:":" then
-        String.length segment > 1
-      else
-        true)
+  String.equal path "/"
+  || (String.is_prefix path ~prefix:"/"
+      && String.drop_prefix path 1
+         |> String.split ~on:'/'
+         |> List.for_all ~f:(fun segment ->
+           match String.chop_prefix segment ~prefix:":" with
+           | Some name -> valid_capture_name name
+           | None ->
+             valid_static_segment segment && not (String.is_prefix segment ~prefix:"*")))
+;;
+
+let path_to_template path =
+  String.split path ~on:'/'
+  |> List.map ~f:(fun segment ->
+    match String.chop_prefix segment ~prefix:":" with
+    | Some name -> "{" ^ name ^ "}"
+    | None ->
+      String.concat_map segment ~f:(function
+        | '{' -> "%7B"
+        | '}' -> "%7D"
+        | c -> String.of_char c))
+  |> String.concat ~sep:"/"
 ;;
 
 let path_captures path =
@@ -458,12 +557,195 @@ let route_shape path =
   |> String.concat ~sep:"/"
 ;;
 
-let valid_http_status status = status >= 100 && status <= 599
+let valid_json_media_type value =
+  let token s =
+    (not (String.is_empty s))
+    && String.for_all s ~f:(function
+      | 'a' .. 'z'
+      | '0' .. '9'
+      | '!' | '#' | '$' | '%' | '&' | '\'' | '^' | '_' | '.' | '+' | '-' | '`' | '|' | '~'
+        -> true
+      | _ -> false)
+  in
+  String.equal value "application/json"
+  ||
+  match String.chop_prefix value ~prefix:"application/" with
+  | None -> false
+  | Some subtype ->
+    String.is_suffix subtype ~suffix:"+json" && String.length subtype > 5 && token subtype
+;;
+
+let valid_http_status status = status >= 200 && status <= 599
+
+let status_forbids_content status =
+  (status >= 100 && status < 200) || status = 204 || status = 205 || status = 304
+;;
+
+let valid_openapi_method meth =
+  List.mem
+    [ "get"; "put"; "post"; "delete"; "options"; "head"; "patch"; "trace" ]
+    meth
+    ~equal:String.equal
+;;
 
 let valid_header_name name =
   (not (String.is_empty name))
   && String.for_all name ~f:(fun char ->
     Char.is_alphanum char || String.mem "!#$%&'*+-.^_`|~" char)
+;;
+
+let uri_unreserved char = Char.is_alphanum char || String.mem "-._~" char
+let uri_sub_delimiter char = String.mem "!$&'()*+,;=" char
+
+let valid_uri_component value ~allowed =
+  let rec loop index =
+    if index = String.length value then
+      true
+    else if Char.equal value.[index] '%' then
+      index + 2 < String.length value
+      && Char.is_hex_digit value.[index + 1]
+      && Char.is_hex_digit value.[index + 2]
+      && loop (index + 3)
+    else
+      allowed value.[index] && loop (index + 1)
+  in
+  loop 0
+;;
+
+let valid_ipv4_literal value =
+  let octets = String.split value ~on:'.' in
+  List.length octets = 4
+  && List.for_all octets ~f:(fun octet ->
+    let length = String.length octet in
+    length > 0
+    && length <= 3
+    && (length = 1 || not (Char.equal octet.[0] '0'))
+    && String.for_all octet ~f:Char.is_digit
+    && Option.value_map (Int.of_string_opt octet) ~default:false ~f:(fun number ->
+      number <= 255))
+;;
+
+let valid_ipv6_literal value =
+  let groups value =
+    if String.is_empty value then
+      []
+    else
+      String.split value ~on:':'
+  in
+  let compressed, parts =
+    match String.substr_index value ~pattern:"::" with
+    | None -> false, groups value
+    | Some index ->
+      let left = String.prefix value index in
+      let right = String.drop_prefix value (index + 2) in
+      true, groups left @ groups right
+  in
+  let weights =
+    List.mapi parts ~f:(fun index part ->
+      if String.mem part '.' then
+        if
+          index = List.length parts - 1
+          && String.is_suffix value ~suffix:part
+          && valid_ipv4_literal part
+        then
+          Some 2
+        else
+          None
+      else if
+        (not (String.is_empty part))
+        && String.length part <= 4
+        && String.for_all part ~f:Char.is_hex_digit
+      then
+        Some 1
+      else
+        None)
+  in
+  List.for_all weights ~f:Option.is_some
+  &&
+  let count =
+    List.fold weights ~init:0 ~f:(fun total weight ->
+      total + Option.value weight ~default:0)
+  in
+  if compressed then
+    count < 8
+  else
+    count = 8
+;;
+
+let valid_ip_literal value =
+  match String.chop_prefix value ~prefix:"v" with
+  | None -> valid_ipv6_literal value
+  | Some future ->
+    (match String.lsplit2 future ~on:'.' with
+     | None -> false
+     | Some (version, address) ->
+       (not (String.is_empty version))
+       && String.for_all version ~f:Char.is_hex_digit
+       && (not (String.is_empty address))
+       && String.for_all address ~f:(fun char ->
+         uri_unreserved char || uri_sub_delimiter char || Char.equal char ':'))
+;;
+
+let valid_authorization_url value =
+  let value = String.lowercase value in
+  let remainder =
+    match String.chop_prefix value ~prefix:"https://" with
+    | Some remainder -> Some remainder
+    | None -> String.chop_prefix value ~prefix:"http://"
+  in
+  let pchar char =
+    uri_unreserved char || uri_sub_delimiter char || String.mem ":@" char
+  in
+  let valid_port value = String.for_all value ~f:Char.is_digit in
+  let valid_host_port value =
+    if String.is_prefix value ~prefix:"[" then (
+      match
+        String.lsplit2 (String.drop_prefix value 1) ~on:']'
+      with
+      | None -> false
+      | Some (literal, suffix) ->
+        valid_ip_literal literal
+        && (String.is_empty suffix
+            || Option.value_map
+                 (String.chop_prefix suffix ~prefix:":")
+                 ~default:false
+                 ~f:valid_port))
+    else (
+      let valid_name name =
+        (not (String.is_empty name))
+        && valid_uri_component name ~allowed:(fun char ->
+          uri_unreserved char || uri_sub_delimiter char)
+      in
+      match String.split value ~on:':' with
+      | [ name ] -> valid_name name
+      | [ name; port ] -> valid_name name && valid_port port
+      | _ -> false)
+  in
+  match remainder with
+  | None -> false
+  | Some remainder ->
+    let authority_path, query =
+      match String.lsplit2 remainder ~on:'?' with
+      | None -> remainder, ""
+      | Some (authority_path, query) -> authority_path, query
+    in
+    let authority, path =
+      match String.lsplit2 authority_path ~on:'/' with
+      | None -> authority_path, ""
+      | Some (authority, path) -> authority, path
+    in
+    let valid_authority =
+      match String.split authority ~on:'@' with
+      | [ host ] -> valid_host_port host
+      | [ userinfo; host ] ->
+        valid_uri_component userinfo ~allowed:(fun char ->
+          uri_unreserved char || uri_sub_delimiter char || Char.equal char ':')
+        && valid_host_port host
+      | _ -> false
+    in
+    valid_authority
+    && valid_uri_component path ~allowed:(fun char -> pchar char || Char.equal char '/')
+    && valid_uri_component query ~allowed:(fun char -> pchar char || String.mem "/?" char)
 ;;
 
 let response_header_equal left right =
@@ -621,7 +903,23 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
       match
         Hashtbl.find security_schemes name
       with
-      | None -> Hashtbl.set security_schemes ~key:name ~data:scheme
+      | None ->
+        Hashtbl.set security_schemes ~key:name ~data:scheme;
+        (match scheme.Security.Scheme.kind with
+         | Api_key { parameter; location = `Header }
+           when not (valid_header_name parameter) ->
+           add_error
+             (Compile_error.Invalid_security_scheme_parameter { scheme = name; parameter })
+         | Oauth2_implicit { authorization_url; scopes } ->
+           if not (valid_authorization_url authorization_url) then
+             add_error (Compile_error.Invalid_security_authorization_url name);
+           let seen = Hash_set.create (module String) in
+           List.iter scopes ~f:(fun (scope, _description) ->
+             if Hash_set.mem seen scope then
+               add_error (Compile_error.Duplicate_oauth_scope { scheme = name; scope })
+             else
+               Hash_set.add seen scope)
+         | Api_key _ | Http_bearer _ -> ())
       | Some existing ->
         if not (Security.Scheme.equal existing scheme) then
           add_error (Compile_error.Conflicting_security_scheme name))
@@ -649,6 +947,9 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
               let route_path_is_valid = valid_typed_route_path route.path in
               if not route_path_is_valid then
                 add_error (Compile_error.Invalid_route_path { meth = route.meth; path });
+              if not (valid_openapi_method route.meth) then
+                add_error
+                  (Compile_error.Invalid_openapi_method { meth = route.meth; path });
               if prefix_is_valid && route_path_is_valid then (
                 let declared =
                   List.filter_map endpoint.params ~f:(fun parameter ->
@@ -672,6 +973,14 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                   add_error
                     (Compile_error.Invalid_body_limit
                        { meth = route.meth; path; max_body_bytes }));
+              (match endpoint.request_body with
+               | Json_body { media_types; _ }
+                 when List.is_empty media_types
+                      || not (List.for_all media_types ~f:valid_json_media_type) ->
+                 add_error
+                   (Compile_error.Invalid_json_media_types
+                      { meth = route.meth; path; media_types })
+               | _ -> ());
               let statuses =
                 List.map endpoint.responses ~f:(fun response -> response.status)
               in
@@ -690,6 +999,13 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                   add_error
                     (Compile_error.Invalid_header_name
                        { meth = route.meth; path; name = parameter.name })
+                | `Header
+                  when List.exists
+                         [ "accept"; "content-type"; "authorization" ]
+                         ~f:(String.Caseless.equal parameter.name) ->
+                  add_error
+                    (Compile_error.Reserved_request_header
+                       { meth = route.meth; path; name = parameter.name })
                 | `Path | `Query | `Header -> ());
               let declared_responses =
                 endpoint.responses @ endpoint.decode_error_responses
@@ -701,7 +1017,24 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                   if not (valid_header_name header.name) then
                     add_error
                       (Compile_error.Invalid_header_name
-                         { meth = route.meth; path; name = header.name }));
+                         { meth = route.meth; path; name = header.name });
+                  if
+                    List.exists
+                      [ "content-type"
+                      ; "content-length"
+                      ; "transfer-encoding"
+                      ; "trailer"
+                      ; "connection"
+                      ]
+                      ~f:(String.Caseless.equal header.name)
+                  then
+                    add_error
+                      (Compile_error.Reserved_response_header
+                         { meth = route.meth
+                         ; path
+                         ; status = response.status
+                         ; name = header.name
+                         }));
                 duplicate_response_headers response.payload.headers
                 |> List.iter ~f:(fun header ->
                   Hash_set.add
@@ -719,12 +1052,14 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                   add_error
                     (Compile_error.Invalid_response_status
                        { meth = route.meth; path; status = response.status });
-                match response.status, response.payload.content with
-                | 204, [] -> ()
-                | 204, _ :: _ ->
+                match
+                  status_forbids_content response.status, response.payload.content
+                with
+                | false, _ | true, [] -> ()
+                | true, _ :: _ ->
                   add_error
-                    (Compile_error.Invalid_no_content_response { meth = route.meth; path })
-                | _ -> ());
+                    (Compile_error.Invalid_no_content_response
+                       { meth = route.meth; path; status = response.status }));
               duplicate_statuses statuses
               |> List.iter ~f:(fun status ->
                 add_error

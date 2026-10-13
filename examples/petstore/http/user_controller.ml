@@ -1,29 +1,17 @@
 open! Base
 open Typed_endpoint
 
-module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) = struct
-  module Common = Controller_context.Make (B)
+module Make
+    (B : Backend.S)
+    (Users : User_service.S with type 'a io = 'a B.io)
+    (Sessions :
+       Session_service.S with type 'a io = 'a B.io and type database = Users.database) =
+struct
+  module Common = Controller_context.Make (B) (Sessions)
   module Endpoint = Common.Endpoint
   module Io = B.Io
   open Io.Let_syntax
   open Endpoint
-
-  let rate_limit_header =
-    Header.required
-      "X-Rate-Limit"
-      (Header.int ~description:"Maximum requests allowed during the current window" ())
-  ;;
-
-  let expires_after_header =
-    Header.required
-      "X-Expires-After"
-      (Header.v
-         ~schema:(Json_schema.string_exn ~format:`Date_time ())
-         ~description:"UTC time at which the current rate-limit window expires"
-         ~of_string:(fun value -> Ok value)
-         ~to_string:Fn.id
-         ())
-  ;;
 
   let unavailable
         (response_case : ([ `Service_unavailable ], Dto.Api_response.t) Response.case)
@@ -38,7 +26,7 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
          ~operation_id:"createUser"
          ~summary:"Create user."
          ~description:"Creates one Petstore user."
-    |> accepts (Request.json (module Dto.User))
+    |> accepts (Request.json (module Dto.User_input))
     |> returns
          (case `OK (Response.json (module Dto.User))
           <|> case `Bad_request (Response.json (module Dto.Api_response))
@@ -49,7 +37,7 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
     match user with
     | Error error -> Request_body.reject error
     | Ok user ->
-      (match Dto.User.to_domain user with
+      (match Dto.User_input.to_domain user with
        | Error message -> respond bad_request (Dto.Api_response.bad_request message)
        | Ok user ->
          let%bind result = Users.add ~database user in
@@ -60,10 +48,10 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
           | Error (`Persistence error) -> unavailable service_unavailable error))
   ;;
 
-  let create_users_with_list =
-    post / "user" / "createWithList"
+  let create_users ~path ~operation_id =
+    post / "user" / path
     |> documented
-         ~operation_id:"createUsersWithListInput"
+         ~operation_id
          ~summary:"Creates list of users with given input array."
          ~description:"Creates all users atomically and returns the final created user."
     |> accepts (Request.json (module Dto.User_list))
@@ -93,47 +81,58 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
   ;;
 
   let login_user =
-    get
-    / "user"
-    / "login"
-    /? arg "username" (module Http_parameter.Username)
-    /? arg "password" (module Http_parameter.Password)
+    post / "user" / "login"
     |> documented
          ~operation_id:"loginUser"
          ~summary:"Logs user into the system."
-         ~description:"Authenticates the demo user and returns a session token."
-    |> accepts Request.empty
+         ~description:"Authenticates a user and creates an independent one-hour session."
+    |> accepts (Request.json (module Dto.Login_request))
     |> returns
-         (case
-            `OK
-            (Response.json (module Dto.Login_token)
-             |> Response.with_header expires_after_header
-             |> Response.with_header rate_limit_header)
+         (case `OK (Response.json (module Dto.Login_token))
           <|> case `Bad_request (Response.json (module Dto.Api_response))
           <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
-    ==> fun username password ok bad_request service_unavailable database () ->
-    match username, password with
-    | Some username, Some password ->
-      let%bind result = Users.authenticate ~database ~username ~password in
+    ==> fun ok bad_request service_unavailable database body ->
+    let%bind credentials = Request_body.read body in
+    match credentials with
+    | Error error -> Request_body.reject error
+    | Ok { username; password = _ } when String.is_empty (String.strip username) ->
+      respond bad_request (Dto.Api_response.bad_request "username must not be empty")
+    | Ok { username; password } ->
+      let%bind result = Sessions.login ~database ~username ~password in
       (match result with
-       | Ok true ->
-         respond ok (1000, ("2030-01-01T00:00:00Z", username ^ "-session-token"))
-       | Ok false ->
+       | Ok (Some session) -> respond ok session.token
+       | Ok None ->
          respond bad_request (Dto.Api_response.bad_request "invalid username or password")
        | Error error -> unavailable service_unavailable error)
-    | _ ->
-      respond bad_request (Dto.Api_response.bad_request "invalid username or password")
   ;;
 
   let logout_user =
-    get / "user" / "logout"
+    post / "user" / "logout"
     |> documented
          ~operation_id:"logoutUser"
-         ~summary:"Logs out current logged in user session."
-         ~description:"Ends the demo session."
+         ~summary:"Logs out the current session."
+         ~description:
+           "Revokes the presented session. The independent demo bearer returns 200 without revocation."
     |> accepts Request.empty
-    |> returns (case `OK (Response.empty ~description:"Successful operation" ()))
-    ==> fun ok _database () -> respond ok ()
+    |> returns
+         (case `OK (Response.empty ~description:"Successful operation" ())
+          <|> case `Unauthorized (Response.json (module Dto.Api_response))
+          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+    ==> fun ok unauthorized service_unavailable context () ->
+    let identity = Typed_endpoint.Principal.identity (Common.Secured.principal context) in
+    match identity.session_id with
+    | None -> respond ok ()
+    | Some token ->
+      let database = Common.Secured.dependency context in
+      let%bind result = Sessions.logout ~database token in
+      (match result with
+       | Ok true -> respond ok ()
+       | Ok false ->
+         respond
+           unauthorized
+           Dto.Api_response.
+             { code = 401; type_ = "unauthorized"; message = "invalid credentials" }
+       | Error error -> unavailable service_unavailable error)
   ;;
 
   let get_user =
@@ -161,7 +160,7 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
          ~operation_id:"updateUser"
          ~summary:"Update user resource."
          ~description:"Replaces the user selected by the path username."
-    |> accepts (Request.json (module Dto.User))
+    |> accepts (Request.json (module Dto.User_input))
     |> returns
          (case `OK (Response.empty ~description:"Successful operation" ())
           <|> case `Bad_request (Response.json (module Dto.Api_response))
@@ -172,7 +171,7 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
     match user with
     | Error error -> Request_body.reject error
     | Ok user ->
-      (match Dto.User.to_domain ~username user with
+      (match Dto.User_input.to_domain ~username user with
        | Error message -> respond bad_request (Dto.Api_response.bad_request message)
        | Ok user ->
          let%bind result = Users.update ~database ~username user in
@@ -203,20 +202,26 @@ module Make (B : Backend.S) (Users : User_service.S with type 'a io = 'a B.io) =
     | Error (`Persistence error) -> unavailable service_unavailable error
   ;;
 
-  let groups ~database =
+  let groups ~auth ~database =
     [ Group.make_with_context
         ~context:(Common.public database)
         ~decode_error:Common.decode_errors
         ~tags:[ "user" ]
         ~description:"Operations about users"
         [ create_user
-        ; create_users_with_list
+        ; create_users ~path:"createWithList" ~operation_id:"createUsersWithListInput"
+        ; create_users ~path:"createWithArray" ~operation_id:"createUsersWithArrayInput"
         ; login_user
-        ; logout_user
         ; get_user
         ; update_user
         ; delete_user
         ]
+    ; Group.make_with_context
+        ~context:(Common.session ~auth database)
+        ~decode_error:Common.decode_errors
+        ~tags:[ "user" ]
+        ~description:"Session logout"
+        [ logout_user ]
     ]
   ;;
 end

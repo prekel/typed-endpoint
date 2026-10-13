@@ -80,6 +80,12 @@ let method_not_allowed_middleware routes =
 let route (m : Typed_endpoint.Method.t) (path : string) (h : req -> resp Lwt.t)
   : app_builder
   =
+  let path =
+    String.concat_map path ~f:(function
+      | '{' -> "%7B"
+      | '}' -> "%7D"
+      | c -> String.of_char c)
+  in
   [ { meth = m; path; handler = h } ]
 ;;
 

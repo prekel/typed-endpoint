@@ -27,9 +27,9 @@ lookup.
 независимые зависимости без вложенных пар, а [all_unit] компонует guards.
 Через [Context.Let_syntax] ту же композицию можно записать с [let%map] и [and].
 [bind] намеренно отсутствует: набор responses и security requirements должен
-быть известен до выполнения request. [handle] использует пустой context;
-[handle_with] делает зависимости и доступ к сырому request явными в
-сигнатуре handler.
+быть известен до выполнения request. [==>] делает контекст явным аргументом
+handler. [Group.make_with_context] задаёт зависимости и доступ к сырому
+request; [Context.return ()] подходит для маршрутов без зависимостей.
 
 Одинаковый контекст нескольких endpoint можно объявить один раз через
 [Group.make_with_context]. Такие endpoint завершаются

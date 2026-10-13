@@ -10,6 +10,7 @@ module Make (Io : Base.Monad.S) = struct
     ; orders : (int, Domain.Order.t) Hashtbl.t
     ; mutable next_order_id : int
     ; users : (string, Domain.User.t) Hashtbl.t
+    ; sessions : (string, Domain.Session.t) Hashtbl.t
     }
 
   type connection = state
@@ -26,6 +27,7 @@ module Make (Io : Base.Monad.S) = struct
     ; orders = Hashtbl.create (module Int)
     ; next_order_id = 1
     ; users = Hashtbl.create (module String)
+    ; sessions = Hashtbl.create (module String)
     }
   ;;
 
@@ -38,6 +40,7 @@ module Make (Io : Base.Monad.S) = struct
     ; orders = Hashtbl.copy state.orders
     ; next_order_id = state.next_order_id
     ; users = Hashtbl.copy state.users
+    ; sessions = Hashtbl.copy state.sessions
     }
   ;;
 
@@ -338,6 +341,26 @@ module Make (Io : Base.Monad.S) = struct
           ~f:(String.equal password))
       |> Result.return
       |> Io.return
+    ;;
+  end
+
+  module Session_repository = struct
+    type nonrec 'a io = 'a io
+    type nonrec connection = connection
+
+    let add ~conn session =
+      if Hashtbl.mem conn.sessions session.Domain.Session.token then
+        Io.return (Ok false)
+      else (
+        Hashtbl.set conn.sessions ~key:session.token ~data:session;
+        Io.return (Ok true))
+    ;;
+
+    let find ~conn token = Io.return (Ok (Hashtbl.find conn.sessions token))
+
+    let remove ~conn token =
+      Hashtbl.remove conn.sessions token;
+      Io.return (Ok ())
     ;;
   end
 end

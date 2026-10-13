@@ -2,7 +2,8 @@ open! Base
 module Petstore_principal = Principal
 open Typed_endpoint
 
-module Make (B : Backend.S) = struct
+module Make (B : Backend.S) (Sessions : Session_service.S with type 'a io = 'a B.io) =
+struct
   module Endpoint = Typed_endpoint.Make (B)
   open Endpoint
 
@@ -71,34 +72,54 @@ module Make (B : Backend.S) = struct
     }
   ;;
 
-  let authorize ~auth access =
+  let authorize ~auth ~database access =
     Guard.authenticate
       ~security:access.security
       ~status:`Unauthorized
       ~response:(Response.json (module Dto.Api_response))
       ~check:(fun request ->
-        let bearer = B.header request "authorization" in
-        let key = B.header request "api_key" in
-        let bearer_valid =
-          access.bearer
-          && Option.value_map
-               bearer
-               ~default:false
-               ~f:(String.equal ("Bearer " ^ auth.Auth.bearer_token))
+        let token =
+          B.header request "authorization" |> Option.bind ~f:Auth.bearer_token
         in
         let key_valid =
           access.api_key
-          && Option.value_map key ~default:false ~f:(String.equal auth.api_key)
+          && (not (String.is_empty auth.Auth.api_key))
+          && Option.value_map (B.header request "api_key") ~default:false ~f:(fun key ->
+            (not (String.is_empty key)) && String.equal key auth.api_key)
         in
-        B.Io.return
-          (if bearer_valid then
-             Ok (Petstore_principal.oauth ~scopes:access.scopes ())
-           else if key_valid then
-             Ok (Petstore_principal.api_key ())
-           else
-             Error
-               Dto.Api_response.
-                 { code = 401; type_ = "unauthorized"; message = "invalid credentials" }))
+        let rejected () =
+          Error
+            Dto.Api_response.
+              { code = 401; type_ = "unauthorized"; message = "invalid credentials" }
+        in
+        let open B.Io.Let_syntax in
+        match token with
+        | Some token
+          when access.bearer
+               && (not (String.is_empty auth.bearer_token))
+               && String.equal token auth.bearer_token ->
+          B.Io.return (Ok (Petstore_principal.oauth ~scopes:access.scopes ()))
+        | Some token when access.bearer ->
+          let%map result = Sessions.find ~database token in
+          (match result with
+           | Ok (Some session) ->
+             Ok
+               (Petstore_principal.oauth
+                  ~subject:session.username
+                  ~session_id:session.token
+                  ~scopes:access.scopes
+                  ())
+           | Ok None | Error _ ->
+             if key_valid then
+               Ok (Petstore_principal.api_key ())
+             else
+               rejected ())
+        | _ ->
+          B.Io.return
+            (if key_valid then
+               Ok (Petstore_principal.api_key ())
+             else
+               rejected ()))
       ()
   ;;
 
@@ -107,7 +128,7 @@ module Make (B : Backend.S) = struct
       Dependency.of_request (fun request -> B.Io.return (B.header request "x-request-id"))
     in
     let open Context.Let_syntax in
-    let%map authenticated = authorize ~auth access
+    let%map authenticated = authorize ~auth ~database:dependency access
     and correlation_id = request_id
     and application = Dependency.value dependency in
     Secured.
@@ -117,6 +138,25 @@ module Make (B : Backend.S) = struct
   let pet_oauth ~auth dependency = secured ~auth ~access:oauth_access dependency
   let pet_lookup ~auth dependency = secured ~auth ~access:pet_lookup_access dependency
   let api_key ~auth dependency = secured ~auth ~access:api_key_access dependency
+
+  let session ~auth dependency =
+    let bearer =
+      Security.Scheme.http_bearer
+        ~name:"session_auth"
+        ~description:"Login session or development demo bearer"
+        ()
+    in
+    secured
+      ~auth
+      ~access:
+        { bearer = true
+        ; api_key = false
+        ; scopes = []
+        ; security = [ Security.require bearer ]
+        }
+      dependency
+  ;;
+
   let public dependency = Dependency.value dependency
 
   let decode_errors =

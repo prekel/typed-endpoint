@@ -326,7 +326,26 @@ let dictionary ~values : (string * 'a) list t =
 ;;
 
 let nullable schema =
+  let constraints_allow_null =
+    match schema with
+    | `Assoc fields ->
+      let enum_allows_null =
+        match List.Assoc.find fields "enum" ~equal:String.equal with
+        | Some (`List values) -> List.mem values null ~equal:Poly.equal
+        | Some _ -> false
+        | None -> true
+      in
+      let const_allows_null =
+        match List.Assoc.find fields "const" ~equal:String.equal with
+        | Some value -> Poly.equal value null
+        | None -> true
+      in
+      enum_allows_null && const_allows_null
+    | _ -> true
+  in
   let already_nullable =
+    constraints_allow_null
+    &&
     match schema with
     | `Assoc fields ->
       (match List.Assoc.find fields "type" ~equal:String.equal with
@@ -344,6 +363,8 @@ let nullable schema =
     match
       schema
     with
+    | `Assoc _ when not constraints_allow_null ->
+      `Assoc [ "anyOf", `List [ schema; null ] ]
     | `Assoc fields ->
       (match List.Assoc.find fields "type" ~equal:String.equal with
        | Some (`String kind) ->

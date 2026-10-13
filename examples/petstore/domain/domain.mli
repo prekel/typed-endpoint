@@ -146,3 +146,12 @@ module Page : sig
     ; total_pages : int
     }
 end
+
+(** A login session owned by the application database. *)
+module Session : sig
+  type t =
+    { token : string
+    ; username : string
+    ; expires_at : float
+    }
+end
