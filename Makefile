@@ -17,7 +17,7 @@ deps:
 
 .PHONY: deps_all
 deps_all:
-	opam install --deps-only --with-test --with-doc --with-dev-setup $(PACKAGES) -y
+	opam install --deps-only --with-test --with-dev-setup $(PACKAGES) -y
 
 .PHONY: build
 build:
@@ -30,10 +30,6 @@ test:
 .PHONY: fmt
 fmt:
 	opam exec -- dune build --root . @fmt
-
-.PHONY: doc
-doc:
-	opam exec -- dune build --root . @doc
 
 .PHONY: package
 package: smoke
@@ -50,7 +46,7 @@ smoke:
 	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-testing,typed-endpoint-eio @install @runtest
 
 .PHONY: check
-check: fmt build test doc package
+check: fmt build test package
 
 .PHONY: release-check
 release-check: check

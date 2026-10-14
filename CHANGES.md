@@ -33,7 +33,7 @@
 - `Routes.Make` принимает session repository и runtime modules; конфигурация
   загружается через `auth_from_env_exn`, отклоняющий пустой `PETSTORE_API_KEY`.
 - PPX генерирует `$id` в виде URN без пути к checkout. Title Petstore согласован
-  с OpenAPI 3.1; примеры и migration guide приведены к текущему API.
+  с OpenAPI 3.1; примеры приведены к текущему API.
 - README описывает установку и обновление всех пакетов через GitHub pins
   на один тег, включая `v0.2.1`.
 
@@ -112,7 +112,7 @@
 - Проверка header names и защита response values от CR/LF injection.
 - Единый buffered response primitive `Backend.S.respond` с явными headers.
 - Property tests для URI/query/header semantics и негейтящий router benchmark.
-- `make release-check`, security policy и migration guide.
+- `make release-check` и security policy.
 - Проверка release-архива в активном switch OCaml 5.5.1 и compile-fail
   regression tests для staged DSL и response capabilities.
 - Абстрактный `Json_schema.t`, проверяемые smart constructors, типизированные

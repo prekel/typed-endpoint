@@ -97,9 +97,9 @@ OpenAPI остаётся внешним описанием и основой д�
 - [x] Petstore login покрыт независимыми wire tests для статуса, токена и
   отсутствия секретов в ответах; фиктивные `X-Rate-Limit` и `X-Expires-After`
   удалены.
-- [x] Добавлены changelog, security policy, migration guide и `make release-check`.
+- [x] Добавлены changelog, security policy и `make release-check`.
 - [x] Матрица поддерживаемых adapter versions и эксплуатационные границы подробно
-  описаны в `doc/production.mld`.
+  описаны в `doc/production.md`.
 
 ### Пункт 6: backend conformance suite — реализовано
 

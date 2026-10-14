@@ -111,7 +111,8 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 коллекцию typed routes, а `Typed_endpoint_opium.mount routes app` один раз
 добавляет маршруты и общий 405/`Allow` middleware в существующее приложение.
 Так старые Opium endpoint можно заменять по одному без передачи server lifecycle
-библиотеке.
+библиотеке. Пошаговый процесс с примерами описан в
+[руководстве по миграции с Opium](doc/opium_migration.md).
 
 ## Установка из GitHub
 
@@ -302,7 +303,7 @@ Petstore с Opium также работает на OCaml 4.14.1. Один endpoi
 формат request body; для JSON можно перечислить несколько конкретных media
 types с одним codec. Альтернативные форматы JSON/XML, multipart/form-data и
 streaming responses не входят в API. Подробности — в
-[руководстве по эксплуатации](doc/production.mld).
+[руководстве по эксплуатации](doc/production.md).
 
 ## Разработка
 
@@ -313,16 +314,17 @@ make deps_all
 make check
 ```
 
-`make check` включает форматирование, сборку, тесты, odoc, install targets и
+`make check` включает форматирование, сборку, тесты, install targets и
 проверку пакетов. Подготовка релиза и проверка OCaml 4.14.1 описаны в
-[руководстве по эксплуатации](doc/production.mld).
+[руководстве по эксплуатации](doc/production.md).
 
 ## Документация
 
-- [Быстрый старт и DTO](doc/quickstart.mld)
-- [Эксплуатация и ограничения](doc/production.mld)
-- [Покрытие OpenAPI 3.1](doc/openapi_coverage.mld)
-- [Миграция API](doc/migration_prerelease.mld)
+- [Быстрый старт и DTO](doc/quickstart.md)
+- [Архитектура](doc/architecture.md)
+- [Эксплуатация и ограничения](doc/production.md)
+- [Покрытие OpenAPI 3.1](doc/openapi_coverage.md)
+- [Обзор документации](doc/index.md)
 - [История изменений](CHANGES.md)
 - [План развития](doc/roadmap.md)
 - [Сообщение об уязвимости](SECURITY.md)

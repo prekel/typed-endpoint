@@ -1,9 +1,0 @@
-(documentation
- (package typed-endpoint)
- (mld_files
-  index
-  quickstart
-  architecture
-  production
-  openapi_coverage
-  migration_prerelease))

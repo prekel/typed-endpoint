@@ -1,0 +1,64 @@
+# Архитектура
+
+Ядро не знает об Opium, Dream, Cohttp или Eio. Функтор `Typed_endpoint.Make`
+принимает `Backend.S`, где backend предоставляет маршрутизацию, доступ к
+path/query/header, ограниченное чтение body и создание ответа. Эффект backend
+доступен как `Backend.S.Io`, реализующий `Base.Monad.S`. Поэтому один handler
+использует `Io.Let_syntax` и `let%bind`/`let%map` как с Lwt, так и с identity
+эффектом testing и Eio backend. Производные `both` и `all` последовательны;
+параллелизм и управление ресурсами остаются возможностями конкретного runtime.
+
+`Backend.S.respond` является минимальным примитивом buffered response: runtime
+передаёт ему полный список headers и готовую строку body. Convenience-функции
+`respond_empty`, `respond_string`, `respond_html` и `respond_json` сохраняют
+фиксированные wire semantics: пустой ответ не имеет `Content-Type`, а строковый
+ответ всегда является `text/plain; charset=utf-8`. Произвольные response headers
+добавляет типизированная декларация, а не backend-specific handler.
+
+`Context` вычисляет типизированные зависимости перед декодированием request.
+`Dependency.value` подходит для application-scoped сервиса,
+`Dependency.of_request` — для request-scoped значения. `Guard` является тем же
+типизированным контекстом, но может завершить request объявленным ответом.
+`Guard.authenticate` фиксирует частый случай: успешная проверка возвращает
+типизированный `Principal.t` с application-defined identity и выданными scopes.
+`Principal` ничего не знает о способе аутентификации и не выполняет runtime
+lookup.
+`Context` реализует `Base.Applicative.S`: `map2`, `map3` и `all` собирают
+независимые зависимости без вложенных пар, а `all_unit` компонует guards.
+Через `Context.Let_syntax` ту же композицию можно записать с `let%map` и `and`.
+`bind` намеренно отсутствует: набор responses и security requirements должен
+быть известен до выполнения request. `==>` делает контекст явным аргументом
+handler. `Group.make_with_context` задаёт зависимости и доступ к сырому
+request; `Context.return ()` подходит для маршрутов без зависимостей.
+
+Одинаковый контекст нескольких endpoint можно объявить один раз через
+`Group.make_with_context`. Такие endpoint завершаются
+`==>`, поэтому тип результата контекста
+проверяется для каждого handler до сборки группы. Guard выполняется только у
+совпавшего маршрута, а его ответы и security requirements добавляются к каждой
+операции группы. Разные политики доступа следует оформлять отдельными группами.
+
+Security requirements прикрепляются к `Guard`. Список requirements означает
+OR, `Security.all` объединяет схемы как AND. При `Context.both` requirements
+двух guards образуют AND-комбинации, совпадающие с runtime-порядком проверок.
+
+## Middleware и метаданные маршрута
+
+HTTP pipeline разделён на три уровня. Framework middleware находится снаружи
+`Compiled.app` и отвечает за работу, не требующую совпавшего typed route:
+request ID, CORS, compression и transport timeout. `interceptor` включается
+при `compile`, выполняется только после выбора маршрута и получает `Route_info`:
+`operation_id`, HTTP method, низкокардинальный route template, итоговые tags и
+security requirements. Это уровень tracing, metrics и access log. `Context` и
+`Guard` остаются третьим уровнем для типизированных request-scoped значений и
+авторизации.
+
+Interceptor видит только `Route_info`, raw backend request и continuation. У
+него нет application dependency store. Первый interceptor в списке
+`compile ~interceptors` является внешним. Не совпавшие с typed route запросы в
+interceptor не попадают и остаются ответственностью framework middleware.
+
+`Route_info.path_template` использует OpenAPI captures, например
+`/pet/{petId}`, а не фактический `/pet/42`. Prefix и tags группы уже объединены
+с endpoint metadata, а security requirements включают guard группы. Поэтому
+runtime observability и публикуемый контракт не расходятся.

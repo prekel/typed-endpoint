@@ -1,119 +1,119 @@
-{0 Эксплуатация}
+# Эксплуатация
 
-{1 Ограничения body}
+## Ограничения body
 
-JSON по умолчанию принимается для [application/json]; конкретные vendor types
-задаются через [Request.json ~media_types]. Content-Type допускает параметры.
+JSON по умолчанию принимается для `application/json`; конкретные vendor types
+задаются через `Request.json ~media_types`. Content-Type допускает параметры.
 Runtime и OpenAPI используют один список типов с одним codec и схемой;
-суффиксный wildcard [application/*+json] и [application/+json] запрещены.
-Текст принимается как [text/plain]. Backend обязан остановить буферизацию после
-[max_body_bytes]; декларация нулевого или отрицательного лимита не компилируется.
+суффиксный wildcard `application/*+json` и `application/+json` запрещены.
+Текст принимается как `text/plain`. Backend обязан остановить буферизацию после
+`max_body_bytes`; декларация нулевого или отрицательного лимита не компилируется.
 Multipart, form data и streaming response пока не входят в API.
 
-{1 URI и query}
+## URI и query
 
 Backend передаёт path capture и query value в codec после однократного
-percent-decoding: например, [%252F] превращается в [%2F], а не в [/].
-Параметр [/?] или [/!] является scalar: отсутствие обрабатывается согласно его
+percent-decoding: например, `%252F` превращается в `%2F`, а не в `/`.
+Параметр `/?` или `/!` является scalar: отсутствие обрабатывается согласно его
 optional/required типу, одно вхождение декодируется, а два и более вхождения
-одного имени возвращают 400 [Duplicate_parameter]. Библиотека не выбирает
+одного имени возвращают 400 `Duplicate_parameter`. Библиотека не выбирает
 молча первое или последнее значение, поэтому поведение одинаково у Opium,
 Dream, Eio и testing. Запятая внутри одного query value остаётся частью строки;
-например [tags=a,b] не считается двумя вхождениями.
+например `tags=a,b` не считается двумя вхождениями.
 
 Числовые параметры и headers используют десятичный wire-формат: OCaml hex
 literals, underscores, hex-float, NaN и infinity отклоняются.
 
-[Accept] пока не используется для server-side content negotiation. Endpoint
+`Accept` пока не используется для server-side content negotiation. Endpoint
 возвращает representation, указанное выбранным response constructor. Если API
 требует несколько representations одного ресурса, их следует оформить
 разными endpoint или выполнить negotiation до handler через явный context.
 
-{1 Ошибки}
+## Ошибки
 
-[Decode_error] не включает исходное тело запроса, чтобы случайно не записать в
-ответ или лог секреты. Встроенный [Decode_error_response.default] возвращает
-JSON с полями [code] и [message] и также не отражает ошибочное исходное значение.
+`Decode_error` не включает исходное тело запроса, чтобы случайно не записать в
+ответ или лог секреты. Встроенный `Decode_error_response.default` возвращает
+JSON с полями `code` и `message` и также не отражает ошибочное исходное значение.
 Диагностика JSON/parser decoder намеренно скрыта; подробный формат можно
 включить только явной прикладной политикой.
 Приложение может перевести ошибку в собственный JSON DTO через
-[Decode_error_response.json]. Endpoint-политика имеет приоритет над групповой,
-групповая — над переданной в [compile], а встроенная используется последней.
+`Decode_error_response.json`. Endpoint-политика имеет приоритет над групповой,
+групповая — над переданной в `compile`, а встроенная используется последней.
 Ошибки path/query/header параметров получают 400 до вызова handler. Для
-[Request.json], [Request.text] и [Request.binary] проверка [Content-Type], чтение
-тела и декодирование происходят только при [Request_body.read]. Результат
-чтения кэшируется в рамках одного запроса. [Request_body.reject] применяет
+`Request.json`, `Request.text` и `Request.binary` проверка `Content-Type`, чтение
+тела и декодирование происходят только при `Request_body.read`. Результат
+чтения кэшируется в рамках одного запроса. `Request_body.reject` применяет
 текущую decode-error policy: ошибка JSON получает 400, превышение лимита — 413,
-неподдерживаемый media type — 415. Если handler не вызывает [read], тело
+неподдерживаемый media type — 415. Если handler не вызывает `read`, тело
 остаётся непрочитанным и эти ошибки не возникают. OpenAPI по-прежнему
 документирует возможные ошибки тела.
 
-{1 Типизированные request и response headers}
+## Типизированные request и response headers
 
-[Header.required] и [Header.optional] связывают имя header, JSON Schema,
-документацию, decoder и encoder. [header] разрешён после path/query и до
-[documented]; его значение добавляется к curried аргументам handler в порядке
+`Header.required` и `Header.optional` связывают имя header, JSON Schema,
+документацию, decoder и encoder. `header` разрешён после path/query и до
+`documented`; его значение добавляется к curried аргументам handler в порядке
 декларации. Поиск имени регистронезависим. Отсутствующий required header и
 ошибка codec получают тот же настраиваемый decode-error response со статусом
 400, что path/query.
 
-[Response.with_header] добавляет header к конкретному response payload и
-меняет его OCaml-тип на [(header, body)]. Optional header имеет тип
-['a option] и при [None] не отправляется. Для двух деклараций результат имеет
-вид [(outer, (inner, body))]. OpenAPI получает [headers] с required,
+`Response.with_header` добавляет header к конкретному response payload и
+меняет его OCaml-тип на `(header, body)`. Optional header имеет тип
+`'a option` и при `None` не отправляется. Для двух деклараций результат имеет
+вид `(outer, (inner, body))`. OpenAPI получает `headers` с required,
 description и schema из той же декларации.
 
-Имена request/response headers проверяются как HTTP token во время [compile].
+Имена request/response headers проверяются как HTTP token во время `compile`.
 Имена сравниваются регистронезависимо; повтор в одном response отклоняется.
 Закодированное runtime-значение не может содержать CR, LF или другой запрещённый
 control character: вместо отправки потенциально инъецированного ответа
-выбрасывается [Runtime_error] без включения самого значения в diagnostic.
+выбрасывается `Runtime_error` без включения самого значения в diagnostic.
 Исключение должно попасть во внешний application error boundary.
 
-Request headers [Accept], [Content-Type], [Authorization] не могут быть typed
-header parameters: representation задаётся payload, авторизация — [Security]
-и [Guard]. Response headers [Content-Type], [Content-Length],
-[Transfer-Encoding], [Trailer], [Connection] принадлежат payload/transport
-и отклоняются при [compile]. Допустимый HTAB в response value сохраняется.
+Request headers `Accept`, `Content-Type`, `Authorization` не могут быть typed
+header parameters: representation задаётся payload, авторизация — `Security`
+и `Guard`. Response headers `Content-Type`, `Content-Length`,
+`Transfer-Encoding`, `Trailer`, `Connection` принадлежат payload/transport
+и отклоняются при `compile`. Допустимый HTAB в response value сохраняется.
 
-{1 OpenAPI}
+## OpenAPI
 
 Оценка покрытия OpenAPI 3.1 и ограничения генератора приведены в
-{!page-openapi_coverage}.
+[Покрытие OpenAPI 3.1](openapi_coverage.md).
 
-Публичные metadata принимают абстрактный ['a Json_schema.t], где ['a] — тип
+Публичные metadata принимают абстрактный `'a Json_schema.t`, где `'a` — тип
 DTO. Источник схемы выбирается в следующем порядке:
 
-- DTO и его wire shape описываются [[@@deriving yojson, jsonschema]] с пакетом
-  [typed-endpoint-ppx]; общие [@default], [@key] и [@name] не дублируются
+- DTO и его wire shape описываются `[@@deriving yojson, jsonschema]` с пакетом
+  `typed-endpoint-ppx`; общие `@default`, `@key` и `@name` не дублируются
   schema-specific аннотациями;
 - ограничения поля задаются
-  [@jsonschema.format], [@jsonschema.minimum] и аналогичными аннотациями;
-- [@jsonschema.title] и [@jsonschema.description] документируют DTO, поля и
-  варианты; [@jsonschema.attrs] также принимает эти две аннотации;
+  `[@jsonschema.format]`, `[@jsonschema.minimum]` и аналогичными аннотациями;
+- `[@jsonschema.title]` и `[@jsonschema.description]` документируют DTO, поля и
+  варианты; `[@jsonschema.attrs]` также принимает эти две аннотации;
 - строгие record schemas задаются атрибутами
-  [@@jsonschema.disallow_extra_fields] или [@jsonschema.disallow_extra_fields]
+  `[@@jsonschema.disallow_extra_fields]` или `[@jsonschema.disallow_extra_fields]`
   на constructor с inline record;
 - standalone параметры, headers, enum, массивы и dictionaries собираются
-  конструкторами [Json_schema];
-- схемы нетронутого [ppx_deriving_jsonschema] импортируются через
-  [Json_schema.Unsafe.of_ppx], а произвольные JSON Schema keywords — через
-  [Json_schema.Unsafe.of_yojson].
+  конструкторами `Json_schema`;
+- схемы нетронутого `ppx_deriving_jsonschema` импортируются через
+  `Json_schema.Unsafe.of_ppx`, а произвольные JSON Schema keywords — через
+  `Json_schema.Unsafe.of_yojson`.
 
-[Json_schema.Unsafe] — явно небезопасный мост для внешнего представления или
+`Json_schema.Unsafe` — явно небезопасный мост для внешнего представления или
 keyword, которого ещё нет в DSL. Не используйте его для постобработки
 сгенерированной схемы: такая правка расходится с типом DTO и легко ломается при
-обновлении PPX. Конструкторы без [_exn] проверяют противоречивые bounds,
+обновлении PPX. Конструкторы без `_exn` проверяют противоречивые bounds,
 отрицательные длины, пустые format/enum, дубликаты enum и default вне
 объявленного диапазона. Стандартный format в DSL задаётся типизированным
-вариантом, например [`Date_time], [`Int64] или [`Double]; [`Custom name]
+вариантом, например ``Date_time`, ``Int64` или ``Double`; ``Custom name`
 остаётся явной точкой расширения.
 
-Для необязательного record field используйте общий [@default], например
-[@default None]; [@jsonschema.option] без него отклоняется, в том числе для
+Для необязательного record field используйте общий `@default`, например
+`[@default None]`; `[@jsonschema.option]` без него отклоняется, в том числе для
 option aliases. PPX генерирует URN из namespace и позиции объявления, без
-пути к checkout. Корневой [$id] рекурсивной схемы сохраняется при встраивании
-в OpenAPI, а [Json_schema.nullable] сохраняет ограничения [enum] и [const].
+пути к checkout. Корневой `$id` рекурсивной схемы сохраняется при встраивании
+в OpenAPI, а `Json_schema.nullable` сохраняет ограничения `enum` и `const`.
 
 Тесты библиотеки сравнивают схемы smart constructors с PPX структурно, не
 учитывая порядок полей JSON object. Все standalone и встроенные в Petstore
@@ -121,72 +121,74 @@ OpenAPI schema fragments дополнительно проверяются Draft
 meta-schema-валидатором. Валидатор остаётся test dependency и не попадает в
 runtime ядра.
 
-[Metadata.schema_name] включает components и [$ref]. Одинаковое имя с разными
+`Metadata.schema_name` включает components и `$ref`. Одинаковое имя с разными
 схемами, конфликтующие security schemes, неизвестные OAuth scopes, повторные
-маршруты, operationId и response status являются ошибками [compile]. Маршруты
-вида [/pets/:id] и [/pets/:name] также конфликтуют: их runtime-shape совпадает,
+маршруты, operationId и response status являются ошибками `compile`. Маршруты
+вида `/pets/:id` и `/pets/:name` также конфликтуют: их runtime-shape совпадает,
 даже если имена capture различаются. В одном endpoint нельзя повторять имя
 path-, query- или header-параметра, а явный status должен лежать в диапазоне
 200--599. Промежуточные 1xx нельзя объявлять финальным результатом handler;
 204, 205 и 304 требуют пустого payload.
-При допустимом пересечении [/pets/find] имеет приоритет над [/pets/:id]
+При допустимом пересечении `/pets/find` имеет приоритет над `/pets/:id`
 независимо от порядка объявления; маршруты одинаковой специфичности сохраняют
 исходный порядок.
-Prefix группы принимает только непустые статические сегменты без [/],
-dot-navigation и начальных [:] или [*]. Typed route не принимает
-wildcard-синтаксис; список отрендеренных [:capture] сверяется со списком
+Prefix группы принимает только непустые статические сегменты без `/`,
+dot-navigation и начальных `:` или `*`. Typed route не принимает
+wildcard-синтаксис; список отрендеренных `:capture` сверяется со списком
 типизированных path-параметров.
 Capture names допускают ASCII letters, digits, underscore и непустые части,
 разделённые точками. Статические сегменты и group prefixes отклоняют пробелы,
-controls, [?], [#] и невалидные percent escapes. Статические braces экранируются
-в OpenAPI и [Route_info], сохраняя отличие от captures.
-Корневой route внутри prefix нормализуется в [/v1], а не [/v1/].
-Перед публикацией документа задайте [Openapi.Config] с title, version,
+controls, `?`, `#` и невалидные percent escapes. Статические braces экранируются
+в OpenAPI и `Route_info`, сохраняя отличие от captures.
+Корневой route внутри prefix нормализуется в `/v1`, а не `/v1/`.
+Перед публикацией документа задайте `Openapi.Config` с title, version,
 description и servers.
 
 Имена API-key headers проверяются как HTTP field-name, повторяющиеся OAuth
 scopes отклоняются. OAuth authorization URL проверяется как абсолютный
 HTTP(S) URI: authority, IPv6/IPvFuture literals, path и query должны
-соответствовать RFC 3986. Пробелы, controls и символы вроде [<] или [>]
+соответствовать RFC 3986. Пробелы, controls и символы вроде `<` или `>`
 требуют percent encoding. Fragment запрещён для authorization endpoint по
-RFC 6749; encoded [%23] в path/query допустим. Ошибка обнаруживается во время
-[compile]; DNS и доступность сервера не проверяются.
+RFC 6749; encoded `%23` в path/query допустим. Ошибка обнаруживается во время
+`compile`; DNS и доступность сервера не проверяются.
 
-Backend возвращает текст с [Content-Type: text/plain; charset=utf-8], HTML с
-[text/html; charset=utf-8], JSON с [application/json], а body-less response без
-[Content-Type]. Встроенные роутеры Dream, Eio и testing добавляют [Allow] к
+Backend возвращает текст с `Content-Type: text/plain; charset=utf-8`, HTML с
+`text/html; charset=utf-8`, JSON с `application/json`, а body-less response без
+`Content-Type`. Встроенные роутеры Dream, Eio и testing добавляют `Allow` к
 ответу 405; Opium adapter обеспечивает ту же семантику одним mount-level
 middleware.
 
-Capability [Response.case] статически связывает status и payload с веткой
+Capability `Response.case` статически связывает status и payload с веткой
 handler. Capability можно сохранить вне handler, поэтому перед рендерингом
 runtime дополнительно сверяет её непрозрачный identity со списком cases этого
-endpoint. Чужая capability получает [Runtime_error] и не рендерится.
+endpoint. Чужая capability получает `Runtime_error` и не рендерится.
 
-{1 Opium mount и постепенная миграция}
+## Opium mount и постепенная миграция
 
-Opium [app_builder] является immutable-коллекцией маршрутов, а не функцией
-[App.t -> App.t]. Приложение вызывает
-[Typed_endpoint_opium.mount (Compiled.app compiled) app] один раз. Mount
-регистрирует все routes и один общий middleware для 405/[Allow]; количество
+Opium `app_builder` является immutable-коллекцией маршрутов, а не функцией
+`App.t -> App.t`. Приложение вызывает
+`Typed_endpoint_opium.mount (Compiled.app compiled) app` один раз. Mount
+регистрирует все routes и один общий middleware для 405/`Allow`; количество
 middleware больше не растёт с количеством endpoint.
 
 Существующее Opium приложение можно мигрировать по одному endpoint: старые
-routes остаются в [app], новые собираются typed-endpoint и монтируются рядом.
+routes остаются в `app`, новые собираются typed-endpoint и монтируются рядом.
 Typed mount не запускает сервер, не меняет port/TLS и не владеет middleware
 lifecycle. Если приложение компилирует несколько независимых route collection,
-каждую можно mount отдельно, но предпочтительно объединить их одним [compile].
+каждую можно mount отдельно, но предпочтительно объединить их одним `compile`.
+Практические шаги переноса и пример подключения описаны в
+[руководстве по миграции с Opium](opium_migration.md).
 
-{1 Исключения и cancellation}
+## Исключения и cancellation
 
 Ядро намеренно не превращает произвольное исключение handler в не объявленный
 500: такой ответ расходился бы с типизированными responses и OpenAPI. Внешний
 framework middleware является последней границей для logging и generic 500.
 Route-aware interceptor можно использовать для timing и записи ошибки вместе с
-[Route_info], после чего исключение следует пробросить дальше.
+`Route_info`, после чего исключение следует пробросить дальше.
 
-В Lwt middleware не перехватывайте [Lwt.Canceled] как application error. В Eio
-не используйте безусловный [with _] вокруг request: cancellation и shutdown
+В Lwt middleware не перехватывайте `Lwt.Canceled` как application error. В Eio
+не используйте безусловный `with _` вокруг request: cancellation и shutdown
 должны дойти до runtime. Текст generic 500 не должен включать exception,
 request body, Authorization, Cookie или raw query. Ожидаемые domain failures
 возвращаются только объявленными response constructors.
@@ -195,28 +197,28 @@ Timeout, CORS, compression, trusted-proxy policy и request ID остаются 
 framework middleware. Это сохраняет typed-endpoint библиотекой: она не владеет
 server lifecycle и не вводит собственный application runtime.
 
-{1 Тестирование}
+## Тестирование
 
-[typed-endpoint-testing] исполняет [Compiled.app] напрямую и не запускает web
+`typed-endpoint-testing` исполняет `Compiled.app` напрямую и не запускает web
 framework или сокет. Основную бизнес-семантику проверяйте через него, а в
 adapter tests оставляйте преобразование request/response и router integration.
-[Typed_endpoint_testing.Client.call] объединяет создание request и dispatch, а
-[Typed_endpoint_testing.Response.header] выполняет регистронезависимый поиск
+`Typed_endpoint_testing.Client.call` объединяет создание request и dispatch, а
+`Typed_endpoint_testing.Response.header` выполняет регистронезависимый поиск
 заголовка.
 
-[Typed_endpoint_testing.Backend_conformance] задаёт единый black-box suite для
+`Typed_endpoint_testing.Backend_conformance` задаёт единый black-box suite для
 всех backend: bounded body, response representations, typed и raw
-case-insensitive headers, duplicate scalar query, 404/405 с [Allow], статический
+case-insensitive headers, duplicate scalar query, 404/405 с `Allow`, статический
 приоритет, escaped static segments, однократный decode path capture,
 конкретные JSON media types, decode errors и порядок
-[Backend.S.combine]. Каждый adapter test предоставляет только harness для
+`Backend.S.combine`. Каждый adapter test предоставляет только harness для
 создания request и чтения response. Прохождение suite является обязательной
 частью готовности нового backend.
 
 Отдельно проверяйте wire contract без повторного использования application
 codec в setup и assertions. В Petstore такой тест отправляет literal JSON и
 проверяет сырой status, headers, content type, body и имена полей через
-независимый разбор [Yojson.Safe]. Это ловит симметричные ошибки encoder/decoder,
+независимый разбор `Yojson.Safe`. Это ловит симметричные ошибки encoder/decoder,
 которые не видны при round trip одним codec.
 
 Property tests на QCheck дополнительно генерируют percent-encoded path segments,
@@ -224,59 +226,58 @@ Property tests на QCheck дополнительно генерируют perce
 пересекающихся static/capture routes. Негейтящий benchmark router запускается
 отдельно:
 
-{[
+```sh
 opam exec -- dune exec benchmark/router_bench.exe -- 1000 100000
-]}
+```
 
 Benchmark нужен для сравнения изменений на одном окружении; абсолютное время не
 является test threshold. Opium adapter test отдельно проверяет структурный
 инвариант: один mount добавляет ровно один middleware независимо от route count.
 
-{1 Поддержка и release gate}
+## Поддержка и release gate
 
 Ядро, PPX, testing backend и Opium adapter поддерживают OCaml >= 4.14.1;
 Petstore с Opium также собирается на 4.14.1. Dream и Eio adapters требуют
-OCaml >= 5.1.1. Eio adapter сохраняет [cohttp-eio 6.3.0] и требует
-[eio >= 1.2]. Версия конкретного adapter меняется отдельной migration с
+OCaml >= 5.1.1. Eio adapter сохраняет `cohttp-eio 6.3.0` и требует
+`eio >= 1.2`. Версия конкретного adapter меняется отдельной migration с
 повторным запуском общего conformance suite. Ядро не обещает совместимость с
 framework API вне соответствующего adapter package.
 
-{2 Проверка OCaml 4.14.1}
+### Проверка OCaml 4.14.1
 
 Используйте отдельный switch и выбирайте только пакеты, поддерживающие 4.14.1.
-При сборке компилятора из исходников с GCC 15 задайте режим C11 через [CC].
+При сборке компилятора из исходников с GCC 15 задайте режим C11 через `CC`.
 Собирайте в отдельном build directory, чтобы не смешивать артефакты разных
 компиляторов. Не копируйте готовый switch: его конфигурация может сохранить
 пути к старому окружению.
 
-{[
+```sh
 CC='gcc -std=gnu11' opam switch create /tmp/typed-endpoint-ocaml-4.14.1 ocaml-base-compiler.4.14.1
 opam install --switch=/tmp/typed-endpoint-ocaml-4.14.1 --deps-only --with-test ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-testing.opam ./typed-endpoint-opium.opam
 opam exec --switch=/tmp/typed-endpoint-ocaml-4.14.1 -- dune build --root . --build-dir /tmp/typed-endpoint-build414 --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing @install @runtest examples/petstore/servers/opium_server.exe
-]}
+```
 
-На Ubuntu транзитивным TLS-зависимостям Opium нужен [libgmp-dev]; Dream также
-может потребовать [libev-dev] и [libssl-dev].
+На Ubuntu транзитивным TLS-зависимостям Opium нужен `libgmp-dev`; Dream также
+может потребовать `libev-dev` и `libssl-dev`.
 
-{2 Подготовка релиза}
+### Подготовка релиза
 
-Перед тегом выполняется [make release-check]: форматирование, build, tests,
-odoc, package smoke tests, install targets, opam lint и проверка whitespace.
-Эта цель уже включает [make check], поэтому отдельно повторять её не нужно:
+Перед тегом выполняется `make release-check`: форматирование, build, tests,
+package smoke tests, install targets, opam lint и проверка whitespace.
+Эта цель уже включает `make check`, поэтому отдельно повторять её не нужно:
 
-{[
+```sh
 make release-check
 make release-artifacts
 make release-install-check
-]}
+```
 
-[make release-artifacts] создаёт в [_release] source archive, SHA-256 и
-заготовки шести пакетов для opam-repository. [make release-install-check]
-распаковывает archive и проверяет install targets, тесты, документацию и
-внешние consumer-проекты в активном switch OCaml >= 5.1.1; отдельный compiler
-не устанавливается. Распакованный исходный код остаётся в [_release] для
-проверки. Изменения публичного API фиксируются в [CHANGES.md] и migration
-guide. Правила private security reporting описаны в [SECURITY.md].
+`make release-artifacts` создаёт в `_release` source archive, SHA-256 и
+заготовки шести пакетов для opam-repository. `make release-install-check`
+распаковывает archive и проверяет install targets, тесты и внешние
+consumer-проекты в активном switch OCaml >= 5.1.1; отдельный compiler
+не устанавливается. Распакованный исходный код остаётся в `_release` для
+проверки. Изменения публичного API фиксируются в `CHANGES.md`. Правила private security reporting описаны в `SECURITY.md`.
 
 Разделение чистого контракта и server handler, а также сетевой typed client
 сознательно отложены. Текущий production-hardening не вводит параллельный DSL и
