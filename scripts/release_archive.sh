@@ -26,7 +26,6 @@ git ls-files --cached --others --exclude-standard -z \
       --files-from - \
       --transform "s,^,$prefix/,"
 sha256sum "$archive" > "$checksum"
-archive_sha256="$(awk '{ print $1 }' "$checksum")"
 
 for package in \
   typed-endpoint \
@@ -38,12 +37,8 @@ for package in \
   package_dir="$opam_dir/packages/$package/$package.$version"
   mkdir -p "$package_dir"
   cp "$package.opam" "$package_dir/opam"
-  printf '%s\n' \
-    "archive: \"https://github.com/prekel/typed-endpoint/releases/download/v$version/$prefix.tar.gz\"" \
-    'checksum: [' \
-    "  \"sha256=$archive_sha256\"" \
-    ']' \
-    > "$package_dir/url"
+  printf 'src: "git+https://github.com/prekel/typed-endpoint.git#v%s"\n' \
+    "$version" > "$package_dir/url"
 done
 
 printf 'created %s\n' "$archive"

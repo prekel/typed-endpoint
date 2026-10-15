@@ -170,8 +170,16 @@ module Annotation = struct
           "[@jsonschema.format] can only be applied to string or bytes types")
   ;;
 
+  let reject_string_encoded_bound core_type =
+    if Attrs.string_encoded core_type then
+      Location.raise_errorf
+        ~loc:core_type.ptyp_loc
+        "typed-endpoint-ppx: numeric bounds cannot be applied to a string-encoded integer"
+  ;;
+
   let add_maximum ~loc attr core_type =
     add_schema_attr attr (fun expr schema ->
+      reject_string_encoded_bound core_type;
       match core_type, expr.pexp_desc with
       | [%type: int], Pexp_constant (Pconst_integer _)
       | [%type: int32], Pexp_constant (Pconst_integer _)
@@ -186,6 +194,7 @@ module Annotation = struct
 
   let add_minimum ~loc attr core_type =
     add_schema_attr attr (fun expr schema ->
+      reject_string_encoded_bound core_type;
       match core_type, expr.pexp_desc with
       | [%type: int], Pexp_constant (Pconst_integer _)
       | [%type: int32], Pexp_constant (Pconst_integer _)
@@ -202,8 +211,16 @@ module Annotation = struct
     match ct with
     | [%type: int] -> [%expr `Int [%e default_value_expr]]
     | [%type: int32] -> [%expr `Intlit (Int32.to_string [%e default_value_expr])]
-    | [%type: int64] -> [%expr `Intlit (Int64.to_string [%e default_value_expr])]
-    | [%type: nativeint] -> [%expr `Intlit (Nativeint.to_string [%e default_value_expr])]
+    | [%type: int64] | [%type: Int64.t] ->
+      if Attrs.string_encoded ct then
+        [%expr `String (Int64.to_string [%e default_value_expr])]
+      else
+        [%expr `Intlit (Int64.to_string [%e default_value_expr])]
+    | [%type: nativeint] | [%type: Nativeint.t] ->
+      if Attrs.string_encoded ct then
+        [%expr `String (Nativeint.to_string [%e default_value_expr])]
+      else
+        [%expr `Intlit (Nativeint.to_string [%e default_value_expr])]
     | [%type: float] -> [%expr `Float [%e default_value_expr]]
     | [%type: string] -> [%expr `String [%e default_value_expr]]
     | [%type: bytes] -> [%expr `String (Stdlib.Bytes.to_string [%e default_value_expr])]
@@ -344,6 +361,7 @@ module Annotation = struct
                      "[@jsonschema.attrs] 'format' must be a string literal")
               | Lident "maximum" ->
                 let ct = require_core_type "maximum" in
+                reject_string_encoded_bound ct;
                 (match ct with
                  | [%type: int] | [%type: int32] | [%type: nativeint] ->
                    maximum_int ~loc value schema
@@ -354,6 +372,7 @@ module Annotation = struct
                      "[@jsonschema.attrs] 'maximum' can only be applied to numeric types")
               | Lident "minimum" ->
                 let ct = require_core_type "minimum" in
+                reject_string_encoded_bound ct;
                 (match ct with
                  | [%type: int] | [%type: int32] | [%type: nativeint] ->
                    minimum_int ~loc value schema

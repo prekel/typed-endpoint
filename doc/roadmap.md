@@ -220,8 +220,10 @@ segments в Dream и SP-разделители в Bearer. Общий backend con
   и `Transfer-Encoding`.
 - [x] Request header parameters `Accept`, `Content-Type` и `Authorization`
   отклоняются, поскольку OpenAPI игнорирует их для параметров типа `header`.
-- [x] `[@jsonschema.option]` требует общего `[@default]`, чтобы необязательность
-  поля совпадала с Yojson decoder, включая alias-типы.
+- [x] PPX использует общие Yojson-аннотации `key`, `name`, `default` и `encoding`,
+  включая формы с префиксами и `default` внутри типа поля. Необязательность
+  полей и строковое кодирование чисел согласованы с кодеком; дублирующие
+  `jsonschema.key/name/default/option` удалены.
 - [x] PPX генерирует `$id` в виде URN без compile-time пути к исходному файлу;
   перенос checkout не меняет идентификатор схемы.
 - [x] Диапазоны Petstore DTO для int32/int64 согласованы с фактическим OCaml

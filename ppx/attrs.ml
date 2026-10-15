@@ -12,7 +12,22 @@ type config =
   }
 
 let find_raw_attr names attrs =
-  List.find_opt (fun attr -> List.mem attr.attr_name.txt names) attrs
+  List.fold_left
+    (fun best attr ->
+       match List.mem attr.attr_name.txt names, best with
+       | false, _ -> best
+       | true, None -> Some attr
+       | true, Some previous ->
+         let length = String.length attr.attr_name.txt in
+         let previous_length = String.length previous.attr_name.txt in
+         if length > previous_length then
+           Some attr
+         else if length < previous_length then
+           best
+         else
+           Location.raise_errorf ~loc:attr.attr_loc "Duplicated attribute")
+    None
+    attrs
 ;;
 
 let parse_attribute pattern attr =
@@ -21,29 +36,127 @@ let parse_attribute pattern attr =
   | Error _ -> None
 ;;
 
-let parse_raw_attr payload_pattern attr =
-  let pattern =
-    Ast_pattern.(attribute ~name:(string attr.attr_name.txt) ~payload:payload_pattern)
+let yojson_attribute name payload_pattern attrs =
+  Option.map
+    (fun attr ->
+       let pattern =
+         Ast_pattern.(
+           attribute ~name:(string attr.attr_name.txt) ~payload:payload_pattern)
+       in
+       Attribute.mark_as_handled_manually attr;
+       Ast_pattern.parse pattern attr.attr_loc attr Stdlib.Fun.id)
+    (find_raw_attr [ name; "yojson." ^ name; "deriving.yojson." ^ name ] attrs)
+;;
+
+let yojson_key = yojson_attribute "key" Ast_pattern.(single_expr_payload (estring __'))
+let yojson_name = yojson_attribute "name" Ast_pattern.(single_expr_payload (estring __'))
+let yojson_default = yojson_attribute "default" Ast_pattern.(single_expr_payload __)
+
+let yojson_encoding =
+  yojson_attribute
+    "encoding"
+    Ast_pattern.(
+      single_expr_payload
+        (pexp_variant (map0 (string "string") ~f:`String) none
+         ||| pexp_variant (map0 (string "number") ~f:`Number) none))
+;;
+
+let string_encoded (core_type : core_type) =
+  match core_type with
+  | [%type: int64] | [%type: Int64.t] | [%type: nativeint] | [%type: Nativeint.t] ->
+    (match yojson_encoding core_type.ptyp_attributes with
+     | Some `String -> true
+     | Some `Number | None -> false)
+  | _ -> false
+;;
+
+let reject_removed_annotations type_declarations =
+  let visitor =
+    object
+      inherit Ast_traverse.iter as super
+
+      method! attribute attr =
+        let replacement =
+          match attr.attr_name.txt with
+          | "jsonschema.key" -> Some "[@key ...]"
+          | "jsonschema.name" -> Some "[@name ...]"
+          | "jsonschema.default" -> Some "[@default ...]"
+          | "jsonschema.option" -> Some "[@default None]"
+          | _ -> None
+        in
+        match replacement with
+        | Some replacement ->
+          Location.raise_errorf
+            ~loc:attr.attr_loc
+            "typed-endpoint-ppx: [@%s] has been removed; use %s shared with Yojson"
+            attr.attr_name.txt
+            replacement
+        | None -> super#attribute attr
+    end
   in
-  parse_attribute pattern attr
+  List.iter visitor#type_declaration type_declarations
 ;;
 
-let yojson_key attrs =
-  Option.bind
-    (find_raw_attr [ "key"; "deriving.yojson.key" ] attrs)
-    (fun attr -> parse_raw_attr Ast_pattern.(single_expr_payload (estring __')) attr)
-;;
-
-let yojson_name attrs =
-  Option.bind
-    (find_raw_attr [ "name"; "deriving.yojson.name" ] attrs)
-    (fun attr -> parse_raw_attr Ast_pattern.(single_expr_payload (estring __')) attr)
-;;
-
-let yojson_default attrs =
-  Option.bind
-    (find_raw_attr [ "default"; "deriving.yojson.default" ] attrs)
-    (fun attr -> parse_raw_attr Ast_pattern.(single_expr_payload __) attr)
+let yojson_strict type_declarations =
+  let bool_value expr =
+    match expr.pexp_desc with
+    | Pexp_construct ({ txt = Lident "true"; _ }, None) -> Some true
+    | Pexp_construct ({ txt = Lident "false"; _ }, None) -> Some false
+    | _ -> None
+  in
+  let strict_argument args =
+    List.find_map
+      (fun (label, expr) ->
+         match label with
+         | Labelled "strict" -> bool_value expr
+         | _ ->
+           (match expr.pexp_desc with
+            | Pexp_record (fields, None) ->
+              List.find_map
+                (fun ({ txt = field; _ }, value) ->
+                   match field with
+                   | Lident "strict" -> bool_value value
+                   | _ -> None)
+                fields
+            | _ -> None))
+      args
+  in
+  let yojson_generator expr =
+    let name_and_args =
+      match expr.pexp_desc with
+      | Pexp_ident { txt = Lident name; _ } -> Some (name, [])
+      | Pexp_apply ({ pexp_desc = Pexp_ident { txt = Lident name; _ }; _ }, args) ->
+        Some (name, args)
+      | _ -> None
+    in
+    match name_and_args with
+    | Some ("yojson", args) | Some ("of_yojson", args) ->
+      Some (Option.value (strict_argument args) ~default:true)
+    | _ -> None
+  in
+  let generators expr =
+    match expr.pexp_desc with
+    | Pexp_tuple expressions -> expressions
+    | _ -> [ expr ]
+  in
+  let strict_from_attribute attr =
+    match attr.attr_payload with
+    | PStr [ { pstr_desc = Pstr_eval (expr, _); _ } ] ->
+      List.find_map yojson_generator (generators expr)
+    | _ -> None
+  in
+  List.find_map
+    (fun type_declaration ->
+       List.find_map
+         (fun attr ->
+            match attr.attr_name.txt with
+            | "deriving"
+            | "deriving_inline"
+            | "ppxlib.deriving"
+            | "ppxlib.deriving_inline" -> strict_from_attribute attr
+            | _ -> None)
+         type_declaration.ptype_attributes)
+    type_declarations
 ;;
 
 let string_attr name ctx =
@@ -54,16 +167,7 @@ let expr_attr name ctx =
   Attribute.declare name ctx Ast_pattern.(single_expr_payload __) (fun x -> x)
 ;;
 
-let jsonschema_key = string_attr "jsonschema.key" Attribute.Context.label_declaration
 let jsonschema_ref = string_attr "jsonschema.ref" Attribute.Context.label_declaration
-
-let jsonschema_variant_name =
-  string_attr "jsonschema.name" Attribute.Context.constructor_declaration
-;;
-
-let jsonschema_polymorphic_variant_name =
-  string_attr "jsonschema.name" Attribute.Context.rtag
-;;
 
 let jsonschema_td_allow_extra_fields =
   Attribute.declare
@@ -95,10 +199,6 @@ let jsonschema_cd_disallow_extra_fields =
     Attribute.Context.constructor_declaration
     Ast_pattern.(pstr nil)
     (fun () -> ())
-;;
-
-let jsonschema_option =
-  Attribute.declare_flag "jsonschema.option" Attribute.Context.label_declaration
 ;;
 
 let jsonschema_ld_description =
@@ -169,10 +269,6 @@ let jsonschema_ct_attrs = expr_attr "jsonschema.attrs" Attribute.Context.core_ty
 let jsonschema_td_attrs = expr_attr "jsonschema.attrs" Attribute.Context.type_declaration
 let jsonschema_ld_attrs = expr_attr "jsonschema.attrs" Attribute.Context.label_declaration
 
-let jsonschema_ld_default =
-  expr_attr "jsonschema.default" Attribute.Context.label_declaration
-;;
-
 let doc_attr_pattern =
   Ast_pattern.(
     attribute
@@ -236,40 +332,34 @@ let jsonschema_td_compact_variants =
   Attribute.declare_flag "jsonschema.compact_variants" Attribute.Context.type_declaration
 ;;
 
-let ld_key (ld : label_declaration) =
-  match Attribute.get jsonschema_key ld with
-  | Some _ as key -> key
-  | None -> yojson_key ld.pld_attributes
-;;
-
-let cd_name (cd : constructor_declaration) =
-  match Attribute.get jsonschema_variant_name cd with
-  | Some _ as name -> name
-  | None -> yojson_name cd.pcd_attributes
-;;
-
-let rtag_name (rtag : row_field) =
-  match Attribute.get jsonschema_polymorphic_variant_name rtag with
-  | Some _ as name -> name
-  | None -> yojson_name rtag.prf_attributes
-;;
+let ld_key (ld : label_declaration) = yojson_key ld.pld_attributes
+let cd_name (cd : constructor_declaration) = yojson_name cd.pcd_attributes
+let rtag_name (rtag : row_field) = yojson_name rtag.prf_attributes
 
 let ld_default (ld : label_declaration) =
-  match Attribute.get jsonschema_ld_default ld with
+  match yojson_default ld.pld_attributes with
   | Some _ as default -> default
-  | None -> yojson_default ld.pld_attributes
+  | None -> yojson_default ld.pld_type.ptyp_attributes
+;;
+
+let field_type (ld : label_declaration) =
+  let encoding_attributes =
+    List.filter
+      (fun attr ->
+         List.mem
+           attr.attr_name.txt
+           [ "encoding"; "yojson.encoding"; "deriving.yojson.encoding" ])
+      ld.pld_attributes
+  in
+  { ld.pld_type with ptyp_attributes = ld.pld_type.ptyp_attributes @ encoding_attributes }
 ;;
 
 let attributes =
-  [ Attribute.T jsonschema_key
-  ; Attribute.T jsonschema_ref
-  ; Attribute.T jsonschema_variant_name
-  ; Attribute.T jsonschema_polymorphic_variant_name
+  [ Attribute.T jsonschema_ref
   ; Attribute.T jsonschema_td_allow_extra_fields
   ; Attribute.T jsonschema_cd_allow_extra_fields
   ; Attribute.T jsonschema_td_disallow_extra_fields
   ; Attribute.T jsonschema_cd_disallow_extra_fields
-  ; Attribute.T jsonschema_option
   ; Attribute.T jsonschema_ld_description
   ; Attribute.T jsonschema_td_description
   ; Attribute.T jsonschema_cd_description
@@ -292,7 +382,6 @@ let attributes =
   ; Attribute.T jsonschema_ct_attrs
   ; Attribute.T jsonschema_td_attrs
   ; Attribute.T jsonschema_ld_attrs
-  ; Attribute.T jsonschema_ld_default
   ; Attribute.T jsonschema_td_compact_variants
   ]
 ;;

@@ -42,9 +42,13 @@ module Ppx_generic = struct
   type 'a t = { value : 'a } [@@deriving jsonschema]
 end
 
-module Ppx_permissive = struct
+module Ppx_yojson_permissive = struct
   type t = { value : int }
-  [@@deriving yojson { strict = false }, jsonschema { strict = false }]
+  [@@deriving yojson { strict = false }, jsonschema { strict = true }]
+end
+
+module Ppx_yojson_default_strict = struct
+  type t = { value : int } [@@deriving yojson, jsonschema { strict = false }]
 end
 
 module Ppx_default_record = struct
@@ -90,6 +94,7 @@ module Ppx_custom_default = struct
 
   let amount_jsonschema = Json_schema.int64_exn ()
 
+  (* Yojson's default strict decoder closes record schemas. *)
   type t = { amount : amount [@default 9223372036854775807L] }
   [@@deriving yojson, jsonschema]
 end
@@ -245,8 +250,8 @@ let%expect_test "generic schema is parameterized by its type" =
     |}]
 ;;
 
-let%expect_test "strict false permits extra object properties" =
-  Ppx_permissive.t_jsonschema |> print_schema;
+let%expect_test "Yojson strict false permits extra object properties in the schema" =
+  Ppx_yojson_permissive.t_jsonschema |> print_schema;
   [%expect
     {|
     {
@@ -258,8 +263,23 @@ let%expect_test "strict false permits extra object properties" =
     |}]
 ;;
 
-let%test "strict false schema mode matches the Yojson codec" =
-  match Ppx_permissive.of_yojson (`Assoc [ "value", `Int 1; "extra", `Bool true ]) with
+let%expect_test "Yojson default strictness rejects extra object properties in the schema" =
+  Ppx_yojson_default_strict.t_jsonschema |> print_schema;
+  [%expect
+    {|
+    {
+      "type": "object",
+      "properties": { "value": { "type": "integer" } },
+      "required": [ "value" ],
+      "additionalProperties": false
+    }
+    |}]
+;;
+
+let%test "Yojson strict false decoder ignores extra fields" =
+  match
+    Ppx_yojson_permissive.of_yojson (`Assoc [ "value", `Int 1; "extra", `Bool true ])
+  with
   | Ok { value = 1 } -> true
   | _ -> false
 ;;
@@ -411,7 +431,7 @@ let%expect_test "custom defaults use Yojson serializers and preserve int64" =
         "amount": { "default": 9223372036854775807, "type": "integer" }
       },
       "required": [],
-      "additionalProperties": true
+      "additionalProperties": false
     }
     |}]
 ;;
@@ -457,7 +477,7 @@ let%expect_test "an option alias remains required unless marked optional" =
       "type": "object",
       "properties": { "value": { "type": [ "string", "null" ] } },
       "required": [ "value" ],
-      "additionalProperties": true
+      "additionalProperties": false
     }
     |}];
   Ppx_option_alias.optional_alias_jsonschema |> print_schema;
@@ -469,7 +489,7 @@ let%expect_test "an option alias remains required unless marked optional" =
         "value": { "default": null, "type": [ "string", "null" ] }
       },
       "required": [],
-      "additionalProperties": true
+      "additionalProperties": false
     }
     |}]
 ;;

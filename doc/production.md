@@ -110,8 +110,13 @@ keyword, которого ещё нет в DSL. Не используйте ег
 остаётся явной точкой расширения.
 
 Для необязательного record field используйте общий `@default`, например
-`[@default None]`; `[@jsonschema.option]` без него отклоняется, в том числе для
-option aliases. PPX генерирует URN из namespace и позиции объявления, без
+`[@default None]`, на поле или внутри его типа, в том числе для option aliases.
+Общие аннотации `key`, `name`, `default` и `encoding` поддерживают префиксы
+`yojson.*` и `deriving.yojson.*`; старые `jsonschema.key`, `jsonschema.name`,
+`jsonschema.default` и `jsonschema.option` отклоняются с подсказкой замены.
+Строковое кодирование `int64`/`nativeint` через ``[@encoding `string]``
+учитывается и при сериализации `default`; числовые ограничения на таком типе
+отклоняются. PPX генерирует URN из namespace и позиции объявления, без
 пути к checkout. Корневой `$id` рекурсивной схемы сохраняется при встраивании
 в OpenAPI, а `Json_schema.nullable` сохраняет ограничения `enum` и `const`.
 
@@ -273,7 +278,10 @@ make release-install-check
 ```
 
 `make release-artifacts` создаёт в `_release` source archive, SHA-256 и
-заготовки шести пакетов для opam-repository. `make release-install-check`
+заготовки шести пакетов для opam-repository с источником из Git-тега.
+Релиз публикуется созданием и отправкой Git-тега `v<version>`; GitHub Release
+не создаётся. SHA-256 относится к локальному source archive.
+`make release-install-check`
 распаковывает archive и проверяет install targets, тесты и внешние
 consumer-проекты в активном switch OCaml >= 5.1.1; отдельный compiler
 не устанавливается. Распакованный исходный код остаётся в `_release` для

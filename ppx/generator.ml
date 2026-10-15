@@ -59,8 +59,15 @@ let rec schema_of_core_type
   let loc = core_type.ptyp_loc in
   let schema, is_rec =
     match core_type with
-    | [%type: int] | [%type: int32] | [%type: nativeint] | [%type: int64] ->
-      Schema.type_def ~loc "integer", false
+    | [%type: int] | [%type: int32] -> Schema.type_def ~loc "integer", false
+    | [%type: int64] | [%type: Int64.t] | [%type: nativeint] | [%type: Nativeint.t] ->
+      ( Schema.type_def
+          ~loc
+          (if Attrs.string_encoded core_type then
+             "string"
+           else
+             "integer")
+      , false )
     | [%type: float] -> Schema.type_def ~loc "number", false
     | [%type: string] | [%type: bytes] -> Schema.type_def ~loc "string", false
     | [%type: bool] -> Schema.type_def ~loc "boolean", false
@@ -222,30 +229,19 @@ let schema_of_record
   =
   let fields, required, is_rec =
     List.fold_left
-      (fun (fields, required, is_rec)
-        ({ pld_name; pld_type; pld_loc = _loc; _ } as field) ->
+      (fun (fields, required, is_rec) ({ pld_name; _ } as field) ->
          let name =
            match Attrs.ld_key field with
            | Some name -> name.txt
            | None -> pld_name.txt
          in
-         let has_optional_flag = Attribute.has_flag Attrs.jsonschema_option field in
-         let drop_required =
-           Attrs.yojson_default field.pld_attributes |> Option.is_some
-         in
-         if has_optional_flag && not drop_required then
-           Location.raise_errorf
-             ~loc:field.pld_loc
-             "typed-endpoint-ppx: [@jsonschema.option] requires a shared [@default], for example [@default None]";
+         let default = Attrs.ld_default field in
+         let drop_required = Option.is_some default in
+         let pld_type = Attrs.field_type field in
          let type_def, field_rec =
            match Attribute.get Attrs.jsonschema_ref field with
            | Some def -> Schema.type_ref ~loc def.txt, false
-           | None ->
-             (match pld_type with
-              | [%type: [%t? inner] option] ->
-                let s, r = schema_of_core_type ~config ~recursive_types inner in
-                Schema.nullable ~loc s, r
-              | _ -> schema_of_core_type ~config ~recursive_types pld_type)
+           | None -> schema_of_core_type ~config ~recursive_types pld_type
          in
          let type_def =
            type_def
@@ -265,7 +261,7 @@ let schema_of_record
                 ~loc
                 (Attrs.jsonschema_ld_minimum, field)
                 pld_type
-           |> Schema.Annotation.add_default ~loc (Attrs.ld_default field) pld_type
+           |> Schema.Annotation.add_default ~loc default pld_type
            |> Schema.Annotation.add_annotations
                 ~loc
                 ~core_type:pld_type
@@ -438,12 +434,20 @@ let apply_defs ~loc = function
 
 let str_type_decl ~ctxt ast flag_polymorphic_variant_tuple flag_ocaml_doc strict =
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
+  let _, type_declarations = ast in
+  Attrs.reject_removed_annotations type_declarations;
+  (* When a Yojson decoder is derived, match its unknown-field policy. *)
+  let strict =
+    match Attrs.yojson_strict type_declarations with
+    | Some strict -> strict
+    | None -> Option.value strict ~default:false
+  in
   let config : Attrs.config =
     { Attrs.schema_namespace =
         Code_path.fully_qualified_path (Expansion_context.Deriver.code_path ctxt)
     ; Attrs.polymorphic_variant_tuple = flag_polymorphic_variant_tuple
     ; Attrs.ocaml_doc = flag_ocaml_doc
-    ; Attrs.strict = Option.value strict ~default:false
+    ; Attrs.strict
     }
   in
   match ast with
@@ -590,6 +594,7 @@ let str_type_decl ~ctxt ast flag_polymorphic_variant_tuple flag_ocaml_doc strict
 ;;
 
 let sig_type_decl ~ctxt ast _flag_polymorphic_variant_tuple _flag_ocaml_doc _strict =
+  Attrs.reject_removed_annotations (snd ast);
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
   match ast with
   | _, [ td ] ->

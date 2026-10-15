@@ -5,6 +5,7 @@
   invariants
   bug_regressions
   json_schema_test
+  yojson_annotations
   schema_dependency
   typed_schema_signature)
  (libraries base jsonschema typed-endpoint typed-endpoint-testing yojson)

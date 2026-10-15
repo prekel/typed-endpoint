@@ -27,10 +27,14 @@ let metadata : t Typed_endpoint.Metadata.t =
 напрямую. Общие аннотации codec являются приоритетными: например,
 поле `name : string option [@key "displayName"] [@default None]` одновременно
 задаёт wire key, отсутствие поля по умолчанию и соответствующую PPX-схему.
-Дублировать их через `[@jsonschema.key]` и `[@jsonschema.option]` не требуется.
-Схемы записей по умолчанию допускают дополнительные поля. Чтобы запретить их
-для записи, укажите `[@@jsonschema.disallow_extra_fields]`; для inline-записи
-внутри варианта задайте `[@jsonschema.disallow_extra_fields]` на конструкторе.
+Аннотации `jsonschema.key`, `jsonschema.name`, `jsonschema.default` и
+`jsonschema.option` удалены: используйте общие `key`, `name` и `default`.
+Поддерживаются также префиксы `yojson.*` и `deriving.yojson.*`.
+При совместном выводе с Yojson схема повторяет его `strict`: по умолчанию
+дополнительные поля запрещены, а `yojson { strict = false }` разрешает их.
+Без Yojson-декодера схема записи по умолчанию допускает дополнительные поля.
+Чтобы запретить их явно, укажите `[@@jsonschema.disallow_extra_fields]`;
+для inline-записи внутри варианта задайте `[@jsonschema.disallow_extra_fields]` на конструкторе.
 Схемы от нетронутого
 [ppx_deriving_jsonschema](https://github.com/ahrefs/ppx_deriving_jsonschema)
 можно импортировать через `Json_schema.Unsafe.of_ppx`.
@@ -203,4 +207,7 @@ Request.json
 ```
 
 Для отсутствующего option field в DTO используйте `[@default None]`.
-`[@jsonschema.option]` без общего `@default` не поддерживается.
+`default` можно разместить на поле или внутри его типа. `option` без `default`
+остаётся обязательным полем, допускающим `null`.
+Для строкового представления `int64` и `nativeint` используйте
+``[@encoding `string]``; схема и JSON-значение `default` будут строковыми.

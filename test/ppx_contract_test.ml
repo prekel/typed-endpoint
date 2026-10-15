@@ -14,11 +14,11 @@ let read filename =
     ~finally:(fun () -> Stdlib.close_in channel)
 ;;
 
-let run driver source output =
+let run ?(kind = "--impl") driver source output =
   let command =
     String.concat
       ~sep:" "
-      (List.map [ driver; "--impl"; source; "-o"; output ] ~f:Stdlib.Filename.quote)
+      (List.map [ driver; kind; source; "-o"; output ] ~f:Stdlib.Filename.quote)
   in
   Stdlib.Sys.command (command ^ " 2> " ^ Stdlib.Filename.quote (output ^ ".log"))
 ;;
@@ -61,24 +61,59 @@ end
       assert (String.is_substring a ~substring:"urn:typed-endpoint:schema:Portable.B");
       let bad_source = first ^ "/bad.ml" in
       let bad_output = first ^ "/bad_output.ml" in
+      let reject fixture diagnostic =
+        write bad_source ("open! Base\n" ^ fixture);
+        assert (run driver bad_source bad_output <> 0);
+        assert (String.is_substring (read (bad_output ^ ".log")) ~substring:diagnostic)
+      in
+      List.iter
+        [ ( {|type t = { value : int [@jsonschema.key "wire"] } [@@deriving jsonschema]|}
+          , "[@jsonschema.key] has been removed; use [@key ...]" )
+        ; ( {|type t = Value [@jsonschema.name "value"] [@@deriving jsonschema]|}
+          , "[@jsonschema.name] has been removed; use [@name ...]" )
+        ; ( {|type t = [ `Value [@jsonschema.name "value"] ] [@@deriving jsonschema]|}
+          , "[@jsonschema.name] has been removed; use [@name ...]" )
+        ; ( {|type t = { value : int [@jsonschema.default 0] } [@@deriving jsonschema]|}
+          , "[@jsonschema.default] has been removed; use [@default ...]" )
+        ; ( {|type t = { value : int option [@jsonschema.option] } [@@deriving jsonschema]|}
+          , "[@jsonschema.option] has been removed; use [@default None]" )
+        ; ( {|type t = { value : int option [@jsonschema.option] [@default None] } [@@deriving jsonschema]|}
+          , "[@jsonschema.option] has been removed; use [@default None]" )
+        ; ( {|type t = { value : int [@key "a"] [@key "b"] } [@@deriving jsonschema]|}
+          , "Duplicated attribute" )
+        ; ( {|type t = [ `Value [@yojson.name "a"] [@yojson.name "b"] ] [@@deriving jsonschema]|}
+          , "Duplicated attribute" )
+        ; ( {|type t = { value : (int [@default 1] [@default 2]) } [@@deriving jsonschema]|}
+          , "Duplicated attribute" )
+        ; ( {|type t = (int64 [@encoding `string] [@encoding `number]) [@@deriving jsonschema]|}
+          , "Duplicated attribute" )
+        ; {|type t = { value : int [@key 1] } [@@deriving jsonschema]|}, "Error"
+        ; {|type t = Value [@name true] [@@deriving jsonschema]|}, "Error"
+        ; {|type t = { value : int [@default] } [@@deriving jsonschema]|}, "Error"
+        ; {|type t = (int64 [@encoding `invalid]) [@@deriving jsonschema]|}, "Error"
+        ; {|type t = (int64 [@encoding "string"]) [@@deriving jsonschema]|}, "Error"
+        ; ( {|type t = (int64 [@encoding `string] [@jsonschema.minimum 0]) [@@deriving jsonschema]|}
+          , "numeric bounds cannot be applied to a string-encoded integer" )
+        ; ( {|type t = { value : nativeint [@encoding `string] [@jsonschema.maximum 10] } [@@deriving jsonschema]|}
+          , "numeric bounds cannot be applied to a string-encoded integer" )
+        ; ( {|type t = { value : int64 [@encoding `string] [@jsonschema.attrs { minimum = 0 }] } [@@deriving jsonschema]|}
+          , "numeric bounds cannot be applied to a string-encoded integer" )
+        ]
+        ~f:(fun (fixture, diagnostic) -> reject fixture diagnostic);
       write
         bad_source
-        {|
-open! Base
-type maybe_string = string option [@@deriving jsonschema]
-type t = { value : maybe_string [@jsonschema.option] } [@@deriving jsonschema]
-|};
-      assert (run driver bad_source bad_output <> 0);
+        {|type t = { value : int [@jsonschema.key "wire"] } [@@deriving jsonschema]|};
+      assert (run ~kind:"--intf" driver bad_source bad_output <> 0);
       assert (
         String.is_substring
           (read (bad_output ^ ".log"))
-          ~substring:"requires a shared [@default]");
+          ~substring:"[@jsonschema.key] has been removed");
       write
         bad_source
         {|
 open! Base
 type maybe_string = string option [@@deriving jsonschema]
-type t = { value : maybe_string [@jsonschema.option] [@default None] } [@@deriving jsonschema]
+type t = { value : maybe_string [@default None] } [@@deriving jsonschema]
 |};
       assert (run driver bad_source bad_output = 0))
     ~finally:(fun () ->

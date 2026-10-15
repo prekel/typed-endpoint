@@ -15,6 +15,23 @@ OpenAPI 3.1.
 
 Deriver `typed-endpoint-ppx` перенесён и адаптирован на основе
 [ahrefs/ppx_deriving_jsonschema](https://github.com/ahrefs/ppx_deriving_jsonschema).
+Если вместе с `jsonschema` выводится Yojson-декодер (`yojson` или `of_yojson`),
+политика `additionalProperties` берётся из его `strict`, включая значение по
+умолчанию Yojson (`true`). Поэтому `yojson { strict = false }` разрешает
+дополнительные поля и в схеме. Настройка `jsonschema { strict = ... }`
+используется, когда Yojson-декодер не выводится; атрибут
+`[@jsonschema.disallow_extra_fields]` запрещает дополнительные поля явно.
+
+Аннотации `key`, `name`, `default` и `encoding` общие для Yojson и схемы;
+поддерживаются также имена `yojson.*` и `deriving.yojson.*`. `default` на поле
+или его типе делает поле необязательным. Для `int64` и `nativeint` аннотация
+``[@encoding `string]`` задаёт строку в JSON и строковое значение `default`;
+``[@encoding `number]`` сохраняет числовое представление.
+
+Аннотации `jsonschema.key`, `jsonschema.name`, `jsonschema.default` и
+`jsonschema.option` удалены. Используйте соответственно `[@key ...]`,
+`[@name ...]`, `[@default ...]` и `[@default None]`. Числовые ограничения
+`jsonschema.minimum`/`maximum` несовместимы со строковым кодированием числа.
 
 ## Основные гарантии
 
@@ -118,7 +135,7 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 
 Все шесть пакетов находятся в одном репозитории. Их зависимости друг от друга
 требуют одинаковую версию, поэтому закрепляйте их на одном теге. Например,
-для установки всех пакетов из `v0.2.1` в switch OCaml 5.1.1 или новее:
+для установки всех пакетов из `v0.3.0` в switch OCaml 5.1.1 или новее:
 
 ```bash
 typed_endpoint_packages=(
@@ -130,7 +147,7 @@ typed_endpoint_packages=(
   typed-endpoint-eio
 )
 for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.2.1'
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.0'
 done
 opam install "${typed_endpoint_packages[@]}"
 ```
@@ -140,7 +157,7 @@ opam install "${typed_endpoint_packages[@]}"
 `typed-endpoint-ppx` и `typed-endpoint-opium`; они поддерживают OCaml 4.14.1.
 При установке адаптеров с `--with-test` добавьте `typed-endpoint-testing`.
 
-Чтобы обновить существующие pins до `v0.2.1`, сначала закрепите все выбранные
+Чтобы обновить существующие pins до `v0.3.0`, сначала закрепите все выбранные
 пакеты на этом теге, затем выполните общий upgrade. При переходе на следующий
 опубликованный тег замените `next_tag`:
 
@@ -153,7 +170,7 @@ typed_endpoint_packages=(
   typed-endpoint-dream
   typed-endpoint-eio
 )
-next_tag=v0.2.1
+next_tag=v0.3.0
 for package in "${typed_endpoint_packages[@]}"; do
   opam pin add -yn "$package" "git+https://github.com/prekel/typed-endpoint.git#$next_tag"
 done
@@ -162,7 +179,7 @@ opam upgrade "${typed_endpoint_packages[@]}"
 
 `-n` откладывает установку до общего `opam install` или `opam upgrade`, а `-y`
 подтверждает замену существующего pin. Тег указывается после `#` в Git URL.
-Изменения API версии `v0.2.1` описаны в [истории изменений](CHANGES.md).
+Изменения API версии `v0.3.0` описаны в [истории изменений](CHANGES.md).
 
 ## Первый сервер
 
