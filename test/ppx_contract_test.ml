@@ -23,8 +23,30 @@ let run ?(kind = "--impl") driver source output =
   Stdlib.Sys.command (command ^ " 2> " ^ Stdlib.Filename.quote (output ^ ".log"))
 ;;
 
+let typecheck ~root source output =
+  let command =
+    String.concat
+      ~sep:" "
+      (List.map
+         [ "ocamlfind"
+         ; "ocamlc"
+         ; "-stop-after"
+         ; "typing"
+         ; "-package"
+         ; "base,yojson,ppx_deriving_yojson.runtime"
+         ; "-I"
+         ; root ^ "/lib/.typed_endpoint.objs/byte"
+         ; "-c"
+         ; source
+         ]
+         ~f:Stdlib.Filename.quote)
+  in
+  Stdlib.Sys.command (command ^ " > " ^ Stdlib.Filename.quote output ^ " 2>&1")
+;;
+
 let () =
   let driver = Stdlib.Sys.argv.(1) in
+  let root = Stdlib.Sys.argv.(2) in
   let directory = Stdlib.Filename.temp_file "typed-endpoint-ppx" "" in
   Stdlib.Sys.remove directory;
   Unix.mkdir directory 0o700;
@@ -61,10 +83,13 @@ end
       assert (String.is_substring a ~substring:"urn:typed-endpoint:schema:Portable.B");
       let bad_source = first ^ "/bad.ml" in
       let bad_output = first ^ "/bad_output.ml" in
-      let reject fixture diagnostic =
+      let reject ?(kind = "--impl") fixture diagnostic =
         write bad_source ("open! Base\n" ^ fixture);
-        assert (run driver bad_source bad_output <> 0);
-        assert (String.is_substring (read (bad_output ^ ".log")) ~substring:diagnostic)
+        if run ~kind driver bad_source bad_output = 0 then
+          Stdlib.failwith ("expected PPX rejection: " ^ fixture);
+        let actual = read (bad_output ^ ".log") in
+        if not (String.is_substring actual ~substring:diagnostic) then
+          Stdlib.failwith ("unexpected PPX diagnostic for " ^ fixture ^ "\n" ^ actual)
       in
       List.iter
         [ ( {|type t = { value : int [@jsonschema.key "wire"] } [@@deriving jsonschema]|}
@@ -98,8 +123,101 @@ end
           , "numeric bounds cannot be applied to a string-encoded integer" )
         ; ( {|type t = { value : int64 [@encoding `string] [@jsonschema.attrs { minimum = 0 }] } [@@deriving jsonschema]|}
           , "numeric bounds cannot be applied to a string-encoded integer" )
+        ; ( {|type t = string [@@jsonschema.format "date-time"] [@@deriving jsonschema]|}
+          , "format expects a variant literal" )
+        ; ( {|type t = { value : string [@jsonschema.attrs { format = "uuid" }] } [@@deriving jsonschema]|}
+          , "format expects a variant literal" )
+        ; ( {|type t = string [@@jsonschema.format (`Custom " ")] [@@deriving jsonschema]|}
+          , "Custom format must not be empty" )
+        ; ( {|type t = int [@@jsonschema.attrs { format = `Custom "" }] [@@deriving jsonschema]|}
+          , "Custom format must not be empty" )
+        ; ( {|type t = string [@@jsonschema.format (`Custom name)] [@@deriving jsonschema]|}
+          , "with a string literal" )
+        ; ( {|type t = string [@@jsonschema.format `Custom] [@@deriving jsonschema]|}
+          , "with a string literal" )
+        ; ( {|type t = string [@@jsonschema.format format] [@@deriving jsonschema]|}
+          , "format expects a variant literal" )
+        ; ( {|type t = bool [@@jsonschema.format `Uuid] [@@deriving jsonschema]|}
+          , "format requires a primitive" )
+        ; ( {|type scalar = string type t = scalar [@@jsonschema.format `Uuid] [@@deriving jsonschema]|}
+          , "for custom types define <type>_jsonschema" )
+        ; ( {|type t = { value : string [@jsonschema.title "x"] [@jsonschema.attrs { title = "x" }] } [@@deriving jsonschema]|}
+          , "duplicate JSON Schema annotation 'title'" )
+        ; ( {|type t = string [@@format (`Custom " ")] [@@deriving jsonschema]|}
+          , "Custom format must not be empty" )
+        ; ( {|type t = string [@@attrs { title = "x" }] [@@jsonschema.title "x"] [@@deriving jsonschema]|}
+          , "duplicate JSON Schema annotation 'title'" )
+        ; ( {|type t = string [@@format "uuid"] [@@deriving jsonschema]|}
+          , "format expects a variant literal" )
+        ; ( {|type t = string [@@jsonschema.attrs { format = `Uuid }] [@@jsonschema.format `Uuid] [@@deriving jsonschema]|}
+          , "duplicate JSON Schema annotation 'format'" )
+        ; ( {|type t = int [@@jsonschema.attrs { minimum = 0; minimum = 1 }] [@@deriving jsonschema]|}
+          , "duplicate JSON Schema annotation 'minimum'" )
+        ; ( {|type t = string [@@jsonschema.description "x"] [@@jsonschema.description "x"] [@@deriving jsonschema]|}
+          , "duplicate JSON Schema annotation 'description'" )
+        ; ( {|type t = string [@@jsonschema.attrs { title = "a" }] [@@jsonschema.attrs { description = "b" }] [@@deriving jsonschema]|}
+          , "duplicate JSON Schema annotation 'attrs'" )
+        ; ( {|type t = { value : string [@jsonschema.ref "External"] } [@@deriving jsonschema]|}
+          , "[@jsonschema.ref] has been removed" )
+        ; ( {|type t = Empty [@@jsonschema.compact_variants] [@@deriving jsonschema]|}
+          , "variants always use Yojson arrays" )
+        ; ( {|type t = [ `Value of int * string ] [@@deriving jsonschema { polymorphic_variant_tuple }]|}
+          , "polymorphic_variant_tuple has been removed" )
+        ; ( {|type t = { value : int } [@@deriving yojson, jsonschema { strict = false }]|}
+          , "jsonschema strict = false conflicts with Yojson strict = true" )
+        ; ( {|type t = { value : int } [@@deriving yojson { strict = false }, jsonschema { strict = true }]|}
+          , "jsonschema strict = true conflicts with Yojson strict = false" )
+        ; ( {|type t = { value : int } [@@deriving yojson, jsonschema] [@@jsonschema.allow_extra_fields]|}
+          , "additionalProperties conflicts with Yojson strict = true" )
+        ; ( {|type t = { value : int } [@@deriving of_yojson { strict = false }, jsonschema] [@@jsonschema.disallow_extra_fields]|}
+          , "additionalProperties conflicts with Yojson strict = false" )
+        ; ( {|type t = Value of { value : int } [@jsonschema.disallow_extra_fields] [@@deriving yojson { strict = false }, jsonschema]|}
+          , "additionalProperties conflicts with Yojson strict = false" )
+        ; ( {|type t = Value of { value : int } [@jsonschema.allow_extra_fields] [@@deriving yojson, jsonschema]|}
+          , "additionalProperties conflicts with Yojson strict = true" )
+        ; ( {|type t = { value : int } [@@jsonschema.allow_extra_fields] [@@jsonschema.disallow_extra_fields] [@@deriving jsonschema]|}
+          , "are mutually exclusive" )
         ]
         ~f:(fun (fixture, diagnostic) -> reject fixture diagnostic);
+      List.iter
+        [ ( {|type t = string [@@jsonschema.format "uuid"] [@@deriving jsonschema]|}
+          , "variant literal" )
+        ; ( {|type t = { value : int [@jsonschema.ref "X"] } [@@deriving jsonschema]|}
+          , "has been removed" )
+        ; ( {|type t = { value : int } [@@deriving yojson, jsonschema { strict = false }]|}
+          , "conflicts with Yojson" )
+        ; ( {|type t = string [@@jsonschema.title "x"] [@@jsonschema.attrs { title = "x" }] [@@deriving jsonschema]|}
+          , "duplicate JSON Schema annotation" )
+        ]
+        ~f:(fun (fixture, diagnostic) -> reject ~kind:"--intf" fixture diagnostic);
+      let compile fixture =
+        write bad_source ("open! Base\n" ^ fixture);
+        if run driver bad_source bad_output <> 0 then
+          Stdlib.failwith ("unexpected expansion failure: " ^ read (bad_output ^ ".log"));
+        typecheck ~root bad_output (bad_output ^ ".log")
+      in
+      let good_formats =
+        {|type t = { date : string [@jsonschema.format `Date_time];
+                     integer : int [@jsonschema.attrs { format = `Int32 }];
+                     number : float [@jsonschema.format `Double];
+                     custom : string option [@jsonschema.format (`Custom "my-format")] }
+          [@@deriving jsonschema]|}
+      in
+      if compile good_formats <> 0 then
+        Stdlib.failwith ("valid formats failed typing: " ^ read (bad_output ^ ".log"));
+      List.iter
+        [ {|type t = string [@@jsonschema.format `Date_tiem] [@@deriving jsonschema]|}
+        ; {|type t = string [@@jsonschema.format `Int64] [@@deriving jsonschema]|}
+        ; {|type t = int [@@jsonschema.attrs { format = `Uuid }] [@@deriving jsonschema]|}
+        ; {|type t = float option [@@jsonschema.format `Int32] [@@deriving jsonschema]|}
+        ; {|type t = (int64 [@encoding `string]) [@@jsonschema.format `Int64] [@@deriving jsonschema]|}
+        ]
+        ~f:(fun fixture ->
+          if compile fixture = 0 then
+            Stdlib.failwith ("expected type rejection: " ^ fixture);
+          let actual = read (bad_output ^ ".log") in
+          assert (String.is_substring actual ~substring:"format");
+          assert (String.is_substring actual ~substring:"does not allow tag"));
       write
         bad_source
         {|type t = { value : int [@jsonschema.key "wire"] } [@@deriving jsonschema]|};

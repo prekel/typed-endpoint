@@ -1,15 +1,5 @@
 open! Base
 
-type ppx_schema =
-  [ `Null
-  | `String of string
-  | `Float of float
-  | `Int of int
-  | `Bool of bool
-  | `List of ppx_schema list
-  | `Assoc of (string * ppx_schema) list
-  ]
-
 type 'a t = Yojson.Safe.t
 type packed = Pack : 'a t -> packed
 
@@ -56,24 +46,6 @@ let null : unit t = `Assoc [ "type", `String "null" ]
 let to_yojson schema = schema
 let pack schema = Pack schema
 let to_yojson_packed (Pack schema) = schema
-
-let rec of_ppx : ppx_schema -> 'a t = function
-  | `Assoc fields -> `Assoc (List.map fields ~f:(fun (name, value) -> name, of_ppx value))
-  | `List values -> `List (List.map values ~f:of_ppx)
-  | (`Null | `Bool _ | `Int _ | `Float _ | `String _) as value -> value
-;;
-
-let rec to_ppx : 'a t -> ppx_schema = function
-  | `Assoc fields -> `Assoc (List.map fields ~f:(fun (name, value) -> name, to_ppx value))
-  | `List values -> `List (List.map values ~f:to_ppx)
-  | `Intlit value ->
-    (match Int.of_string_opt value with
-     | Some value -> `Int value
-     | None -> Stdlib.invalid_arg "JSON Schema integer literal does not fit in int")
-  | (`Null | `Bool _ | `Int _ | `Float _ | `String _) as value -> value
-  | _ -> Stdlib.invalid_arg "JSON Schema must contain only JSON values"
-[@@warning "-11"]
-;;
 
 let rec normalize : Yojson.Safe.t -> Yojson.Safe.t = function
   | `Assoc fields ->
@@ -536,7 +508,24 @@ module Deriver = struct
     with_annotation "description" (`String description) schema
   ;;
 
-  let with_format format schema = with_annotation "format" (`String format) schema
+  let with_format_name_exn format schema =
+    match validate_format (Some format) with
+    | Error error -> Stdlib.invalid_arg error
+    | Ok () -> with_annotation "format" (`String format) schema
+  ;;
+
+  let with_string_format_exn format schema =
+    with_format_name_exn (string_format_name format) schema
+  ;;
+
+  let with_integer_format_exn format schema =
+    with_format_name_exn (integer_format_name format) schema
+  ;;
+
+  let with_number_format_exn format schema =
+    with_format_name_exn (number_format_name format) schema
+  ;;
+
   let with_minimum_int value schema = with_annotation "minimum" (`Int value) schema
   let with_minimum_number value schema = with_annotation "minimum" (`Float value) schema
   let with_maximum_int value schema = with_annotation "maximum" (`Int value) schema
@@ -596,6 +585,4 @@ module Unsafe = struct
     | _ -> Stdlib.invalid_arg "JSON Schema must contain only JSON values"
   [@@warning "-11"]
   ;;
-
-  let of_ppx = of_ppx
 end

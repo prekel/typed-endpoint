@@ -336,7 +336,7 @@ module Order = struct
     ; pet_id : Schema_scalar.Positive_int64.t option [@key "petId"] [@default None]
     ; quantity : Schema_scalar.Positive_int32.t option [@default None]
     ; ship_date : string option
-          [@key "shipDate"] [@jsonschema.format "date-time"] [@default None]
+          [@key "shipDate"] [@jsonschema.format `Date_time] [@default None]
     ; status : Schema_scalar.Order_status.t option [@default None]
     ; complete : bool option [@default None]
     }

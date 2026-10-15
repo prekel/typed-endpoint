@@ -50,16 +50,12 @@ let create_typed_value ~loc type_decl params schema =
   create_value ~loc type_decl.ptype_name.txt schema
 ;;
 
-let rec schema_of_core_type
-          ~(config : Attrs.config)
-          ?(recursive_types = [])
-          ?(compact_variants = false)
-          core_type
-  =
+let rec schema_of_core_type ~(config : Attrs.config) ?(recursive_types = []) core_type =
   let loc = core_type.ptyp_loc in
   let schema, is_rec =
     match core_type with
-    | [%type: int] | [%type: int32] -> Schema.type_def ~loc "integer", false
+    | [%type: int] | [%type: int32] | [%type: Int32.t] ->
+      Schema.type_def ~loc "integer", false
     | [%type: int64] | [%type: Int64.t] | [%type: nativeint] | [%type: Nativeint.t] ->
       ( Schema.type_def
           ~loc
@@ -128,7 +124,7 @@ let rec schema_of_core_type
          let is_rec = List.exists snd results in
          Schema.tuple ~loc ts, is_rec
        | Ptyp_variant (row_fields, _, _) ->
-         schema_of_poly_variant ~loc ~config ~recursive_types ~compact_variants row_fields
+         schema_of_poly_variant ~loc ~config ~recursive_types row_fields
        | _ ->
          let msg =
            Stdlib.Format.asprintf
@@ -164,7 +160,6 @@ and schema_of_poly_variant
       ~loc
       ~(config : Attrs.config)
       ?(recursive_types = [])
-      ?(compact_variants = false)
       row_fields
   =
   let constrs, is_rec =
@@ -193,12 +188,9 @@ and schema_of_poly_variant
              | None -> name.txt
            in
            let raw_typs =
-             match config.Attrs.polymorphic_variant_tuple with
-             | true -> [ typ ]
-             | false ->
-               (match typ.ptyp_desc with
-                | Ptyp_tuple tps -> tps
-                | _ -> [ typ ])
+             match typ.ptyp_desc with
+             | Ptyp_tuple tps -> tps
+             | _ -> [ typ ]
            in
            let results =
              List.map (schema_of_core_type ~config ~recursive_types) raw_typs
@@ -216,7 +208,7 @@ and schema_of_poly_variant
       row_fields
   in
   let constrs = List.rev constrs in
-  let v = Schema.variants ~loc ~compact_variants constrs in
+  let v = Schema.variants ~loc constrs in
   v, is_rec
 ;;
 
@@ -239,9 +231,7 @@ let schema_of_record
          let drop_required = Option.is_some default in
          let pld_type = Attrs.field_type field in
          let type_def, field_rec =
-           match Attribute.get Attrs.jsonschema_ref field with
-           | Some def -> Schema.type_ref ~loc def.txt, false
-           | None -> schema_of_core_type ~config ~recursive_types pld_type
+           schema_of_core_type ~config ~recursive_types pld_type
          in
          let type_def =
            type_def
@@ -281,23 +271,7 @@ let schema_of_record
   Schema.record ~loc ~properties:fields ~required ~allow_extra_fields, is_rec
 ;;
 
-let resolve_additional_properties ~loc ~strict ~allow ~disallow =
-  match allow, disallow with
-  | true, true ->
-    Location.raise_errorf
-      ~loc
-      "typed-endpoint-ppx: [@jsonschema.allow_extra_fields] and [@jsonschema.disallow_extra_fields] are mutually exclusive"
-  | _, true -> false
-  | _, false -> not strict
-;;
-
-let schema_of_variants
-      ~loc
-      ~(config : Attrs.config)
-      ?(recursive_types = [])
-      ?(compact_variants = false)
-      variants
-  =
+let schema_of_variants ~loc ~(config : Attrs.config) ?(recursive_types = []) variants =
   let variants, is_rec =
     List.fold_left
       (fun (variants, is_rec) ({ pcd_args; pcd_name = { txt = name; _ }; _ } as var) ->
@@ -315,9 +289,10 @@ let schema_of_variants
          match pcd_args with
          | Pcstr_record label_declarations ->
            let additional_properties =
-             resolve_additional_properties
+             Attrs.resolve_additional_properties
                ~loc:var.pcd_loc
                ~strict:config.Attrs.strict
+               ~decoder_strict:config.Attrs.decoder_strict
                ~allow:
                  (Option.is_some
                     (Attribute.get Attrs.jsonschema_cd_allow_extra_fields var))
@@ -344,7 +319,7 @@ let schema_of_variants
       variants
   in
   let variants = List.rev variants in
-  Schema.variants ~loc ~compact_variants variants, is_rec
+  Schema.variants ~loc variants, is_rec
 ;;
 
 let schema_of_type_decl ~loc ~(config : Attrs.config) ~recursive_types type_decl =
@@ -352,18 +327,14 @@ let schema_of_type_decl ~loc ~(config : Attrs.config) ~recursive_types type_decl
   let params = List.map (fun tp -> (get_type_param_name tp).txt) type_decl.ptype_params in
   match type_decl.ptype_kind with
   | Ptype_variant variants ->
-    let compact_variants =
-      Attribute.has_flag Attrs.jsonschema_td_compact_variants type_decl
-    in
-    let schema, is_rec =
-      schema_of_variants ~loc ~config ~recursive_types ~compact_variants variants
-    in
+    let schema, is_rec = schema_of_variants ~loc ~config ~recursive_types variants in
     type_name, schema, is_rec, params
   | Ptype_record label_declarations ->
     let additional_properties =
-      resolve_additional_properties
+      Attrs.resolve_additional_properties
         ~loc:type_decl.ptype_loc
         ~strict:config.Attrs.strict
+        ~decoder_strict:config.Attrs.decoder_strict
         ~allow:
           (Option.is_some
              (Attribute.get Attrs.jsonschema_td_allow_extra_fields type_decl))
@@ -383,12 +354,7 @@ let schema_of_type_decl ~loc ~(config : Attrs.config) ~recursive_types type_decl
   | Ptype_abstract ->
     (match type_decl.ptype_manifest with
      | Some core_type ->
-       let compact_variants =
-         Attribute.has_flag Attrs.jsonschema_td_compact_variants type_decl
-       in
-       let schema, is_rec =
-         schema_of_core_type ~config ~recursive_types ~compact_variants core_type
-       in
+       let schema, is_rec = schema_of_core_type ~config ~recursive_types core_type in
        type_name, schema, is_rec, params
      | None ->
        let msg = "typed-endpoint-ppx: abstract type without manifest" in
@@ -432,23 +398,16 @@ let apply_defs ~loc = function
       Typed_endpoint.Json_schema.Deriver.with_definitions ![%e edv] ppx_result]
 ;;
 
-let str_type_decl ~ctxt ast flag_polymorphic_variant_tuple flag_ocaml_doc strict =
+let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
-  let _, type_declarations = ast in
-  Attrs.reject_removed_annotations type_declarations;
-  (* When a Yojson decoder is derived, match its unknown-field policy. *)
-  let strict =
-    match Attrs.yojson_strict type_declarations with
-    | Some strict -> strict
-    | None -> Option.value strict ~default:false
-  in
-  let config : Attrs.config =
-    { Attrs.schema_namespace =
-        Code_path.fully_qualified_path (Expansion_context.Deriver.code_path ctxt)
-    ; Attrs.polymorphic_variant_tuple = flag_polymorphic_variant_tuple
-    ; Attrs.ocaml_doc = flag_ocaml_doc
-    ; Attrs.strict
-    }
+  let config =
+    Attrs.configure
+      ~loc
+      (snd ast)
+      removed_tuple_flag
+      flag_ocaml_doc
+      strict
+      (Code_path.fully_qualified_path (Expansion_context.Deriver.code_path ctxt))
   in
   match ast with
   | rec_flag, [ type_decl ] ->
@@ -462,33 +421,11 @@ let str_type_decl ~ctxt ast flag_polymorphic_variant_tuple flag_ocaml_doc strict
       schema_of_type_decl ~loc ~config ~recursive_types type_decl
     in
     let raw_schema =
-      raw_schema
-      |> Schema.Annotation.add_description
-           ~loc
-           (Attrs.td_description ~ocaml_doc:config.Attrs.ocaml_doc type_decl)
-      |> Schema.Annotation.add_title ~loc (Attrs.td_title type_decl)
-      |> Schema.Annotation.add_annotations
-           ~loc
-           (Attribute.get Attrs.jsonschema_td_attrs type_decl)
-    in
-    let raw_schema =
-      Option.fold
-        ~none:raw_schema
-        ~some:(fun core_type ->
-          Schema.Annotation.add_format
-            ~loc
-            (Attrs.jsonschema_td_format, type_decl)
-            core_type
-            raw_schema
-          |> Schema.Annotation.add_maximum
-               ~loc
-               (Attrs.jsonschema_td_maximum, type_decl)
-               core_type
-          |> Schema.Annotation.add_minimum
-               ~loc
-               (Attrs.jsonschema_td_minimum, type_decl)
-               core_type)
-        type_decl.ptype_manifest
+      Schema.Annotation.type_declaration
+        ~loc
+        ~ocaml_doc:config.ocaml_doc
+        type_decl
+        raw_schema
     in
     let schema =
       if is_rec then
@@ -510,54 +447,29 @@ let str_type_decl ~ctxt ast flag_polymorphic_variant_tuple flag_ocaml_doc strict
       | Nonrecursive -> []
     in
     let raw_results =
-      List.map (schema_of_type_decl ~loc ~config ~recursive_types) type_decls
+      List.map
+        (fun td ->
+           let name, raw, is_rec, params =
+             schema_of_type_decl ~loc ~config ~recursive_types td
+           in
+           let raw =
+             Schema.Annotation.type_declaration
+               ~loc:td.ptype_loc
+               ~ocaml_doc:config.ocaml_doc
+               td
+               raw
+           in
+           name, raw, is_rec, params)
+        type_decls
     in
     let any_recursive = List.exists (fun (_, _, is_rec, _) -> is_rec) raw_results in
     if any_recursive then
       List.map
-        (fun (name, raw, _, params) ->
+        (fun (name, _, _, params) ->
            let td =
              List.find (fun td -> String.equal td.ptype_name.txt name) type_decls
            in
-           let raw =
-             raw
-             |> Schema.Annotation.add_description
-                  ~loc
-                  (Attrs.td_description ~ocaml_doc:config.Attrs.ocaml_doc td)
-             |> Schema.Annotation.add_title ~loc (Attrs.td_title td)
-             |> Schema.Annotation.add_annotations
-                  ~loc
-                  (Attribute.get Attrs.jsonschema_td_attrs td)
-           in
-           let raw =
-             Option.fold
-               ~none:raw
-               ~some:(fun core_type ->
-                 Schema.Annotation.add_format
-                   ~loc
-                   (Attrs.jsonschema_td_format, td)
-                   core_type
-                   raw
-                 |> Schema.Annotation.add_maximum
-                      ~loc
-                      (Attrs.jsonschema_td_maximum, td)
-                      core_type
-                 |> Schema.Annotation.add_minimum
-                      ~loc
-                      (Attrs.jsonschema_td_minimum, td)
-                      core_type)
-               td.ptype_manifest
-           in
-           let defs =
-             List.map
-               (fun (n, r, _, _) ->
-                  ( n
-                  , if String.equal n name then
-                      raw
-                    else
-                      r ))
-               raw_results
-           in
+           let defs = List.map (fun (name, raw, _, _) -> name, raw) raw_results in
            let schema =
              [%expr
                let ppx_eds = ref [] in
@@ -573,16 +485,6 @@ let str_type_decl ~ctxt ast flag_polymorphic_variant_tuple flag_ocaml_doc strict
            let td =
              List.find (fun td -> String.equal td.ptype_name.txt name) type_decls
            in
-           let raw =
-             raw
-             |> Schema.Annotation.add_description
-                  ~loc
-                  (Attrs.td_description ~ocaml_doc:config.Attrs.ocaml_doc td)
-             |> Schema.Annotation.add_title ~loc (Attrs.td_title td)
-             |> Schema.Annotation.add_annotations
-                  ~loc
-                  (Attribute.get Attrs.jsonschema_td_attrs td)
-           in
            let schema =
              [%expr
                let ppx_eds = ref [] in
@@ -593,9 +495,17 @@ let str_type_decl ~ctxt ast flag_polymorphic_variant_tuple flag_ocaml_doc strict
   | _, _ -> [%str [%ocaml.error "typed-endpoint-ppx: unsupported type"]]
 ;;
 
-let sig_type_decl ~ctxt ast _flag_polymorphic_variant_tuple _flag_ocaml_doc _strict =
-  Attrs.reject_removed_annotations (snd ast);
+let sig_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
+  let _config =
+    Attrs.configure
+      ~loc
+      (snd ast)
+      removed_tuple_flag
+      flag_ocaml_doc
+      strict
+      (Code_path.fully_qualified_path (Expansion_context.Deriver.code_path ctxt))
+  in
   match ast with
   | _, [ td ] ->
     let typ =

@@ -30,7 +30,59 @@ module Ppx_bounded_integer = struct
 end
 
 module Ppx_formatted_string = struct
-  type t = string [@@jsonschema.format "date-time"] [@@deriving jsonschema]
+  type t = string [@@jsonschema.format `Date_time] [@@deriving jsonschema]
+end
+
+module Ppx_formats = struct
+  type t =
+    { uuid : string [@jsonschema.format `Uuid]
+    ; date : string option [@jsonschema.attrs { format = `Date_time }]
+    ; binary : bytes [@jsonschema.format `Binary]
+    ; integer : Int32.t [@jsonschema.format `Int32]
+    ; wide : int64 option [@jsonschema.format `Int64]
+    ; number : float [@jsonschema.attrs { format = `Double }]
+    ; vendor_string : string [@jsonschema.format `Custom "my-format"]
+    ; vendor_integer : int [@jsonschema.attrs { format = `Custom "vendor-integer" }]
+    ; vendor_number : float option [@jsonschema.format `Custom "vendor-number"]
+    ; encoded : (int64[@encoding `string]) [@jsonschema.format `Custom "decimal"]
+    ; nested : (string[@jsonschema.format `Email]) option
+    }
+  [@@deriving yojson, jsonschema]
+end
+
+module Ppx_annotated_group = struct
+  type count = int
+  [@@jsonschema.format `Int32] [@@jsonschema.attrs { minimum = 0; maximum = 100 }]
+
+  and measure = float
+  [@@jsonschema.attrs { format = `Float; title = "Measure" }] [@@deriving jsonschema]
+end
+
+module Ppx_annotated_recursive_group = struct
+  type count = int [@@jsonschema.attrs { format = `Int64; minimum = 0 }]
+
+  and node =
+    { count : count
+    ; next : node option
+    }
+  [@@jsonschema.title "Node"] [@@deriving jsonschema]
+end
+
+module Ppx_outer_annotations = struct
+  type t = { value : (string[@jsonschema.title "Inner"]) [@jsonschema.title "Outer"] }
+  [@@deriving jsonschema]
+end
+
+module Ppx_doc_annotations = struct
+  (** Record documentation. *)
+  type t =
+    { fallback : string (** Field documentation. *)
+    ; explicit : string [@jsonschema.description "Explicit description"]
+      (** Ignored field documentation. *)
+    ; attrs : string [@jsonschema.attrs { description = "Attrs description" }]
+      (** Ignored attrs documentation. *)
+    }
+  [@@deriving jsonschema { ocaml_doc }]
 end
 
 module Ppx_wire_annotations = struct
@@ -44,11 +96,11 @@ end
 
 module Ppx_yojson_permissive = struct
   type t = { value : int }
-  [@@deriving yojson { strict = false }, jsonschema { strict = true }]
+  [@@deriving yojson { strict = false }, jsonschema { strict = false }]
 end
 
 module Ppx_yojson_default_strict = struct
-  type t = { value : int } [@@deriving yojson, jsonschema { strict = false }]
+  type t = { value : int } [@@deriving yojson, jsonschema]
 end
 
 module Ppx_default_record = struct
@@ -80,13 +132,6 @@ module Ppx_named_variant = struct
     | Empty [@name "none"]
     | Value of int [@name "value"]
   [@@deriving yojson, jsonschema]
-end
-
-module Ppx_compact_variant = struct
-  type t =
-    | Empty
-    | Value of int
-  [@@deriving jsonschema] [@@jsonschema.compact_variants]
 end
 
 module Ppx_custom_default = struct
@@ -166,6 +211,107 @@ let%expect_test "composed smart constructors agree with PPX schemas" =
     (Json_schema.string_exn ~format:`Date_time ())
     Ppx_formatted_string.t_jsonschema;
   [%expect {| { "type": "string", "format": "date-time" } |}]
+;;
+
+let%expect_test "formats follow the field wire type" =
+  let property name =
+    Json_schema.to_yojson Ppx_formats.t_jsonschema
+    |> Yojson.Safe.Util.member "properties"
+    |> Yojson.Safe.Util.member name
+    |> Yojson.Safe.to_string
+    |> Stdlib.print_endline
+  in
+  property "uuid";
+  [%expect {| {"format":"uuid","type":"string"} |}];
+  property "date";
+  [%expect {| {"format":"date-time","type":["string","null"]} |}];
+  property "binary";
+  [%expect {| {"format":"binary","type":"string"} |}];
+  property "integer";
+  [%expect {| {"format":"int32","type":"integer"} |}];
+  property "wide";
+  [%expect {| {"format":"int64","type":["integer","null"]} |}];
+  property "number";
+  [%expect {| {"format":"double","type":"number"} |}];
+  property "vendor_string";
+  [%expect {| {"format":"my-format","type":"string"} |}];
+  property "vendor_integer";
+  [%expect {| {"format":"vendor-integer","type":"integer"} |}];
+  property "vendor_number";
+  [%expect {| {"format":"vendor-number","type":["number","null"]} |}];
+  property "encoded";
+  [%expect {| {"format":"decimal","type":"string"} |}];
+  property "nested";
+  [%expect {| {"format":"email","type":["string","null"]} |}]
+;;
+
+let%expect_test "annotations apply to every nonrecursive group member" =
+  print_schema Ppx_annotated_group.count_jsonschema;
+  [%expect {| { "format": "int32", "maximum": 100, "minimum": 0, "type": "integer" } |}];
+  print_schema Ppx_annotated_group.measure_jsonschema;
+  [%expect {| { "title": "Measure", "format": "float", "type": "number" } |}]
+;;
+
+let%expect_test "recursive definitions preserve each member's annotations" =
+  let definitions =
+    Json_schema.to_yojson Ppx_annotated_recursive_group.node_jsonschema
+    |> Yojson.Safe.Util.member "$defs"
+  in
+  definitions
+  |> Yojson.Safe.Util.member "count"
+  |> Yojson.Safe.to_string
+  |> Stdlib.print_endline;
+  [%expect {| {"minimum":0,"format":"int64","type":"integer"} |}];
+  definitions
+  |> Yojson.Safe.Util.member "node"
+  |> Yojson.Safe.Util.member "title"
+  |> Yojson.Safe.to_string
+  |> Stdlib.print_endline;
+  [%expect {| "Node" |}]
+;;
+
+let%expect_test "outer node annotations override inner node annotations" =
+  Json_schema.to_yojson Ppx_outer_annotations.t_jsonschema
+  |> Yojson.Safe.Util.member "properties"
+  |> Yojson.Safe.Util.member "value"
+  |> Yojson.Safe.to_string
+  |> Stdlib.print_endline;
+  [%expect {| {"title":"Outer","type":"string"} |}]
+;;
+
+let%expect_test "explicit descriptions override odoc fallback" =
+  let schema = Json_schema.to_yojson Ppx_doc_annotations.t_jsonschema in
+  let print value = Stdlib.print_endline (Yojson.Safe.to_string value) in
+  print (Yojson.Safe.Util.member "description" schema);
+  [%expect {| "Record documentation." |}];
+  let description name =
+    schema
+    |> Yojson.Safe.Util.member "properties"
+    |> Yojson.Safe.Util.member name
+    |> Yojson.Safe.Util.member "description"
+    |> print
+  in
+  description "fallback";
+  [%expect {| "Field documentation." |}];
+  description "explicit";
+  [%expect {| "Explicit description" |}];
+  description "attrs";
+  [%expect {| "Attrs description" |}]
+;;
+
+let%test_unit "Deriver format builders reject blank custom names" =
+  let rejects f =
+    match f () with
+    | _ -> assert false
+    | exception Invalid_argument error ->
+      assert (String.equal error "format must not be empty")
+  in
+  rejects (fun () ->
+    Json_schema.Deriver.with_string_format_exn (`Custom " ") Json_schema.any);
+  rejects (fun () ->
+    Json_schema.Deriver.with_integer_format_exn (`Custom "") Json_schema.any);
+  rejects (fun () ->
+    Json_schema.Deriver.with_number_format_exn (`Custom "\t") Json_schema.any)
 ;;
 
 let%expect_test "smart schemas have stable JSON output" =
@@ -310,7 +456,7 @@ let%expect_test "disallow_extra_fields opts a record into strict mode" =
     |}]
 ;;
 
-let%expect_test "allow_extra_fields remains accepted and is a no-op" =
+let%expect_test "allow_extra_fields overrides standalone strict mode" =
   Ppx_allow_extra_fields.t_jsonschema |> print_schema;
   [%expect
     {|
@@ -318,7 +464,7 @@ let%expect_test "allow_extra_fields remains accepted and is a no-op" =
       "type": "object",
       "properties": { "value": { "type": "integer" } },
       "required": [ "value" ],
-      "additionalProperties": false
+      "additionalProperties": true
     }
     |}]
 ;;
@@ -393,25 +539,6 @@ let%expect_test "variant names follow Yojson name attributes" =
         {
           "type": "array",
           "prefixItems": [ { "const": "value" }, { "type": "integer" } ],
-          "unevaluatedItems": false,
-          "minItems": 2,
-          "maxItems": 2
-        }
-      ]
-    }
-    |}]
-;;
-
-let%expect_test "compact variants keep payload schemas" =
-  Ppx_compact_variant.t_jsonschema |> print_schema;
-  [%expect
-    {|
-    {
-      "anyOf": [
-        { "const": "Empty" },
-        {
-          "type": "array",
-          "prefixItems": [ { "const": "Value" }, { "type": "integer" } ],
           "unevaluatedItems": false,
           "minItems": 2,
           "maxItems": 2
@@ -526,13 +653,6 @@ let%test "recursive schemas give local references their own resource root" =
        String.is_prefix id ~prefix:"urn:typed-endpoint:schema:"
      | _ -> false)
   | _ -> false
-;;
-
-let%test_unit "legacy ppx schema bridge preserves JSON structure" =
-  let imported : string Json_schema.t =
-    Json_schema.Unsafe.of_ppx (`Assoc [ "type", `String "string" ])
-  in
-  assert (Json_schema.equal imported (Json_schema.string_exn ()))
 ;;
 
 let ordered_schema : unit Json_schema.t =

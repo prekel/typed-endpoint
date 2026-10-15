@@ -43,12 +43,12 @@
 (executable
  (name schema_ppx)
  (modules schema_ppx)
- (libraries base typed-endpoint-ppx ppxlib.runner))
+ (libraries base typed-endpoint-ppx ppx_deriving_yojson ppxlib.runner))
 
 (test
  (name ppx_contract_test)
  (modules ppx_contract_test)
  (package typed-endpoint-testing)
- (libraries base unix)
+ (libraries base unix typed-endpoint)
  (action
-  (run %{test} %{exe:schema_ppx.exe})))
+  (run %{test} %{exe:schema_ppx.exe} %{workspace_root})))

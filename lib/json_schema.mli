@@ -8,19 +8,6 @@ type 'a t
 (** A schema whose OCaml type index is intentionally hidden. *)
 type packed
 
-(** The JSON value shape produced by [ppx_deriving_jsonschema] 0.0.8 on
-    native OCaml. Keeping this structural type here lets the core accept
-    generated schemas without depending on the PPX runtime. *)
-type ppx_schema =
-  [ `Null
-  | `String of string
-  | `Float of float
-  | `Int of int
-  | `Bool of bool
-  | `List of ppx_schema list
-  | `Assoc of (string * ppx_schema) list
-  ]
-
 (** Standard JSON Schema and OpenAPI string formats. [`Custom name] preserves
     extensibility while making all built-in choices typo-safe. *)
 type string_format =
@@ -84,12 +71,6 @@ val to_yojson : 'a t -> Yojson.Safe.t
 
 (** Returns the JSON representation of an existentially packed schema. *)
 val to_yojson_packed : packed -> Yojson.Safe.t
-
-(** Exports a schema for a custom type consumed by the legacy
-    [ppx_deriving_jsonschema] PPX. Raises [Invalid_argument] if the value
-    contains non-JSON Yojson extensions or an integer literal that does not
-    fit into an OCaml [int]. *)
-val to_ppx : 'a t -> ppx_schema
 
 (** Builds a string schema. A [`Custom format] must be non-empty, lengths must
     be non-negative and ordered, [enum] must be non-empty without duplicates,
@@ -273,8 +254,18 @@ module Deriver : sig
   (** Adds a human-readable description annotation. *)
   val with_description : string -> 'a t -> 'a t
 
-  (** Adds a JSON Schema format annotation. *)
-  val with_format : string -> 'a t -> 'a t
+  (** Adds a string format annotation without changing the type index, including
+      for bytes and nullable strings. A blank [`Custom] name raises
+      [Invalid_argument]. Generated code checks the wire type before calling. *)
+  val with_string_format_exn : string_format -> 'a t -> 'a t
+
+  (** Adds an integer format annotation. A blank [`Custom] name raises
+      [Invalid_argument]. Generated code checks the wire type before calling. *)
+  val with_integer_format_exn : integer_format -> 'a t -> 'a t
+
+  (** Adds a number format annotation. A blank [`Custom] name raises
+      [Invalid_argument]. Generated code checks the wire type before calling. *)
+  val with_number_format_exn : number_format -> 'a t -> 'a t
 
   (** Adds an inclusive integer lower bound. *)
   val with_minimum_int : int -> 'a t -> 'a t
@@ -303,7 +294,4 @@ module Unsafe : sig
       expressed by the safe constructors. Integer literals are preserved;
       non-JSON Yojson extensions are rejected. *)
   val of_yojson : Yojson.Safe.t -> 'a t
-
-  (** Imports a schema emitted by the legacy [ppx_deriving_jsonschema] format. *)
-  val of_ppx : ppx_schema -> 'a t
 end

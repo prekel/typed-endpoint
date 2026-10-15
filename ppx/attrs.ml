@@ -6,9 +6,9 @@ module String = Stdlib.String
 
 type config =
   { schema_namespace : string
-  ; polymorphic_variant_tuple : bool
   ; ocaml_doc : bool
   ; strict : bool
+  ; decoder_strict : bool option
   }
 
 let find_raw_attr names attrs =
@@ -70,28 +70,118 @@ let string_encoded (core_type : core_type) =
   | _ -> false
 ;;
 
-let reject_removed_annotations type_declarations =
+let check_format_expression expr =
+  match expr.pexp_desc with
+  | Pexp_variant
+      ("Custom", Some { pexp_desc = Pexp_constant (Pconst_string (name, _, _)); _ }) ->
+    if Base.String.is_empty (Base.String.strip name) then
+      Location.raise_errorf
+        ~loc:expr.pexp_loc
+        "typed-endpoint-ppx: Custom format must not be empty"
+  | Pexp_variant ("Custom", _) ->
+    Location.raise_errorf
+      ~loc:expr.pexp_loc
+      "typed-endpoint-ppx: use (`Custom \"my-format\") with a string literal"
+  | Pexp_variant (_, None) -> ()
+  | _ ->
+    Location.raise_errorf
+      ~loc:expr.pexp_loc
+      "typed-endpoint-ppx: format expects a variant literal, e.g. `Date_time or (`Custom \"my-format\"); string formats are no longer supported"
+;;
+
+let validate_annotations type_declarations =
+  let add seen name loc =
+    if List.mem name seen then
+      Location.raise_errorf
+        ~loc
+        "typed-endpoint-ppx: duplicate JSON Schema annotation '%s' on the same node"
+        name;
+    name :: seen
+  in
+  let check attrs =
+    let check_attr seen attr =
+      let removed replacement =
+        Location.raise_errorf
+          ~loc:attr.attr_loc
+          "typed-endpoint-ppx: [@%s] has been removed; %s"
+          attr.attr_name.txt
+          replacement
+      in
+      (* Attribute.declare also accepts the unqualified suffix of its name. *)
+      let name =
+        match attr.attr_name.txt with
+        | ( "title"
+          | "description"
+          | "format"
+          | "minimum"
+          | "maximum"
+          | "attrs"
+          | "allow_extra_fields"
+          | "disallow_extra_fields"
+          | "ref"
+          | "compact_variants" ) as name -> "jsonschema." ^ name
+        | name -> name
+      in
+      match name with
+      | "jsonschema.key" -> removed "use [@key ...] shared with Yojson"
+      | "jsonschema.name" -> removed "use [@name ...] shared with Yojson"
+      | "jsonschema.default" -> removed "use [@default ...] shared with Yojson"
+      | "jsonschema.option" -> removed "use [@default None] shared with Yojson"
+      | "jsonschema.ref" ->
+        removed
+          "define the field type's <type>_jsonschema instead of an unchecked reference"
+      | "jsonschema.compact_variants" ->
+        removed
+          "variants always use Yojson arrays, including [\"Tag\"] for empty constructors"
+      | "jsonschema.attrs" ->
+        let seen = add seen "attrs" attr.attr_loc in
+        (match attr.attr_payload with
+         | PStr
+             [ { pstr_desc = Pstr_eval ({ pexp_desc = Pexp_record (fields, None); _ }, _)
+               ; _
+               }
+             ] ->
+           List.fold_left
+             (fun seen ({ txt; loc }, value) ->
+                match txt with
+                | Lident name ->
+                  let seen = add seen name loc in
+                  if String.equal name "format" then
+                    check_format_expression value;
+                  seen
+                | _ -> seen)
+             seen
+             fields
+         | _ -> seen)
+      | ( "jsonschema.title"
+        | "jsonschema.description"
+        | "jsonschema.format"
+        | "jsonschema.minimum"
+        | "jsonschema.maximum"
+        | "jsonschema.allow_extra_fields"
+        | "jsonschema.disallow_extra_fields" ) as name ->
+        let seen =
+          add seen (String.sub name 11 (String.length name - 11)) attr.attr_loc
+        in
+        if String.equal name "jsonschema.format" then (
+          match
+            attr.attr_payload
+          with
+          | PStr [ { pstr_desc = Pstr_eval (expr, _); _ } ] ->
+            check_format_expression expr
+          | _ -> ());
+        seen
+      | _ -> seen
+    in
+    ignore (List.fold_left check_attr [] attrs)
+  in
   let visitor =
     object
       inherit Ast_traverse.iter as super
 
-      method! attribute attr =
-        let replacement =
-          match attr.attr_name.txt with
-          | "jsonschema.key" -> Some "[@key ...]"
-          | "jsonschema.name" -> Some "[@name ...]"
-          | "jsonschema.default" -> Some "[@default ...]"
-          | "jsonschema.option" -> Some "[@default None]"
-          | _ -> None
-        in
-        match replacement with
-        | Some replacement ->
-          Location.raise_errorf
-            ~loc:attr.attr_loc
-            "typed-endpoint-ppx: [@%s] has been removed; use %s shared with Yojson"
-            attr.attr_name.txt
-            replacement
-        | None -> super#attribute attr
+      method! attributes attrs =
+        check attrs;
+        super#attributes attrs
     end
   in
   List.iter visitor#type_declaration type_declarations
@@ -167,8 +257,6 @@ let expr_attr name ctx =
   Attribute.declare name ctx Ast_pattern.(single_expr_payload __) (fun x -> x)
 ;;
 
-let jsonschema_ref = string_attr "jsonschema.ref" Attribute.Context.label_declaration
-
 let jsonschema_td_allow_extra_fields =
   Attribute.declare
     "jsonschema.allow_extra_fields"
@@ -237,14 +325,14 @@ let jsonschema_ct_title = string_attr "jsonschema.title" Attribute.Context.core_
 let jsonschema_rtag_title = string_attr "jsonschema.title" Attribute.Context.rtag
 
 let jsonschema_td_format =
-  string_attr "jsonschema.format" Attribute.Context.type_declaration
+  expr_attr "jsonschema.format" Attribute.Context.type_declaration
 ;;
 
 let jsonschema_ld_format =
-  string_attr "jsonschema.format" Attribute.Context.label_declaration
+  expr_attr "jsonschema.format" Attribute.Context.label_declaration
 ;;
 
-let jsonschema_ct_format = string_attr "jsonschema.format" Attribute.Context.core_type
+let jsonschema_ct_format = expr_attr "jsonschema.format" Attribute.Context.core_type
 
 let jsonschema_td_maximum =
   expr_attr "jsonschema.maximum" Attribute.Context.type_declaration
@@ -327,11 +415,6 @@ let td_title (td : type_declaration) = Attribute.get jsonschema_td_title td
 let cd_title (cd : constructor_declaration) = Attribute.get jsonschema_cd_title cd
 let ct_title (ct : core_type) = Attribute.get jsonschema_ct_title ct
 let rtag_title (rf : row_field) = Attribute.get jsonschema_rtag_title rf
-
-let jsonschema_td_compact_variants =
-  Attribute.declare_flag "jsonschema.compact_variants" Attribute.Context.type_declaration
-;;
-
 let ld_key (ld : label_declaration) = yojson_key ld.pld_attributes
 let cd_name (cd : constructor_declaration) = yojson_name cd.pcd_attributes
 let rtag_name (rtag : row_field) = yojson_name rtag.prf_attributes
@@ -355,8 +438,7 @@ let field_type (ld : label_declaration) =
 ;;
 
 let attributes =
-  [ Attribute.T jsonschema_ref
-  ; Attribute.T jsonschema_td_allow_extra_fields
+  [ Attribute.T jsonschema_td_allow_extra_fields
   ; Attribute.T jsonschema_cd_allow_extra_fields
   ; Attribute.T jsonschema_td_disallow_extra_fields
   ; Attribute.T jsonschema_cd_disallow_extra_fields
@@ -382,11 +464,77 @@ let attributes =
   ; Attribute.T jsonschema_ct_attrs
   ; Attribute.T jsonschema_td_attrs
   ; Attribute.T jsonschema_ld_attrs
-  ; Attribute.T jsonschema_td_compact_variants
   ]
 ;;
 
+let resolve_additional_properties ~loc ~strict ~decoder_strict ~allow ~disallow =
+  let explicit =
+    match allow, disallow with
+    | true, true ->
+      Location.raise_errorf
+        ~loc
+        "typed-endpoint-ppx: [@jsonschema.allow_extra_fields] and [@jsonschema.disallow_extra_fields] are mutually exclusive"
+    | true, false -> Some true
+    | false, true -> Some false
+    | false, false -> None
+  in
+  (match explicit, decoder_strict with
+   | Some allow, Some strict when Bool.equal allow strict ->
+     Location.raise_errorf
+       ~loc
+       "typed-endpoint-ppx: additionalProperties conflicts with Yojson strict = %b; configure the decoder instead"
+       strict
+   | _ -> ());
+  Option.value explicit ~default:(not strict)
+;;
+
+let configure ~loc type_declarations removed_tuple_flag ocaml_doc strict schema_namespace =
+  validate_annotations type_declarations;
+  if removed_tuple_flag then
+    Location.raise_errorf
+      ~loc
+      "typed-endpoint-ppx: polymorphic_variant_tuple has been removed; tuple arguments always follow Yojson's flattened encoding";
+  let decoder_strict = yojson_strict type_declarations in
+  (match strict, decoder_strict with
+   | Some schema_strict, Some decoder_strict
+     when not (Bool.equal schema_strict decoder_strict) ->
+     Location.raise_errorf
+       ~loc
+       "typed-endpoint-ppx: jsonschema strict = %b conflicts with Yojson strict = %b; configure the decoder instead"
+       schema_strict
+       decoder_strict
+   | _ -> ());
+  let strict =
+    Option.value decoder_strict ~default:(Option.value strict ~default:false)
+  in
+  let check ~loc allow disallow =
+    ignore (resolve_additional_properties ~loc ~strict ~decoder_strict ~allow ~disallow)
+  in
+  let visitor =
+    object
+      inherit Ast_traverse.iter as super
+
+      method! type_declaration td =
+        check
+          ~loc:td.ptype_loc
+          (Option.is_some (Attribute.get jsonschema_td_allow_extra_fields td))
+          (Option.is_some (Attribute.get jsonschema_td_disallow_extra_fields td));
+        super#type_declaration td
+
+      method! constructor_declaration cd =
+        check
+          ~loc:cd.pcd_loc
+          (Option.is_some (Attribute.get jsonschema_cd_allow_extra_fields cd))
+          (Option.is_some (Attribute.get jsonschema_cd_disallow_extra_fields cd));
+        super#constructor_declaration cd
+    end
+  in
+  List.iter visitor#type_declaration type_declarations;
+  { schema_namespace; ocaml_doc; strict; decoder_strict }
+;;
+
 let args () =
+  (* Recognize the removed flag only to report its migration diagnostic. *)
   Deriving.Args.(
     empty
     +> flag "polymorphic_variant_tuple"

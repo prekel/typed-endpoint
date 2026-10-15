@@ -19,8 +19,10 @@ Deriver `typed-endpoint-ppx` перенесён и адаптирован на �
 политика `additionalProperties` берётся из его `strict`, включая значение по
 умолчанию Yojson (`true`). Поэтому `yojson { strict = false }` разрешает
 дополнительные поля и в схеме. Настройка `jsonschema { strict = ... }`
-используется, когда Yojson-декодер не выводится; атрибут
-`[@jsonschema.disallow_extra_fields]` запрещает дополнительные поля явно.
+используется самостоятельно, когда Yojson-декодер не выводится. При наличии
+декодера явные настройки схемы должны совпадать с ним: противоречащие `strict`
+и `allow/disallow_extra_fields` отклоняются. Без декодера локальные
+`allow/disallow_extra_fields` переопределяют `jsonschema.strict`.
 
 Аннотации `key`, `name`, `default` и `encoding` общие для Yojson и схемы;
 поддерживаются также имена `yojson.*` и `deriving.yojson.*`. `default` на поле
@@ -32,6 +34,28 @@ Deriver `typed-endpoint-ppx` перенесён и адаптирован на �
 `jsonschema.option` удалены. Используйте соответственно `[@key ...]`,
 `[@name ...]`, `[@default ...]` и `[@default None]`. Числовые ограничения
 `jsonschema.minimum`/`maximum` несовместимы со строковым кодированием числа.
+
+Форматы задаются типизированными вариантами:
+
+```ocaml
+type t =
+  { created_at : string [@jsonschema.format `Date_time]
+  ; identifier : string [@jsonschema.format (`Custom "my-format")]
+  ; count : int [@jsonschema.attrs { format = `Int32; minimum = 0 }]
+  ; amount : float option [@jsonschema.format `Double]
+  }
+[@@deriving yojson, jsonschema]
+```
+
+Категория формата проверяется по JSON-типу; `Custom` принимает непустой
+строковый литерал. Старый синтаксис `jsonschema.format "date-time"` удалён.
+Повторное указание keyword на одном узле, в том числе через `jsonschema.attrs`,
+считается ошибкой. Аннотации внешнего узла могут переопределять вложенные.
+Варианты всегда используют массивы Yojson: `["Empty"]`, `["Value", 1]`.
+Настройки `compact_variants`, `polymorphic_variant_tuple` и строковый
+`jsonschema.ref` удалены; для custom scalar определяйте `<type>_jsonschema`.
+Мосты `ppx_schema`, `to_ppx` и `Unsafe.of_ppx` удалены; внешние JSON-схемы
+импортируются через `Json_schema.Unsafe.of_yojson`.
 
 ## Основные гарантии
 
@@ -135,7 +159,7 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 
 Все шесть пакетов находятся в одном репозитории. Их зависимости друг от друга
 требуют одинаковую версию, поэтому закрепляйте их на одном теге. Например,
-для установки всех пакетов из `v0.3.0` в switch OCaml 5.1.1 или новее:
+для установки всех пакетов из `v0.3.1` в switch OCaml 5.1.1 или новее:
 
 ```bash
 typed_endpoint_packages=(
@@ -147,7 +171,7 @@ typed_endpoint_packages=(
   typed-endpoint-eio
 )
 for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.0'
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.1'
 done
 opam install "${typed_endpoint_packages[@]}"
 ```
@@ -157,7 +181,7 @@ opam install "${typed_endpoint_packages[@]}"
 `typed-endpoint-ppx` и `typed-endpoint-opium`; они поддерживают OCaml 4.14.1.
 При установке адаптеров с `--with-test` добавьте `typed-endpoint-testing`.
 
-Чтобы обновить существующие pins до `v0.3.0`, сначала закрепите все выбранные
+Чтобы обновить существующие pins до `v0.3.1`, сначала закрепите все выбранные
 пакеты на этом теге, затем выполните общий upgrade. При переходе на следующий
 опубликованный тег замените `next_tag`:
 
@@ -170,7 +194,7 @@ typed_endpoint_packages=(
   typed-endpoint-dream
   typed-endpoint-eio
 )
-next_tag=v0.3.0
+next_tag=v0.3.1
 for package in "${typed_endpoint_packages[@]}"; do
   opam pin add -yn "$package" "git+https://github.com/prekel/typed-endpoint.git#$next_tag"
 done
@@ -179,7 +203,7 @@ opam upgrade "${typed_endpoint_packages[@]}"
 
 `-n` откладывает установку до общего `opam install` или `opam upgrade`, а `-y`
 подтверждает замену существующего pin. Тег указывается после `#` в Git URL.
-Изменения API версии `v0.3.0` описаны в [истории изменений](CHANGES.md).
+Изменения API версии `v0.3.1` описаны в [истории изменений](CHANGES.md).
 
 ## Первый сервер
 

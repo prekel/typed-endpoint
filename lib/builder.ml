@@ -627,8 +627,8 @@ module Default_decode_error_payload = struct
   [@@deriving to_yojson]
 
   let schema =
-    (* The safe schema DSL has no fixed-property object constructor. This is
-       the shape generated for this record by ppx_deriving_jsonschema 0.0.8. *)
+    (* The safe schema DSL has no fixed-property object constructor. Keep this
+       schema aligned with the decoder-error record above. *)
     Json_schema.Unsafe.of_yojson
       (`Assoc
           [ "type", `String "object"

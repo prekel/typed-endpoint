@@ -32,17 +32,42 @@ let metadata : t Typed_endpoint.Metadata.t =
 Поддерживаются также префиксы `yojson.*` и `deriving.yojson.*`.
 При совместном выводе с Yojson схема повторяет его `strict`: по умолчанию
 дополнительные поля запрещены, а `yojson { strict = false }` разрешает их.
-Без Yojson-декодера схема записи по умолчанию допускает дополнительные поля.
+Явные `jsonschema.strict` и `allow/disallow_extra_fields` при наличии декодера
+должны совпадать с его настройками, иначе PPX выдаёт ошибку.
+Без Yojson-декодера схема записи по умолчанию допускает дополнительные поля;
+локальные `allow/disallow_extra_fields` переопределяют `jsonschema.strict`.
 Чтобы запретить их явно, укажите `[@@jsonschema.disallow_extra_fields]`;
 для inline-записи внутри варианта задайте `[@jsonschema.disallow_extra_fields]` на конструкторе.
-Схемы от нетронутого
-[ppx_deriving_jsonschema](https://github.com/ahrefs/ppx_deriving_jsonschema)
-можно импортировать через `Json_schema.Unsafe.of_ppx`.
+Внешние JSON-схемы импортируются через `Json_schema.Unsafe.of_yojson`.
 Для аннотаций используйте `[@jsonschema.title "Pet"]` и
 `[@jsonschema.description "A store pet"]`. Те же `title` и `description` можно
 задать одним атрибутом `[@jsonschema.attrs { title = "Pet"; description = "A store pet" }]`.
 Атрибут `[@jsonschema.attrs]` также принимает типизированные по DTO `format`,
-`minimum` и `maximum`, где это применимо.
+`minimum` и `maximum`, где это применимо. `format` принимает вариант:
+
+```ocaml
+type t =
+  { date : string option [@jsonschema.format `Date_time]
+  ; identifier : string [@jsonschema.format (`Custom "my-format")]
+  ; count : int [@jsonschema.attrs { format = `Int32; minimum = 0 }]
+  ; amount : float [@jsonschema.format `Double]
+  }
+[@@deriving yojson, jsonschema]
+```
+
+Форматы строки, целого и дробного числа берутся из соответствующих типов
+`Json_schema.string_format`, `integer_format` и `number_format`. Для `option`
+используется категория вложенного типа; целое с ``[@encoding `string]`` имеет
+строковую категорию. `Custom` требует непустой строковый литерал. Старые
+строки вроде `[@jsonschema.format "date-time"]` больше не поддерживаются.
+Аннотацию `format` на пользовательском alias замените его типизированной схемой.
+
+На одном узле нельзя повторять keyword, в том числе между отдельным атрибутом
+и `jsonschema.attrs`; внешняя аннотация может переопределять вложенную.
+Конструкторы вариантов всегда описываются массивами Yojson, включая `["Empty"]`.
+Непосредственный tuple в polymorphic variant разворачивается: `["Pair", 1, "x"]`;
+tuple через alias остаётся вложенным массивом. `compact_variants`,
+`polymorphic_variant_tuple` и строковый `jsonschema.ref` удалены.
 
 Схему значения без DTO можно собрать безопасными конструкторами:
 
@@ -58,8 +83,8 @@ let page =
 
 Функции без суффикса `_exn` возвращают `Result` и подходят для динамической
 конфигурации; варианты `_exn` удобны для статической декларации модуля. Для
-custom scalar экспортируйте типизированную схему как `t_jsonschema`; обратный
-мост `Json_schema.to_ppx` оставлен для проектов, использующих внешний PPX.
+custom scalar экспортируйте типизированную схему как `t_jsonschema`. Мосты
+`ppx_schema`, `to_ppx` и `Unsafe.of_ppx` удалены.
 Известные форматы типизированы: используйте ``~format:`Date_time``,
 ``~format:`Int64`` или ``~format:`Double``. Нестандартное расширение записывается
 явно как ``~format:(`Custom "vendor-format")``.

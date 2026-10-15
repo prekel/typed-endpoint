@@ -1,5 +1,27 @@
 # История изменений
 
+## 0.3.1 — 2026-10-15
+
+- `jsonschema.format` и поле `format` в `jsonschema.attrs` принимают
+  типизированные варианты: `` `Date_time``, `` `Int32``, `` `Double`` или
+  `` `Custom "my-format"``. Строковый синтаксис удалён; форматы проверяются
+  по wire type, включая `option` и строковое кодирование целых.
+- Удалены `ppx_schema`, `Json_schema.to_ppx` и `Json_schema.Unsafe.of_ppx`.
+  Для внешних JSON-схем используйте `Json_schema.Unsafe.of_yojson`.
+  В `Deriver` вместо `with_format` добавлены `with_string_format_exn`,
+  `with_integer_format_exn` и `with_number_format_exn`.
+- Удалены `jsonschema.compact_variants`, `polymorphic_variant_tuple` и
+  строковый `jsonschema.ref`. Форма вариантов всегда соответствует Yojson;
+  custom scalar предоставляет типизированную `<type>_jsonschema`.
+- PPX отклоняет повторные keywords на одном узле и явные настройки
+  `strict`/`additionalProperties`, противоречащие Yojson-декодеру.
+  Без декодера `allow_extra_fields` теперь переопределяет `strict = true`.
+- Аннотации деклараций одинаково обрабатываются в одиночных и взаимно
+  рекурсивных группах, включая `format` внутри `jsonschema.attrs`.
+
+Это несовместимые изменения публичного API. Совместимость с исходным
+`ppx_deriving_jsonschema` больше не поддерживается.
+
 ## 0.3.0 — 2026-10-15
 
 - PPX использует общие Yojson-аннотации `key`, `name`, `default` и `encoding`,

@@ -88,17 +88,19 @@ DTO. Источник схемы выбирается в следующем по
   `typed-endpoint-ppx`; общие `@default`, `@key` и `@name` не дублируются
   schema-specific аннотациями;
 - ограничения поля задаются
-  `[@jsonschema.format]`, `[@jsonschema.minimum]` и аналогичными аннотациями;
+  типизированным ``[@jsonschema.format `Date_time]``, `[@jsonschema.minimum]`
+  и аналогичными аннотациями;
 - `[@jsonschema.title]` и `[@jsonschema.description]` документируют DTO, поля и
-  варианты; `[@jsonschema.attrs]` также принимает эти две аннотации;
+  варианты; `[@jsonschema.attrs]` принимает `title`, `description`, `format`,
+  `minimum` и `maximum`;
 - строгие record schemas задаются атрибутами
   `[@@jsonschema.disallow_extra_fields]` или `[@jsonschema.disallow_extra_fields]`
   на constructor с inline record;
 - standalone параметры, headers, enum, массивы и dictionaries собираются
   конструкторами `Json_schema`;
-- схемы нетронутого `ppx_deriving_jsonschema` импортируются через
-  `Json_schema.Unsafe.of_ppx`, а произвольные JSON Schema keywords — через
-  `Json_schema.Unsafe.of_yojson`.
+- внешние схемы и произвольные JSON Schema keywords импортируются через
+  `Json_schema.Unsafe.of_yojson`. Мосты `ppx_schema`, `to_ppx` и `Unsafe.of_ppx`
+  удалены.
 
 `Json_schema.Unsafe` — явно небезопасный мост для внешнего представления или
 keyword, которого ещё нет в DSL. Не используйте его для постобработки
@@ -106,8 +108,20 @@ keyword, которого ещё нет в DSL. Не используйте ег
 обновлении PPX. Конструкторы без `_exn` проверяют противоречивые bounds,
 отрицательные длины, пустые format/enum, дубликаты enum и default вне
 объявленного диапазона. Стандартный format в DSL задаётся типизированным
-вариантом, например ``Date_time`, ``Int64` или ``Double`; ``Custom name`
-остаётся явной точкой расширения.
+вариантом, например `` `Date_time``, `` `Int64`` или `` `Double``. PPX использует
+те же категории и синтаксис, включая ``[@jsonschema.format (`Custom "my-format")]``.
+`Custom` в PPX требует непустой строковый литерал; категория определяется по
+wire type, включая `option` и строковое кодирование целого. Аннотации не
+добавляют runtime-валидацию формата в Yojson-кодек.
+
+Повторение keyword на одном узле, в том числе в `jsonschema.attrs`, отклоняется;
+аннотации внешнего узла могут переопределять вложенную схему. При наличии
+Yojson-декодера явные `jsonschema.strict` и `allow/disallow_extra_fields` должны
+совпадать с его политикой. Без декодера локальные атрибуты переопределяют
+`jsonschema.strict`, по умолчанию дополнительные поля разрешены.
+`compact_variants`, `polymorphic_variant_tuple` и строковый `jsonschema.ref`
+удалены: форма вариантов всегда соответствует массивам Yojson, а custom scalar
+получает типизированную `<type>_jsonschema`.
 
 Для необязательного record field используйте общий `@default`, например
 `[@default None]`, на поле или внутри его типа, в том числе для option aliases.

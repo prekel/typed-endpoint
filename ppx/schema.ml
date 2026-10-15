@@ -90,8 +90,28 @@ let description ~loc description schema =
   call ~loc "with_description" [ Nolabel, estring ~loc description; Nolabel, schema ]
 ;;
 
-let format ~loc format schema =
-  call ~loc "with_format" [ Nolabel, estring ~loc format; Nolabel, schema ]
+let rec format_builder core_type =
+  match core_type with
+  | [%type: [%t? inner] option] -> format_builder inner
+  | [%type: string] | [%type: bytes] -> "with_string_format_exn"
+  | ([%type: int64] | [%type: Int64.t] | [%type: nativeint] | [%type: Nativeint.t])
+    when Attrs.string_encoded core_type -> "with_string_format_exn"
+  | [%type: int]
+  | [%type: int32]
+  | [%type: Int32.t]
+  | [%type: int64]
+  | [%type: Int64.t]
+  | [%type: nativeint]
+  | [%type: Nativeint.t] -> "with_integer_format_exn"
+  | [%type: float] -> "with_number_format_exn"
+  | _ ->
+    Location.raise_errorf
+      ~loc:core_type.ptyp_loc
+      "typed-endpoint-ppx: format requires a primitive string, bytes, integer or number type (possibly optional); for custom types define <type>_jsonschema"
+;;
+
+let format ~loc core_type value schema =
+  call ~loc (format_builder core_type) [ Nolabel, value; Nolabel, schema ]
 ;;
 
 let minimum_int ~loc value schema =
@@ -114,7 +134,7 @@ let default ~loc value schema =
   call ~loc "with_default" [ Nolabel, value; Nolabel, schema ]
 ;;
 
-let variants ~loc ?(compact_variants = false) constrs =
+let variants ~loc constrs =
   let opt_title_and_description ~loc title_opt description_opt schema =
     let schema =
       match title_opt with
@@ -130,12 +150,7 @@ let variants ~loc ?(compact_variants = false) constrs =
     (List.map
        (function
          | `Tag (name, typs, description_opt, title_opt) ->
-           let schema =
-             if compact_variants && List.length typs = 0 then
-               const ~loc name
-             else
-               tuple ~loc (const ~loc name :: typs)
-           in
+           let schema = tuple ~loc (const ~loc name :: typs) in
            opt_title_and_description ~loc title_opt description_opt schema
          | `Inherit typ -> typ)
        constrs)
@@ -160,14 +175,7 @@ module Annotation = struct
   ;;
 
   let add_format ~loc attr core_type =
-    add_schema_attr attr (fun fmt schema ->
-      match core_type with
-      | [%type: string] | [%type: bytes] | [%type: string option] | [%type: bytes option]
-        -> format ~loc fmt.txt schema
-      | _ ->
-        Location.raise_errorf
-          ~loc:core_type.ptyp_loc
-          "[@jsonschema.format] can only be applied to string or bytes types")
+    add_schema_attr attr (fun value schema -> format ~loc core_type value schema)
   ;;
 
   let reject_string_encoded_bound core_type =
@@ -342,23 +350,7 @@ module Annotation = struct
                    Location.raise_errorf
                      ~loc:value.pexp_loc
                      "[@jsonschema.attrs] 'description' must be a string literal")
-              | Lident "format" ->
-                let ct = require_core_type "format" in
-                (match value.pexp_desc with
-                 | Pexp_constant (Pconst_string (s, _, _)) ->
-                   (match ct with
-                    | [%type: string]
-                    | [%type: bytes]
-                    | [%type: string option]
-                    | [%type: bytes option] -> format ~loc s schema
-                    | _ ->
-                      Location.raise_errorf
-                        ~loc:ct.ptyp_loc
-                        "[@jsonschema.attrs] 'format' can only be applied to string types")
-                 | _ ->
-                   Location.raise_errorf
-                     ~loc:value.pexp_loc
-                     "[@jsonschema.attrs] 'format' must be a string literal")
+              | Lident "format" -> format ~loc (require_core_type "format") value schema
               | Lident "maximum" ->
                 let ct = require_core_type "maximum" in
                 reject_string_encoded_bound ct;
@@ -396,5 +388,35 @@ module Annotation = struct
          Location.raise_errorf
            ~loc:expr.pexp_loc
            "[@jsonschema.attrs] expects a record expression: { field = value; ... }")
+  ;;
+
+  let type_declaration ~loc ~ocaml_doc td schema =
+    let schema =
+      schema
+      |> add_description ~loc (Attrs.td_description ~ocaml_doc td)
+      |> add_title ~loc (Attrs.td_title td)
+      |> add_annotations
+           ~loc
+           ?core_type:td.ptype_manifest
+           (Attribute.get Attrs.jsonschema_td_attrs td)
+    in
+    match td.ptype_manifest with
+    | Some core_type ->
+      schema
+      |> add_format ~loc (Attrs.jsonschema_td_format, td) core_type
+      |> add_maximum ~loc (Attrs.jsonschema_td_maximum, td) core_type
+      |> add_minimum ~loc (Attrs.jsonschema_td_minimum, td) core_type
+    | None ->
+      let reject attr name =
+        if Option.is_some (Attribute.get attr td) then
+          Location.raise_errorf
+            ~loc:td.ptype_loc
+            "typed-endpoint-ppx: [@jsonschema.%s] requires a primitive type manifest"
+            name
+      in
+      reject Attrs.jsonschema_td_format "format";
+      reject Attrs.jsonschema_td_minimum "minimum";
+      reject Attrs.jsonschema_td_maximum "maximum";
+      schema
   ;;
 end

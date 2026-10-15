@@ -125,6 +125,107 @@ let%expect_test "renamed variants and inline record fields match their codecs" =
     `Empty
 ;;
 
+module Variant_arguments = struct
+  type pair = int * string [@@deriving yojson, jsonschema]
+
+  type t =
+    | Empty
+    | Arguments of int * string
+    | Tuple of (int * string)
+    | Alias of pair
+  [@@deriving yojson, jsonschema]
+
+  type poly =
+    [ `Empty
+    | `Arguments of int * string
+    | `Alias of pair
+    ]
+  [@@deriving yojson, jsonschema]
+end
+
+let%expect_test "variant arguments always use Yojson's tuple layout" =
+  let open Variant_arguments in
+  print (to_yojson Empty);
+  [%expect {| ["Empty"] |}];
+  print (to_yojson (Arguments (1, "x")));
+  [%expect {| ["Arguments",1,"x"] |}];
+  print (to_yojson (Tuple (1, "x")));
+  [%expect {| ["Tuple",[1,"x"]] |}];
+  print (poly_to_yojson (`Arguments (1, "x")));
+  [%expect {| ["Arguments",1,"x"] |}];
+  print (poly_to_yojson (`Alias (1, "x")));
+  [%expect {| ["Alias",[1,"x"]] |}];
+  List.iter
+    [ Empty; Arguments (1, "x"); Tuple (1, "x"); Alias (1, "x") ]
+    ~f:(check_wire t_jsonschema to_yojson of_yojson);
+  List.iter
+    [ `Empty; `Arguments (1, "x"); `Alias (1, "x") ]
+    ~f:(check_wire poly_jsonschema poly_to_yojson poly_of_yojson)
+;;
+
+module Matching_strict = struct
+  type t = { value : int }
+  [@@deriving yojson, jsonschema { strict = true }] [@@jsonschema.disallow_extra_fields]
+end
+
+module Matching_permissive = struct
+  type t = { value : int }
+  [@@deriving yojson { strict = false }, jsonschema { strict = false }]
+  [@@jsonschema.allow_extra_fields]
+end
+
+module Matching_inline = struct
+  type t = Value of { value : int } [@jsonschema.allow_extra_fields]
+  [@@deriving yojson { strict = false }, jsonschema]
+end
+
+module Standalone_inline = struct
+  type t =
+    | Open of { value : int } [@jsonschema.allow_extra_fields]
+    | Closed of { value : int }
+  [@@deriving jsonschema { strict = true }]
+end
+
+let%test_unit "explicit matching policies agree with Yojson decoders" =
+  check_wire
+    Matching_strict.t_jsonschema
+    Matching_strict.to_yojson
+    Matching_strict.of_yojson
+    { value = 1 };
+  check_wire
+    Matching_permissive.t_jsonschema
+    Matching_permissive.to_yojson
+    Matching_permissive.of_yojson
+    { value = 1 };
+  check_wire
+    Matching_inline.t_jsonschema
+    Matching_inline.to_yojson
+    Matching_inline.of_yojson
+    (Value { value = 1 });
+  let extra = `Assoc [ "value", `Int 1; "extra", `Bool true ] in
+  assert (Result.is_error (Matching_strict.of_yojson extra));
+  assert (
+    Result.is_error
+      (Jsonschema.validate (validator Matching_strict.t_jsonschema) (basic extra)));
+  assert (Result.is_ok (Matching_permissive.of_yojson extra));
+  assert (
+    Result.is_ok
+      (Jsonschema.validate (validator Matching_permissive.t_jsonschema) (basic extra)))
+;;
+
+let%test_unit "standalone inline policies override the default" =
+  let branches =
+    Json_schema.to_yojson Standalone_inline.t_jsonschema |> fun schema ->
+    member schema "anyOf" |> Yojson.Safe.Util.to_list
+  in
+  let policies =
+    List.map branches ~f:(fun branch ->
+      let items = member branch "prefixItems" |> Yojson.Safe.Util.to_list in
+      member (List.nth_exn items 1) "additionalProperties")
+  in
+  assert (Poly.equal policies [ `Bool true; `Bool false ])
+;;
+
 module Defaults = struct
   type t =
     { field : (int[@deriving.yojson.default 1]) [@default 2]
