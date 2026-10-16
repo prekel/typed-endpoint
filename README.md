@@ -219,7 +219,7 @@ typed_endpoint_packages=(
   typed-endpoint-eio
 )
 for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.1'
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.2'
 done
 opam install "${typed_endpoint_packages[@]}"
 ```
