@@ -80,8 +80,8 @@ module Tags : sig
   (** A non-empty comma-separated list used by [findPetsByTags]. *)
   type t = string list
 
-  (** Parses the repeated or comma-separated tag query representation. *)
-  include Parameter.S with type t := t
+  (** Parses exactly one CSV query occurrence, ignoring empty trimmed items. *)
+  val query : t Query.t
 end
 
 (** Encoder and schema for the official pet collection response. *)
@@ -163,32 +163,47 @@ module Order : sig
   val of_domain : Domain.Order.t -> t
 end
 
-(** JSON codec and domain conversion for Petstore users. *)
-module User_input : sig
-  (** Wire fields are optional; user creation requires a non-empty username. *)
+(** Required credentials and optional profile fields for user creation. *)
+module User_create : sig
   type t =
     { id : int option
-    ; username : string option
+    ; username : string
     ; first_name : string option
     ; last_name : string option
     ; email : string option
-    ; password : string option
+    ; password : string
     ; phone : string option
     ; user_status : int option
     }
 
-  (** JSON decoder, encoder, and schema for this wire record. *)
   include Json_payload.S with type t := t
 
-  (** Converts a request DTO to a domain user. The optional [username] argument
-      is the authoritative identity from a path parameter during updates. *)
-  val to_domain : ?username:string -> t -> (Domain.User.t, string) Result.t
+  (** Validates directly constructed DTOs as well as decoded values. *)
+  val to_domain : t -> (Domain.User.t, string) Result.t
+end
+
+(** Full PUT replacement. Missing optional fields reset the stored values;
+    username comes exclusively from the path and password is required. *)
+module User_update : sig
+  type t =
+    { id : int option
+    ; first_name : string option
+    ; last_name : string option
+    ; email : string option
+    ; password : string
+    ; phone : string option
+    ; user_status : int option
+    }
+
+  include Json_payload.S with type t := t
+
+  val to_domain : username:string -> t -> (Domain.User.t, string) Result.t
 end
 
 (** Public user representation, without password. Integer fields are bounded
     by OCaml [int]; int32 fields additionally enforce the signed 32-bit range. *)
 module User : sig
-  (** Wire fields are optional; user creation requires a non-empty username. *)
+  (** Public profile fields; password is never emitted. *)
   type t =
     { id : int option
     ; username : string option
@@ -219,15 +234,22 @@ module Login_request : sig
   val metadata : t Metadata.t
 end
 
-module User_list : sig
-  (** JSON request body accepted by [createUsersWithListInput]. *)
-  type t = User_input.t list
+(** Non-empty request batch, decoded before any database mutation. *)
+module User_create_list : sig
+  type t = User_create.t list
 
-  (** JSON decoder, encoder, and schema for the list. *)
   include Json_payload.S with type t := t
 
-  (** Validates every user and preserves request order. *)
   val to_domain : t -> (Domain.User.t list, string) Result.t
+end
+
+(** Public batch result in request order, without credentials. *)
+module User_list : sig
+  type t = User.t list
+
+  include Response_payload.S with type t := t
+
+  val of_domain : Domain.User.t list -> t
 end
 
 (** Encoder and schema for the login response. *)
@@ -250,6 +272,9 @@ module Api_response : sig
 
   (** JSON encoder and response schema. *)
   include Response_payload.S with type t := t
+
+  (** Authorization denial without disclosing another user's data. *)
+  val forbidden : unit -> t
 
   (** Maps framework-independent request decoding failures to the public error
       representation. The runtime chooses the corresponding HTTP status. *)

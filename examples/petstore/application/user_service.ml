@@ -14,9 +14,13 @@ module type S = sig
 
   val add_many
     :  database:database
+    -> actor:Domain.User.actor
     -> Domain.User.t list
     -> ( Domain.User.t list
-         , [ `Already_exists of string | `Persistence of Persistence_error.t ] )
+         , [ `Forbidden
+           | `Already_exists of string
+           | `Persistence of Persistence_error.t
+           ] )
          Result.t
          io
 
@@ -27,17 +31,22 @@ module type S = sig
 
   val update
     :  database:database
+    -> actor:Domain.User.actor
     -> username:string
     -> Domain.User.t
     -> ( Domain.User.t
-         , [ `Not_found of string | `Persistence of Persistence_error.t ] )
+         , [ `Forbidden | `Not_found of string | `Persistence of Persistence_error.t ] )
          Result.t
          io
 
   val delete
     :  database:database
+    -> actor:Domain.User.actor
     -> string
-    -> (unit, [ `Not_found of string | `Persistence of Persistence_error.t ]) Result.t io
+    -> ( unit
+         , [ `Forbidden | `Not_found of string | `Persistence of Persistence_error.t ] )
+         Result.t
+         io
 
   val authenticate
     :  database:database
@@ -52,6 +61,10 @@ module Make
     (Repository :
        User_repository.S
        with type 'a io = 'a Io.t
+        and type connection = Database.connection)
+    (Sessions :
+       Session_repository.S
+       with type 'a io = 'a Io.t
         and type connection = Database.connection) =
 struct
   type 'a io = 'a Io.t
@@ -64,9 +77,16 @@ struct
       Repository.add ~conn user)
   ;;
 
-  let add_many ~database users =
-    Database.transaction database ~on_error:persistence ~f:(fun ~conn ->
-      Repository.add_many ~conn users)
+  let add_many ~database ~actor users =
+    match actor with
+    | Domain.User.Session_user _ -> Io.return (Error `Forbidden)
+    | Administrator ->
+      Database.transaction database ~on_error:persistence ~f:(fun ~conn ->
+        let open Io.Let_syntax in
+        let%map result = Repository.add_many ~conn users in
+        Result.map_error result ~f:(function
+          | `Already_exists username -> `Already_exists username
+          | `Persistence error -> `Persistence error))
   ;;
 
   let find ~database username =
@@ -74,14 +94,55 @@ struct
       Repository.find ~conn username)
   ;;
 
-  let update ~database ~username user =
-    Database.transaction database ~on_error:persistence ~f:(fun ~conn ->
-      Repository.update ~conn ~username user)
+  let permitted actor username =
+    match actor with
+    | Domain.User.Administrator -> true
+    | Session_user subject -> String.equal subject username
   ;;
 
-  let delete ~database username =
-    Database.transaction database ~on_error:persistence ~f:(fun ~conn ->
-      Repository.delete ~conn username)
+  let update ~database ~actor ~username user =
+    if not (permitted actor username) then
+      Io.return (Error `Forbidden)
+    else
+      Database.transaction database ~on_error:persistence ~f:(fun ~conn ->
+        let open Io.Let_syntax in
+        let%bind existing = Repository.find ~conn username in
+        match existing with
+        | Error error -> Io.return (Error (`Persistence error))
+        | Ok None -> Io.return (Error (`Not_found username))
+        | Ok (Some existing) ->
+          let%bind updated = Repository.update ~conn ~username user in
+          (match updated with
+           | Error (`Not_found username) -> Io.return (Error (`Not_found username))
+           | Error (`Persistence error) -> Io.return (Error (`Persistence error))
+           | Ok updated ->
+             if
+               Option.equal
+                 String.equal
+                 existing.attributes.password
+                 updated.attributes.password
+             then
+               Io.return (Ok updated)
+             else (
+               let%map revoked = Sessions.remove_by_username ~conn ~username in
+               revoked
+               |> Result.map ~f:(fun () -> updated)
+               |> Result.map_error ~f:persistence)))
+  ;;
+
+  let delete ~database ~actor username =
+    if not (permitted actor username) then
+      Io.return (Error `Forbidden)
+    else
+      Database.transaction database ~on_error:persistence ~f:(fun ~conn ->
+        let open Io.Let_syntax in
+        let%bind removed = Repository.delete ~conn username in
+        match removed with
+        | Error (`Not_found username) -> Io.return (Error (`Not_found username))
+        | Error (`Persistence error) -> Io.return (Error (`Persistence error))
+        | Ok () ->
+          let%map revoked = Sessions.remove_by_username ~conn ~username in
+          Result.map_error revoked ~f:persistence)
   ;;
 
   let authenticate ~database ~username ~password =

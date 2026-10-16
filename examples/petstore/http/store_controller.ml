@@ -30,7 +30,11 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.json (module Dto.Inventory))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun ok service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.inventory ~database in
@@ -48,9 +52,17 @@ struct
     |> accepts (Request.json (module Dto.Order))
     |> returns
          (case `OK (Response.json (module Dto.Order))
-          <|> case `Bad_request (Response.json (module Dto.Api_response))
-          <|> case `Unprocessable_entity (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Bad_request
+                (Response.json ~description:"Invalid request" (module Dto.Api_response))
+          <|> case
+                `Unprocessable_entity
+                (Response.json ~description:"Validation failed" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun ok bad_request unprocessable_entity service_unavailable database body ->
     let%bind order = Request_body.read body in
     match order with
@@ -83,8 +95,14 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.json (module Dto.Order))
-          <|> case `Not_found (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Not_found
+                (Response.json ~description:"Order not found" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun id ok not_found service_unavailable database () ->
     let%bind result = Orders.find ~database id in
     match result with
@@ -102,8 +120,14 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.empty ~description:"Order deleted" ())
-          <|> case `Not_found (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Not_found
+                (Response.json ~description:"Order not found" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun id ok not_found service_unavailable database () ->
     let%bind result = Orders.delete ~database id in
     match result with

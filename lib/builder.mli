@@ -7,7 +7,9 @@ module Json_schema : module type of Json_schema
 module Metadata : sig
   (** Metadata keeps a schema tied to the OCaml wire type. [schema_name], when
       present, registers the schema in OpenAPI [components/schemas] and renders
-      references to it. Reusing a name for a different schema is a compile error. *)
+      references to it. Reusing a name for a different schema is a compile error.
+      Schema constraints are declarative: metadata does not add runtime schema
+      validation to request decoders or response encoders. *)
   type 'a t
 
   (** Creates metadata for exactly ['a]. [schema_name] opts into a reusable
@@ -343,8 +345,10 @@ module Backend : sig
     (** Emits an HTML response using the backend's canonical HTML media type. *)
     val respond_html : ?status:Status.t -> string -> resp io
 
-    (** Emits a JSON response using the backend's canonical JSON media type. *)
-    val respond_json : ?status:Status.t -> Yojson.Safe.t -> resp io
+    (** Emits a JSON response using the backend's canonical JSON media type.
+        [pretty] defaults to [false]; [true] selects indented JSON without changing
+        its value or media type. *)
+    val respond_json : ?status:Status.t -> ?pretty:bool -> Yojson.Safe.t -> resp io
 
     (** Combines routers while preserving declaration order. Runtime assembly
         places static paths before otherwise overlapping capture paths. *)
@@ -443,6 +447,44 @@ module Parameter : sig
     -> description:string
     -> unit
     -> (module S with type t = bool)
+end
+
+(** Typed array query codecs. Requiredness belongs to the URI declaration. *)
+module Query : sig
+  (** CSV uses one query occurrence; repeated preserves occurrence order.
+      CSV cannot escape commas inside an individual element. *)
+  type encoding =
+    [ `Csv
+    | `Repeated
+    ]
+
+  (** A collection decoder tied to its decoded OCaml value and schema. *)
+  type 'a t
+
+  (** Builds a custom collection decoder. [of_values] receives individual
+      percent-decoded elements, split on commas for CSV. Missing parameters are handled by the URI declaration; duplicate CSV
+      occurrences are rejected before this decoder runs. *)
+  val v
+    :  encoding:encoding
+    -> metadata:'a list Metadata.t
+    -> of_values:(string list -> ('a list, string) Result.t)
+    -> unit
+    -> 'a list t
+
+  (** Decodes each comma-separated element with the supplied scalar codec. *)
+  val csv
+    :  ?schema_name:string
+    -> description:string
+    -> (module Parameter.S with type t = 'a)
+    -> 'a list t
+
+  (** Decodes repeated query occurrences with the supplied scalar codec.
+      An element containing a comma remains a single element. *)
+  val repeated
+    :  ?schema_name:string
+    -> description:string
+    -> (module Parameter.S with type t = 'a)
+    -> 'a list t
 end
 
 (** Bidirectional codecs and declarations for scalar HTTP headers. Header names
@@ -677,8 +719,11 @@ module Make (B : Backend.S) : sig
             parameter carries the payload type. *)
     type (+'status, 'payload) case constraint 'status = [< Status.t ]
 
-    (** Declares the exact JSON wire type returned by the handler. *)
-    val json : (module Response_payload.S with type t = 'a) -> 'a t
+    (** Declares the exact JSON wire type returned by the handler. [description]
+        overrides the DTO description for this response only, including an
+        explicitly empty string. Omission preserves the DTO description. The
+        DTO metadata, schema, component name, and runtime encoder are unchanged. *)
+    val json : ?description:string -> (module Response_payload.S with type t = 'a) -> 'a t
 
     (** Declares a [text/plain] response. *)
     val text : description:string -> unit -> string t
@@ -822,6 +867,16 @@ module Make (B : Backend.S) : sig
       :  payload:(module Response_payload.S with type t = 'a)
       -> map:(Decode_error.t -> 'a)
       -> t
+
+    (** Overrides OpenAPI descriptions for reachable automatic decode-error
+        statuses. [None] preserves the policy's original description; [Some ""]
+        preserves an explicit empty description. The function is used during
+        compilation, never while rendering an HTTP response, and must be pure
+        and deterministic. A subsequent call
+        replaces the previous override. Explicit endpoint responses retain
+        precedence when merged with automatic responses of the same status.
+        Policy selection, statuses, mapping, and runtime bodies are unchanged. *)
+    val with_description : (Status.client_error -> string option) -> t -> t
   end
 
   (** An existential route whose handler types remain checked at creation. *)
@@ -877,10 +932,15 @@ module Make (B : Backend.S) : sig
           phase types enforce the declaration order path -> query -> headers ->
           documentation -> request -> responses -> handler. The operator
           determines an argument's location and whether it is optional. *)
-  type 'a argument
+  type ('a, 'kind) argument
 
   (** Associates a path or query name with a typed scalar codec. *)
-  val arg : string -> (module Parameter.S with type t = 'a) -> 'a argument
+  val arg : string -> (module Parameter.S with type t = 'a) -> ('a, [ `Scalar ]) argument
+
+  (** Associates a query name with a collection codec and its wire encoding.
+      Use [/!] for required values or [/?] for optional values. Collection
+      arguments cannot be used with [/:]. *)
+  val query_arg : string -> 'a Query.t -> ('a, [ `Query ]) argument
 
   (** URI under construction, indexed by its legal declaration phase. *)
   type ('phase, 'handler, 'terminal) uri
@@ -922,19 +982,20 @@ module Make (B : Backend.S) : sig
   (** Appends a required captured path segment. *)
   val ( /: )
     :  ([ `Path ], 'handler, 'value -> 'terminal) uri
-    -> 'value argument
+    -> ('value, [ `Scalar ]) argument
     -> ([ `Path ], 'handler, 'terminal) uri
 
-  (** Appends an optional query parameter. *)
+  (** Appends an optional scalar or collection query parameter. Absence produces
+      [None]; a present but empty value is passed to the codec. *)
   val ( /? )
     :  ([< `Path | `Query ], 'handler, 'value option -> 'terminal) uri
-    -> 'value argument
+    -> ('value, [< `Scalar | `Query ]) argument
     -> ([ `Query ], 'handler, 'terminal) uri
 
-  (** Appends a required query parameter. *)
+  (** Appends a required scalar or collection query parameter. *)
   val ( /! )
     :  ([< `Path | `Query ], 'handler, 'value -> 'terminal) uri
-    -> 'value argument
+    -> ('value, [< `Scalar | `Query ]) argument
     -> ([ `Query ], 'handler, 'terminal) uri
 
   (** Appends a required or optional typed request header. Path and query
@@ -1021,6 +1082,11 @@ module Make (B : Backend.S) : sig
           ; kind : [ `Path | `Query | `Header ]
           ; name : string
           } (** One endpoint repeats a parameter name in the same location. *)
+      | Array_query_requires_codec of
+          { meth : string
+          ; path : string
+          ; name : string
+          } (** A scalar query codec exposes an array; use {!Query} instead. *)
       | Duplicate_response_status of
           { meth : string
           ; path : string

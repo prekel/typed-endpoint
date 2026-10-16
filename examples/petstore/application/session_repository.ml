@@ -14,4 +14,10 @@ module type S = sig
     -> (Domain.Session.t option, Persistence_error.t) Result.t io
 
   val remove : conn:connection -> string -> (unit, Persistence_error.t) Result.t io
+
+  (* Removes every session of a user within the caller's transaction. *)
+  val remove_by_username
+    :  conn:connection
+    -> username:string
+    -> (unit, Persistence_error.t) Result.t io
 end

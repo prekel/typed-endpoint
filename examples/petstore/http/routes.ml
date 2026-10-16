@@ -42,7 +42,9 @@ struct
   module Endpoint = Typed_endpoint.Make (B)
   module Pets = Pet_service.Make (B.Io) (Database) (Pet_repository)
   module Orders = Order_service.Make (B.Io) (Database) (Pet_repository) (Order_repository)
-  module Users = User_service.Make (B.Io) (Database) (User_repository)
+
+  module Users =
+    User_service.Make (B.Io) (Database) (User_repository) (Session_repository)
 
   module Sessions =
     Session_service.Make (B.Io) (Database) (User_repository) (Session_repository)
@@ -55,7 +57,7 @@ struct
 
   let openapi_route compiled =
     Unsafe.route ~meth:`GET ~path:"/openapi.json" ~handler:(fun _request ->
-      B.respond_json (Compiled.openapi ~config:openapi_config compiled))
+      B.respond_json ~pretty:true (Compiled.openapi ~config:openapi_config compiled))
   ;;
 
   let docs_page (path, html) =

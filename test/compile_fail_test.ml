@@ -53,7 +53,17 @@ let require_failure ~root ~fixture ~expected =
 
 let () =
   match Stdlib.Array.to_list Stdlib.Sys.argv with
-  | [ _; root; valid; wrong_payload; wrong_status; wrong_handler; wrong_stage ] ->
+  | [ _
+    ; root
+    ; valid
+    ; wrong_payload
+    ; wrong_status
+    ; wrong_handler
+    ; wrong_stage
+    ; wrong_collection_phase
+    ; wrong_collection_handler
+    ; wrong_collection_path
+    ] ->
     let status, diagnostics = run_compiler ~root valid in
     require
       (Int.equal status 0)
@@ -68,6 +78,9 @@ let () =
     require_failure ~root ~fixture:wrong_payload ~expected:"expected of type";
     require_failure ~root ~fixture:wrong_status ~expected:"Response.case";
     require_failure ~root ~fixture:wrong_handler ~expected:"Response.case";
-    require_failure ~root ~fixture:wrong_stage ~expected:"This expression has type"
-  | _ -> Stdlib.failwith "expected workspace root and five compile-fail fixtures"
+    require_failure ~root ~fixture:wrong_stage ~expected:"This expression has type";
+    require_failure ~root ~fixture:wrong_collection_phase ~expected:"Query";
+    require_failure ~root ~fixture:wrong_collection_handler ~expected:"int list";
+    require_failure ~root ~fixture:wrong_collection_path ~expected:"Scalar"
+  | _ -> Stdlib.failwith "expected workspace root and eight compile-fail fixtures"
 ;;

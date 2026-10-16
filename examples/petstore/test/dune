@@ -3,7 +3,13 @@
 (test
  (name app_test)
  (package typed-endpoint-testing)
- (libraries base jsonschema petstore_app typed-endpoint-testing yojson))
+ (libraries
+  base
+  jsonschema
+  petstore_app
+  typed-endpoint-testing
+  contract_test_support
+  yojson))
 
 (test
  (name wire_contract_test)
@@ -29,3 +35,14 @@
  (name session_test)
  (package typed-endpoint-testing)
  (libraries base petstore_app typed-endpoint-testing yojson unix))
+
+(test
+ (name user_access_test)
+ (package typed-endpoint-testing)
+ (libraries
+  base
+  jsonschema
+  petstore_app
+  typed-endpoint-testing
+  contract_test_support
+  yojson))

@@ -60,7 +60,7 @@ let whoami =
 let identity_routes =
   compile_exn
     [ Group.make_with_context
-        ~context:(Common.pet_oauth ~auth database)
+        ~context:(Common.session ~auth database)
         ~description:"Identity"
         [ whoami ]
     ]
@@ -126,7 +126,7 @@ let () =
   let login_contract =
     document |> member "paths" |> member "/user/login" |> member "post"
   in
-  assert (login_contract |> member "parameters" |> Yojson.Safe.equal (`List []));
+  assert (login_contract |> member "parameters" |> Yojson.Safe.equal `Null);
   assert (
     login_contract
     |> member "responses"
@@ -151,7 +151,7 @@ let () =
   assert (
     not
       (schemas
-       |> member "UserInput"
+       |> member "UserCreate"
        |> member "properties"
        |> member "password"
        |> Yojson.Safe.equal `Null));

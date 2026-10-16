@@ -29,10 +29,22 @@ struct
     |> accepts (Request.json (module Dto.Pet))
     |> returns
          (case `OK (Response.json (module Dto.Pet))
-          <|> case `Bad_request (Response.json (module Dto.Api_response))
-          <|> case `Conflict (Response.json (module Dto.Api_response))
-          <|> case `Unprocessable_entity (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Bad_request
+                (Response.json ~description:"Invalid request" (module Dto.Api_response))
+          <|> case
+                `Conflict
+                (Response.json
+                   ~description:"Pet already exists"
+                   (module Dto.Api_response))
+          <|> case
+                `Unprocessable_entity
+                (Response.json ~description:"Validation failed" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==>
     fun ok
       bad_request
@@ -65,10 +77,20 @@ struct
     |> accepts (Request.json (module Dto.Pet))
     |> returns
          (case `OK (Response.json (module Dto.Pet))
-          <|> case `Bad_request (Response.json (module Dto.Api_response))
-          <|> case `Not_found (Response.json (module Dto.Api_response))
-          <|> case `Unprocessable_entity (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Bad_request
+                (Response.json ~description:"Invalid request" (module Dto.Api_response))
+          <|> case
+                `Not_found
+                (Response.json ~description:"Pet not found" (module Dto.Api_response))
+          <|> case
+                `Unprocessable_entity
+                (Response.json ~description:"Validation failed" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==>
     fun ok
       bad_request
@@ -103,7 +125,11 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.json (module Dto.Pet_list))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun status ok service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.list_by_status ~database ~status in
@@ -113,7 +139,7 @@ struct
   ;;
 
   let find_by_tags =
-    get / "pet" / "findByTags" /! arg "tags" (module Dto.Tags)
+    get / "pet" / "findByTags" /! query_arg "tags" Dto.Tags.query
     |> documented
          ~operation_id:"findPetsByTags"
          ~summary:"Finds Pets by tags."
@@ -121,7 +147,11 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.json (module Dto.Pet_list))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun tags ok service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.list_by_tags ~database ~tags in
@@ -145,8 +175,14 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.json (module Dto.Pet_page))
-          <|> case `Bad_request (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Bad_request
+                (Response.json ~description:"Invalid request" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun status page limit ok bad_request service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let page = Option.value page ~default:Domain.Page_request.default_page in
@@ -169,8 +205,14 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.json (module Dto.Pet))
-          <|> case `Not_found (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Not_found
+                (Response.json ~description:"Pet not found" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun id ok not_found service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.find ~database id in
@@ -188,14 +230,22 @@ struct
     /? arg "status" (module Dto.Status)
     |> documented
          ~operation_id:"updatePetWithForm"
-         ~summary:"Updates a pet in the store with form data."
-         ~description:"Updates the pet name and/or status from query form fields."
+         ~summary:"Updates a pet using query parameters."
+         ~description:"Updates the pet name and/or status from query parameters."
     |> accepts Request.empty
     |> returns
          (case `OK (Response.json (module Dto.Pet))
-          <|> case `Bad_request (Response.json (module Dto.Api_response))
-          <|> case `Not_found (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Bad_request
+                (Response.json ~description:"Invalid request" (module Dto.Api_response))
+          <|> case
+                `Not_found
+                (Response.json ~description:"Pet not found" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun id name status ok _bad_request not_found service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.patch ~database ~id ?name ?status () in
@@ -214,8 +264,14 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.empty ~description:"Pet deleted" ())
-          <|> case `Not_found (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Not_found
+                (Response.json ~description:"Pet not found" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun id ok not_found service_unavailable context () ->
     let database = Common.Secured.dependency context in
     let%bind result = Pets.delete ~database id in
@@ -237,10 +293,18 @@ struct
          ~description:"Upload an opaque image of the pet."
     |> accepts (Request.binary ~description:"Image bytes" ())
     |> returns
-         (case `OK (Response.json (module Dto.Api_response))
-          <|> case `Bad_request (Response.json (module Dto.Api_response))
-          <|> case `Not_found (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+         (case `OK (Response.json ~description:"Image uploaded" (module Dto.Api_response))
+          <|> case
+                `Bad_request
+                (Response.json ~description:"Invalid request" (module Dto.Api_response))
+          <|> case
+                `Not_found
+                (Response.json ~description:"Pet not found" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun id metadata ok bad_request not_found service_unavailable context body ->
     let%bind bytes = Request_body.read body in
     match bytes with
@@ -266,7 +330,7 @@ struct
         routes
     in
     [ group
-        ~context:(Common.pet_oauth ~auth database)
+        ~context:(Common.session ~auth database)
         ~description:"Everything about your pets"
         [ add_pet
         ; update_pet
@@ -279,7 +343,7 @@ struct
         ]
     ; group
         ~context:(Common.pet_lookup ~auth database)
-        ~description:"Pet lookup accepting the official alternative credentials"
+        ~description:"Pet lookup accepting a bearer or API key"
         [ get_pet ]
     ]
   ;;

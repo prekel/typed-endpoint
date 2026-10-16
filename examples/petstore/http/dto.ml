@@ -215,22 +215,25 @@ end
 module Tags = struct
   type t = string list
 
-  let of_string value =
-    let tags =
-      String.split value ~on:','
-      |> List.map ~f:String.strip
-      |> List.filter ~f:(Fn.non String.is_empty)
-    in
-    if List.is_empty tags then
-      Error "at least one tag is required"
-    else
-      Ok tags
-  ;;
-
   let metadata =
     Metadata.v
       ~schema:(Json_schema.list_exn ~min_items:1 ~items:(Json_schema.string_exn ()) ())
       ~description:"Comma-separated tags to filter by"
+      ()
+  ;;
+
+  let query =
+    Query.v
+      ~encoding:`Csv
+      ~metadata
+      ~of_values:(fun values ->
+        let tags =
+          List.map values ~f:String.strip |> List.filter ~f:(Fn.non String.is_empty)
+        in
+        if List.is_empty tags then
+          Error "at least one tag is required"
+        else
+          Ok tags)
       ()
   ;;
 end
@@ -252,7 +255,7 @@ module Pagination = struct
     ; total : int
     ; total_pages : int [@key "totalPages"]
     }
-  [@@deriving to_yojson, jsonschema]
+  [@@deriving to_yojson, jsonschema] [@@jsonschema.disallow_extra_fields]
 
   let metadata =
     Metadata.v
@@ -272,7 +275,7 @@ module Pet_page = struct
     { items : Pet.t list
     ; pagination : Pagination.t
     }
-  [@@deriving to_yojson, jsonschema]
+  [@@deriving to_yojson, jsonschema] [@@jsonschema.disallow_extra_fields]
 
   let metadata =
     Metadata.v
@@ -389,14 +392,26 @@ module Order = struct
   ;;
 end
 
-module User_input = struct
+module Non_empty_string = struct
+  type t = string
+
+  let t_jsonschema = Json_schema.string_exn ~min_length:1 ()
+  let to_yojson value = `String value
+
+  let of_yojson = function
+    | `String value when not (String.is_empty value) -> Ok value
+    | _ -> Error "expected a non-empty string"
+  ;;
+end
+
+module User_create = struct
   type t =
     { id : Schema_scalar.Int64.t option [@default None]
-    ; username : string option [@default None]
+    ; username : Non_empty_string.t
     ; first_name : string option [@key "firstName"] [@default None]
     ; last_name : string option [@key "lastName"] [@default None]
     ; email : string option [@default None]
-    ; password : string option [@default None]
+    ; password : Non_empty_string.t
     ; phone : string option [@default None]
     ; user_status : Schema_scalar.Int32.t option [@key "userStatus"] [@default None]
     }
@@ -405,17 +420,59 @@ module User_input = struct
   let metadata =
     Metadata.v
       ~schema:t_jsonschema
-      ~schema_name:"UserInput"
-      ~description:"User account input"
+      ~schema_name:"UserCreate"
+      ~description:"Required user account creation fields"
       ()
   ;;
 
-  let to_domain ?username:user_identity user =
-    match Option.first_some user_identity user.username with
-    | None -> Error "username is required"
-    | Some username when String.is_empty (String.strip username) ->
+  let to_domain (user : t) =
+    if String.is_empty (String.strip user.username) then
       Error "username must not be empty"
-    | Some username ->
+    else if String.is_empty user.password then
+      Error "password must not be empty"
+    else
+      Ok
+        Domain.User.
+          { username = user.username
+          ; attributes =
+              { id = user.id
+              ; first_name = user.first_name
+              ; last_name = user.last_name
+              ; email = user.email
+              ; password = Some user.password
+              ; phone = user.phone
+              ; user_status = user.user_status
+              }
+          }
+  ;;
+end
+
+module User_update = struct
+  type t =
+    { id : Schema_scalar.Int64.t option [@default None]
+    ; first_name : string option [@key "firstName"] [@default None]
+    ; last_name : string option [@key "lastName"] [@default None]
+    ; email : string option [@default None]
+    ; password : Non_empty_string.t
+    ; phone : string option [@default None]
+    ; user_status : Schema_scalar.Int32.t option [@key "userStatus"] [@default None]
+    }
+  [@@deriving yojson, jsonschema]
+
+  let metadata =
+    Metadata.v
+      ~schema:t_jsonschema
+      ~schema_name:"UserUpdate"
+      ~description:"Complete profile replacement; username is supplied by the path"
+      ()
+  ;;
+
+  let to_domain ~username (user : t) =
+    if String.is_empty (String.strip username) then
+      Error "username must not be empty"
+    else if String.is_empty user.password then
+      Error "password must not be empty"
+    else
       Ok
         Domain.User.
           { username
@@ -424,7 +481,7 @@ module User_input = struct
               ; first_name = user.first_name
               ; last_name = user.last_name
               ; email = user.email
-              ; password = user.password
+              ; password = Some user.password
               ; phone = user.phone
               ; user_status = user.user_status
               }
@@ -464,18 +521,6 @@ module User = struct
   ;;
 end
 
-module Non_empty_string = struct
-  type t = string
-
-  let t_jsonschema = Json_schema.string_exn ~min_length:1 ()
-  let to_yojson value = `String value
-
-  let of_yojson = function
-    | `String value when not (String.is_empty value) -> Ok value
-    | _ -> Error "expected a non-empty string"
-  ;;
-end
-
 module Login_request = struct
   type t =
     { username : Non_empty_string.t
@@ -492,14 +537,35 @@ module Login_request = struct
   ;;
 end
 
-module User_list = struct
-  type t = User_input.t list [@@deriving yojson, jsonschema]
+module User_create_list = struct
+  type t = User_create.t list [@@deriving yojson]
+
+  let of_yojson json =
+    let open Result.Let_syntax in
+    let%bind users = of_yojson json in
+    if List.is_empty users then
+      Error "at least one user is required"
+    else
+      Ok users
+  ;;
+
+  let t_jsonschema = Json_schema.list_exn ~min_items:1 ~items:User_create.t_jsonschema ()
 
   let metadata =
     Metadata.v ~schema:t_jsonschema ~description:"Users to create atomically" ()
   ;;
 
-  let to_domain users = users |> List.map ~f:User_input.to_domain |> Result.all
+  let to_domain users = List.map users ~f:User_create.to_domain |> Result.all
+end
+
+module User_list = struct
+  type t = User.t list [@@deriving to_yojson, jsonschema]
+
+  let metadata =
+    Metadata.v ~schema:t_jsonschema ~description:"Created users in request order" ()
+  ;;
+
+  let of_domain users = List.map users ~f:User.of_domain
 end
 
 module Login_token = struct
@@ -522,8 +588,12 @@ module Api_response = struct
     Metadata.v
       ~schema:t_jsonschema
       ~schema_name:"ApiResponse"
-      ~description:"An API error"
+      ~description:"API response"
       ()
+  ;;
+
+  let forbidden () =
+    { code = 403; type_ = "forbidden"; message = "insufficient permissions" }
   ;;
 
   let of_decode_error error =

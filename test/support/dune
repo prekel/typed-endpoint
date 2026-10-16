@@ -1,0 +1,4 @@
+(library
+ (name contract_test_support)
+ (package typed-endpoint-testing)
+ (libraries base jsonschema typed-endpoint uri yojson))

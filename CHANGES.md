@@ -1,5 +1,44 @@
 # История изменений
 
+## Не выпущено
+
+- `Response.json` принимает необязательный `?description`: локальное описание
+  имеет приоритет над description DTO, включая явно заданную пустую строку.
+  `Decode_error_response.with_description` задаёт описания автоматических ошибок
+  по статусу; явные ответы сохраняют приоритет. Схемы и runtime-ответы не меняются.
+  Petstore публикует содержательные описания ошибок и успешного upload.
+- OpenAPI использует один читаемый формат: HTTP-ответы inline, ссылки на
+  именованные DTO, общие path-параметры на уровне Path Item. Автоматические
+  `components.responses` и имена с хешами не создаются. Анонимные примитивы
+  и коллекции остаются inline; явно заданные имена схем сохраняются.
+  Пустые `parameters` и `required`, пустые operation descriptions и descriptions,
+  совпадающие с summary, опускаются. Ограничения, `default`, примеры и области
+  разрешения ссылок сохраняются.
+- `Backend.S.respond_json` получил необязательный `?pretty:bool` с default
+  `false`; собственные адаптеры должны поддержать новый аргумент. Petstore
+  возвращает `/openapi.json` с отступами, обычные ответы API не меняются.
+- Добавлены независимые conformance tests генерации, сериализации,
+  нормализации и HTTP-контракта; Petstore проверяет покрытие всех опубликованных
+  операций. `make test-js` отдельно проверяет настоящие OCaml wire fixtures,
+  границы точности JS Number и lossless JSON round-trip без npm-зависимостей.
+  Документирована декларативная семантика `[@jsonschema.*]`.
+- Добавлены `Query.csv`, `Query.repeated`, пользовательский `Query.v` и
+  `query_arg` для операторов `/!` и `/?`. Runtime и OpenAPI используют
+  один способ сериализации. Scalar query-codec с array-схемой теперь
+  отклоняется с `Array_query_requires_codec`.
+- Petstore использует HTTP Bearer `session_auth` вместо demo OAuth.
+  User service принимает `Domain.User.actor`: владелец может изменить или
+  удалить свой профиль, API key и demo bearer дают административный доступ.
+  Batch требует административных credentials и возвращает массив `User`.
+- `UserInput` заменён на `UserCreate` и `UserUpdate`: создание требует username
+  и password, полный PUT требует password и получает username из пути.
+  Смена пароля и удаление атомарно отзывают все сессии пользователя через
+  новый repository port `remove_by_username`.
+- Исправлены CSV-декларация `tags`, строгость pagination и описание ApiResponse.
+
+Изменения Petstore, запрет scalar array query и новое требование к реализации
+`Backend.S.respond_json` несовместимы с прежним API.
+
 ## 0.3.1 — 2026-10-15
 
 - `jsonschema.format` и поле `format` в `jsonschema.attrs` принимают

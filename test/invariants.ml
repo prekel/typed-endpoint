@@ -449,6 +449,14 @@ let%expect_test "a safe decode-error policy is available by default" =
     |> member "post"
     |> member "responses"
     |> member "415"
+    |> (fun response ->
+    match member "$ref" response with
+    | `String reference ->
+      document
+      |> member "components"
+      |> member "responses"
+      |> member (String.chop_prefix_exn reference ~prefix:"#/components/responses/")
+    | _ -> response)
     |> member "content"
     |> member "application/json"
     |> member "schema"

@@ -143,11 +143,17 @@ type param_kind =
   | `Header
   ]
 
+type query_encoding =
+  [ `Csv
+  | `Repeated
+  ]
+
 type param =
   { name : string
   ; kind : param_kind
   ; required : bool
   ; schema : Schema.t
+  ; query_encoding : query_encoding option
   ; metadata : Documentation.t
   }
 
@@ -245,6 +251,11 @@ module Compile_error = struct
         { meth : string
         ; path : string
         ; kind : param_kind
+        ; name : string
+        }
+    | Array_query_requires_codec of
+        { meth : string
+        ; path : string
         ; name : string
         }
     | Duplicate_response_status of
@@ -397,6 +408,8 @@ module Compile_error = struct
       ^ meth
       ^ " "
       ^ path
+    | Array_query_requires_codec { meth; path; name } ->
+      "array query parameter " ^ name ^ " requires a Query codec: " ^ meth ^ " " ^ path
     | Invalid_schema_name name -> "invalid OpenAPI schema name: " ^ name
     | Conflicting_schema name -> "conflicting OpenAPI schema: " ^ name
     | Invalid_security_scheme_name name -> "invalid security scheme name: " ^ name
@@ -875,6 +888,16 @@ let validate_security_scope scheme scope =
   | Api_key _ | Http_bearer _ -> false
 ;;
 
+let array_schema schema =
+  match Json_schema.to_yojson_packed schema.Schema.value with
+  | `Assoc fields ->
+    (match List.Assoc.find fields "type" ~equal:String.equal with
+     | Some (`String "array") -> true
+     | Some (`List types) -> List.mem types (`String "array") ~equal:Yojson.Safe.equal
+     | _ -> false)
+  | _ -> false
+;;
+
 let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t =
   let routes_seen = Hashtbl.create (module String) in
   let operation_ids = Hash_set.create (module String) in
@@ -1005,6 +1028,12 @@ let compile (groups : group list) : (Compiled.t, Compile_error.t list) Result.t 
                          ~f:(String.Caseless.equal parameter.name) ->
                   add_error
                     (Compile_error.Reserved_request_header
+                       { meth = route.meth; path; name = parameter.name })
+                | `Query
+                  when Option.is_none parameter.query_encoding
+                       && array_schema parameter.schema ->
+                  add_error
+                    (Compile_error.Array_query_requires_codec
                        { meth = route.meth; path; name = parameter.name })
                 | `Path | `Query | `Header -> ());
               let declared_responses =

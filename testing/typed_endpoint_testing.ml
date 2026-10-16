@@ -132,11 +132,15 @@ let respond_html ?status body =
   respond ?status ~headers:[ "content-type", "text/html; charset=utf-8" ] ~body ()
 ;;
 
-let respond_json ?status json =
+let respond_json ?status ?(pretty = false) json =
   respond
     ?status
     ~headers:[ "content-type", "application/json" ]
-    ~body:(Yojson.Safe.to_string json)
+    ~body:
+      (if pretty then
+         Yojson.Safe.pretty_to_string json
+       else
+         Yojson.Safe.to_string json)
     ()
 ;;
 
@@ -378,6 +382,16 @@ module Backend_conformance = struct
           (fun value ok () () -> respond ok value))
     ;;
 
+    let rendering_value =
+      `Assoc
+        [ "message", `String "Line one\nLine two\""
+        ; ( "items"
+          , `List
+              (List.init 8 ~f:(fun index ->
+                 `Assoc [ "index", `Int index; "enabled", `Bool true ])) )
+        ]
+    ;;
+
     let app =
       compile_exn
         [ Group.make_with_context
@@ -399,6 +413,13 @@ module Backend_conformance = struct
             ~context:Context.request
             ~description:"Request access"
             [ header_route ]
+        ; Group.make
+            ~description:"JSON rendering"
+            [ Unsafe.route ~meth:`GET ~path:"/pretty-json" ~handler:(fun _ ->
+                B.respond_json ~status:`Accepted ~pretty:true rendering_value)
+            ; Unsafe.route ~meth:`GET ~path:"/compact-json" ~handler:(fun _ ->
+                B.respond_json rendering_value)
+            ]
         ]
       |> Compiled.app
     ;;
@@ -418,6 +439,19 @@ module Backend_conformance = struct
     ;;
 
     let run () =
+      let%bind pretty = H.call app `GET "/pretty-json" in
+      check_response pretty ~status:202 ~content_type:(Some "application/json");
+      let%bind pretty_body = body pretty in
+      check (String.is_substring pretty_body ~substring:"\n  ") "pretty JSON indentation";
+      check
+        (Yojson.Safe.equal (Yojson.Safe.from_string pretty_body) rendering_value)
+        "pretty JSON value";
+      let%bind compact = H.call app `GET "/compact-json" in
+      check_response compact ~status:200 ~content_type:(Some "application/json");
+      let%bind compact_body = body compact in
+      check
+        (String.equal compact_body (Yojson.Safe.to_string rendering_value))
+        "default JSON bytes";
       let%bind () =
         List.fold
           encoded_segments

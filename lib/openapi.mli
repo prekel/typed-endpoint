@@ -5,5 +5,10 @@ open! Base
     router's [:name] notation to OpenAPI's [{name}] notation. Named schemas and
     security schemes are emitted as components, while runtime-only unsafe
     routes are omitted. Paths, methods, responses, and components are rendered
-    in a deterministic order. *)
+    in a deterministic order. Nested copies of registered ordinary object
+    schemas reuse their component names; anonymous primitives and collections,
+    and all Response Objects, remain inline. Identical path parameters shared
+    by every operation are lifted to the Path Item. Empty parameter and required
+    lists, empty operation descriptions, and descriptions equal to the summary
+    are omitted. Resource scopes are preserved. *)
 val render : config:Contract.Openapi.Config.t -> Contract.Compiled.t -> Yojson.Safe.t

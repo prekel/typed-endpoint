@@ -108,7 +108,8 @@ Caqti-адаптер. В нём `Database.t` представляет pool, а
 Успешная проверка защищённой группы создаёт
 `Typed_endpoint.Principal.t`: identity различает пользовательскую сессию,
 demo bearer и API key; для сессии сохраняются username и идентификатор сессии.
-Scopes сохраняются рядом с identity. Через applicative context handler
+Транспортная identity преобразуется в `Domain.User.actor` для проверки
+владельца или администратора в user service. Через applicative context handler
 одновременно получает principal, `X-Request-Id` текущего запроса и выбранный
 `Database.t`. Это request-scoped record, а не service locator: repository и
 application services по-прежнему выбираются только функтором composition root.
@@ -140,10 +141,20 @@ GET /pet/search?status=available&page=2&limit=20
 секреты передаются в JSON body, а logout отзывает предъявленную сессию.
 Фиктивные rate-limit/expiration headers удалены. Поэтому пример не заявляет
 полную идентичность исходному OpenAPI 3.0.4. Генерируемый документ — OpenAPI 3.1.
-В User responses отсутствует поле `password`; входные поля описывает `UserInput`.
+В User responses отсутствует поле `password`. `UserCreate` требует непустые
+username и password; `UserUpdate` требует password и не принимает username.
+`PUT /user/{username}` полностью заменяет профиль: пропущенные optional-поля
+сбрасываются, identity задаётся путём.
 Числовые DTO учитывают диапазон OCaml `int` и ограничения int32.
 `POST /user/createWithList` и `POST /user/createWithArray` создают пользователей
-атомарно и возвращают массив публичных User DTO без паролей.
+атомарно и возвращают массив публичных User DTO без паролей. Пустой batch
+отклоняется с 400. Оба endpoint требуют административный demo bearer или
+API key; пользовательская сессия получает 403.
+
+`findPetsByTags` принимает один CSV-параметр `?tags=cat,dog`; runtime удаляет
+пустые элементы и пробелы по краям. Повторный `tags` возвращает 400, как и
+пустой список. OpenAPI явно указывает `style: form`, `explode: false`.
+Схемы `PetPage` и вложенной pagination запрещают дополнительные поля.
 
 Проверка без сервера и сокетов:
 
@@ -174,15 +185,34 @@ opam exec -- dune exec examples/petstore/servers/eio_server.exe
 не важен; между схемой и токеном допустимы один или несколько пробелов.
 Регистр токена сохраняется. Сессии хранятся в database и исчезают при
 перезапуске in-memory примера. Для входа пользователь должен быть предварительно
-создан через user API.
+создан через публичный `POST /user` с обязательными username и password.
+В OpenAPI сессия и demo bearer описаны как HTTP Bearer `session_auth`;
+внешний OAuth flow и фиктивные read/write scopes удалены. Pet endpoints требуют
+bearer; `getPetById` также принимает API key.
+
+Регистрация, login и чтение профиля публичны. Обновить или удалить профиль
+может владелец сессии, административный demo bearer либо API key.
+Неверные credentials дают 401, недостаточные права — 403. При нескольких
+credentials действующий API key даёт административный доступ.
+Смена пароля и удаление пользователя отзывают все его сессии в той же
+транзакции; ошибка отзыва откатывает изменение профиля. PUT с прежним паролем
+сохраняет сессии. После смены пароля нужен новый login.
 `POST /user/logout` отзывает только предъявленную сессию; остальные сессии
 пользователя продолжают работать. Истёкшие, отозванные и неизвестные токены
 получают 401. Независимый demo bearer остаётся пригодным для разработки:
 его logout возвращает 200 без отзыва. Источники времени и OS entropy выбираются
 в composition root, а в тестах заменяются детерминированными реализациями.
 
-Сгенерированный OpenAPI доступен по `/openapi.json`, health check —
-по `/health`.
+Сгенерированный OpenAPI переиспользует `Pet`, `UserCreate` и `User` через
+`components.schemas`; сами HTTP-ответы остаются внутри операций. Общие
+`petId`, `orderId` и `username` поднимаются на уровень соответствующего пути.
+Отдельный snapshot не хранится. Документ с отступами доступен по
+`/openapi.json`, health check — по `/health`. Остальные JSON-ответы API
+сохраняют компактное представление. Ошибки описаны в месте объявления ответа:
+например, `Pet not found`, `Authentication required` и `Service temporarily
+unavailable`. Общая decode-error policy отдельно документирует 400, 413 и 415.
+Успешный upload имеет описание `Image uploaded`. Базовый description DTO
+`ApiResponse` остаётся `API response`; локальные описания не меняют JSON payload.
 
 ## Access log
 

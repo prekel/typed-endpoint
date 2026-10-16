@@ -18,12 +18,16 @@ module type S = sig
          Result.t
          io
 
-  (** Adds a complete batch atomically. *)
+  (** Adds a complete batch atomically; only administrators are permitted. *)
   val add_many
     :  database:database
+    -> actor:Domain.User.actor
     -> Domain.User.t list
     -> ( Domain.User.t list
-         , [ `Already_exists of string | `Persistence of Persistence_error.t ] )
+         , [ `Forbidden
+           | `Already_exists of string
+           | `Persistence of Persistence_error.t
+           ] )
          Result.t
          io
 
@@ -33,21 +37,27 @@ module type S = sig
     -> string
     -> (Domain.User.t option, Persistence_error.t) Result.t io
 
-  (** Replaces the user selected by the authoritative username. *)
+  (** Replaces a profile for its owner or an administrator. Changing the password
+      revokes all sessions in the same transaction. *)
   val update
     :  database:database
+    -> actor:Domain.User.actor
     -> username:string
     -> Domain.User.t
     -> ( Domain.User.t
-         , [ `Not_found of string | `Persistence of Persistence_error.t ] )
+         , [ `Forbidden | `Not_found of string | `Persistence of Persistence_error.t ] )
          Result.t
          io
 
-  (** Deletes one existing user. *)
+  (** Deletes a profile and all its sessions for its owner or an administrator. *)
   val delete
     :  database:database
+    -> actor:Domain.User.actor
     -> string
-    -> (unit, [ `Not_found of string | `Persistence of Persistence_error.t ]) Result.t io
+    -> ( unit
+         , [ `Forbidden | `Not_found of string | `Persistence of Persistence_error.t ] )
+         Result.t
+         io
 
   (** Checks the demo credential through the repository. *)
   val authenticate
@@ -64,6 +74,10 @@ module Make
     (Database : Database.S with type 'a io = 'a Io.t)
     (_ :
        User_repository.S
+       with type 'a io = 'a Io.t
+        and type connection = Database.connection)
+    (_ :
+       Session_repository.S
        with type 'a io = 'a Io.t
         and type connection = Database.connection) :
   S with type 'a io = 'a Io.t and type database = Database.t

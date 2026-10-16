@@ -362,5 +362,11 @@ module Make (Io : Base.Monad.S) = struct
       Hashtbl.remove conn.sessions token;
       Io.return (Ok ())
     ;;
+
+    let remove_by_username ~conn ~username =
+      Hashtbl.filter_inplace conn.sessions ~f:(fun session ->
+        not (String.equal session.Domain.Session.username username));
+      Io.return (Ok ())
+    ;;
   end
 end

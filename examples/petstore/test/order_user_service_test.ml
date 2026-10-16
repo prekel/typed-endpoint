@@ -45,6 +45,7 @@ module Orders =
 
 module Users =
   Petstore_app.User_service.Make (Io) (Memory_database) (Memory_database.User_repository)
+    (Memory_database.Session_repository)
 
 let result_exn = function
   | Ok value -> value
@@ -112,9 +113,77 @@ let () =
   assert (
     not (Users.authenticate ~database ~username:"alice" ~password:"wrong" |> result_exn));
   let batch = [ user "bob" "one"; user "alice" "duplicate" ] in
-  assert (Result.is_error (Users.add_many ~database batch));
+  assert (
+    Result.is_error
+      (Users.add_many ~database ~actor:Petstore_app.Domain.User.Administrator batch));
   assert (Users.find ~database "bob" |> result_exn |> Option.is_none);
-  assert (Result.is_ok (Users.add_many ~database [ user "bob" "one"; user "carol" "two" ]));
-  assert (Result.is_ok (Users.delete ~database "carol"));
-  assert (Result.is_error (Users.delete ~database "missing"))
+  assert (
+    Result.is_ok
+      (Users.add_many
+         ~database
+         ~actor:Petstore_app.Domain.User.Administrator
+         [ user "bob" "one"; user "carol" "two" ]));
+  assert (
+    Result.is_ok
+      (Users.delete ~database ~actor:Petstore_app.Domain.User.Administrator "carol"));
+  assert (
+    Result.is_error
+      (Users.delete ~database ~actor:Petstore_app.Domain.User.Administrator "missing"))
+;;
+
+module Failing_sessions = struct
+  include Memory_database.Session_repository
+
+  let remove_by_username ~conn ~username =
+    let _ = remove_by_username ~conn ~username in
+    Error `Unavailable
+  ;;
+end
+
+module Failing_users =
+  Petstore_app.User_service.Make (Io) (Memory_database) (Memory_database.User_repository)
+    (Failing_sessions)
+
+let () =
+  let database = Memory_database.create () in
+  let actor = Petstore_app.Domain.User.Administrator in
+  assert (Result.is_ok (Users.add ~database (user "atomic" "original")));
+  let saved =
+    Memory_database.transaction database ~on_error:Fn.id ~f:(fun ~conn ->
+      Memory_database.Session_repository.add
+        ~conn
+        Petstore_app.Domain.Session.
+          { token = "old-session"; username = "atomic"; expires_at = 100. })
+  in
+  assert (Poly.equal saved (Ok true));
+  let session_exists () =
+    Memory_database.with_connection database ~on_error:Fn.id ~f:(fun ~conn ->
+      Memory_database.Session_repository.find ~conn "old-session")
+    |> result_exn
+    |> Option.is_some
+  in
+  assert (
+    Result.is_error
+      (Failing_users.update
+         ~database
+         ~actor
+         ~username:"atomic"
+         (user "atomic" "replacement")));
+  assert (
+    Users.authenticate ~database ~username:"atomic" ~password:"original" |> result_exn);
+  assert (
+    not
+      (Users.authenticate ~database ~username:"atomic" ~password:"replacement"
+       |> result_exn));
+  assert (session_exists ());
+  assert (Result.is_error (Failing_users.delete ~database ~actor "atomic"));
+  assert (Users.find ~database "atomic" |> result_exn |> Option.is_some);
+  assert (session_exists ());
+  let other = Petstore_app.Domain.User.Session_user "other" in
+  assert (Poly.equal (Users.delete ~database ~actor:other "atomic") (Error `Forbidden));
+  assert (
+    Poly.equal
+      (Users.add_many ~database ~actor:other [ user "denied" "secret" ])
+      (Error `Forbidden));
+  assert (Users.find ~database "denied" |> result_exn |> Option.is_none)
 ;;

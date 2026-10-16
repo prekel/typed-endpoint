@@ -35,6 +35,11 @@ Deriver `typed-endpoint-ppx` перенесён и адаптирован на �
 `[@name ...]`, `[@default ...]` и `[@default None]`. Числовые ограничения
 `jsonschema.minimum`/`maximum` несовместимы со строковым кодированием числа.
 
+`[@jsonschema.*]` задают декларативные ограничения: они не добавляют
+runtime-валидацию в Yojson-декодер. Проверки в codec и обработчике остаются
+ответственностью приложения. Границы гарантий и тесты описаны в
+[проверке соответствия контракту](doc/contract_conformance.md).
+
 Форматы задаются типизированными вариантами:
 
 ```ocaml
@@ -127,6 +132,48 @@ capabilities в порядке `returns`, значение контекста г
 безопасный JSON `{ "code": ..., "message": ... }`, который можно заменить на
 уровне endpoint, группы или всей компиляции.
 
+Для query-массивов используйте `/! query_arg` или `/? query_arg` с
+`Query.csv`/`Query.repeated`:
+
+```ocaml
+let tags = Query.csv ~description:"Pet tags" (Parameter.string ~description:"Tag" ())
+
+let find =
+  get / "search" /! query_arg "tags" tags
+  |> documented
+  |> accepts Request.empty
+  |> returns (case `OK (Response.text ~description:"Selected tags" ()))
+  ==> fun tags ok () () -> respond ok (String.concat ~sep:"," tags)
+```
+
+CSV принимает `?tags=cat,dog`, repeated — `?tags=cat&tags=dog`.
+OpenAPI выводит `style: form` и соответствующий `explode`. CSV не экранирует
+запятую внутри элемента; для таких значений используйте repeated. `Query.v`
+позволяет связать собственный decoder списка элементов с его типизированными
+metadata. Scalar query-codec с явной array-схемой отклоняется при компиляции.
+
+OpenAPI оптимизирован для чтения: именованные DTO переиспользуются через
+`components.schemas`, а сами HTTP-ответы остаются внутри операций. Искусственные
+response components с хешами не создаются. Анонимные примитивы и стандартные
+коллекции остаются inline; элементы коллекций могут ссылаться на DTO.
+Явные `schema_name` сохраняются и для scalar/collection codecs.
+Одинаковые path-параметры всех операций пути поднимаются в Path Item.
+Пустые `parameters` и `required`, пустые operation descriptions и description,
+совпадающий с summary, опускаются. `default`, примеры, ограничения и области
+ссылок сохраняются. У генератора один читаемый формат без режима Compact.
+
+Описание конкретного JSON-ответа можно переопределить без изменения DTO:
+
+```ocaml
+Response.json ~description:"Pet not found" (module Dto.Api_response)
+```
+
+Без `~description` используется описание DTO; явно заданная пустая строка
+сохраняется. Для автоматических ошибок есть
+`Decode_error_response.with_description`: функция от статуса возвращает
+`Some text` для override или `None` для исходного описания. Подробнее —
+[описания ответов](doc/production.md#описания-ответов).
+
 Для `Request.json`, `Request.text` и `Request.binary` последний аргумент
 handler — `Request_body.t`. Вызов `Request_body.read` возвращает `Result` в
 эффекте backend; `Request_body.reject` применяет настроенный ответ при ошибке.
@@ -157,9 +204,10 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 
 ## Установка из GitHub
 
-Все шесть пакетов находятся в одном репозитории. Их зависимости друг от друга
-требуют одинаковую версию, поэтому закрепляйте их на одном теге. Например,
-для установки всех пакетов из `v0.3.1` в switch OCaml 5.1.1 или новее:
+Все шесть пакетов находятся в одном репозитории и требуют одинаковую версию.
+Скрипт ниже устанавливает текущий релиз `v0.3.1`, а если пакеты уже установлены —
+обновляет их до этой версии, предварительно заменяя существующие pin.
+Для установки всех пакетов нужен switch OCaml 5.1.1 или новее:
 
 ```bash
 typed_endpoint_packages=(
@@ -181,27 +229,7 @@ opam install "${typed_endpoint_packages[@]}"
 `typed-endpoint-ppx` и `typed-endpoint-opium`; они поддерживают OCaml 4.14.1.
 При установке адаптеров с `--with-test` добавьте `typed-endpoint-testing`.
 
-Чтобы обновить существующие pins до `v0.3.1`, сначала закрепите все выбранные
-пакеты на этом теге, затем выполните общий upgrade. При переходе на следующий
-опубликованный тег замените `next_tag`:
-
-```bash
-typed_endpoint_packages=(
-  typed-endpoint
-  typed-endpoint-ppx
-  typed-endpoint-testing
-  typed-endpoint-opium
-  typed-endpoint-dream
-  typed-endpoint-eio
-)
-next_tag=v0.3.1
-for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" "git+https://github.com/prekel/typed-endpoint.git#$next_tag"
-done
-opam upgrade "${typed_endpoint_packages[@]}"
-```
-
-`-n` откладывает установку до общего `opam install` или `opam upgrade`, а `-y`
+`-n` откладывает установку до общего `opam install`, а `-y`
 подтверждает замену существующего pin. Тег указывается после `#` в Git URL.
 Изменения API версии `v0.3.1` описаны в [истории изменений](CHANGES.md).
 
@@ -315,13 +343,17 @@ handler, поэтому перед рендерингом библиотека �
 В [examples/petstore](examples/petstore/README.md) находится расширенный пример
 на основе Swagger Petstore v3: разделы `pet`, `store` и `user`,
 бинарная загрузка изображений, отдельное пагинированное расширение,
-OAuth/API-key guards, DI доменных сервисов, страница выбора Swagger UI, Scalar,
+HTTP Bearer/API-key guards, DI доменных сервисов, страница выбора Swagger UI, Scalar,
 RapiDoc, Redoc и Stoplight Elements на `/docs`, `/openapi.json` и runtime-only
 `/health`. Один DSL запускается через testing, Opium, Dream и Eio.
 
 Login принимает обязательные credentials в JSON через `POST /user/login` и
 создаёт сессию на один час; `POST /user/logout` отзывает её. Независимый demo
-bearer сохранён. Ответы пользователя не содержат пароль. Эти и остальные
+bearer сохранён как административный. Регистрация и чтение профиля публичны;
+обновлять и удалять профиль может владелец либо административные credentials.
+Создание требует username и password, PUT требует password и заменяет профиль;
+смена пароля и удаление отзывают все сессии пользователя. Batch требует
+административных credentials и возвращает массив. Ответы пользователя не содержат пароль. Эти и остальные
 отличия от исходного Petstore описаны в README примера.
 
 ```sh
@@ -331,7 +363,10 @@ opam exec -- dune exec examples/petstore/servers/opium_server.exe
 
 ## Совместимость и ограничения
 
-Требуется Dune 3.14 или новее.
+Требуется Dune 3.14 или новее. Собственным реализациям `Backend.S` нужно
+поддержать `respond_json ?pretty` с default `false`; существующие вызовы
+сохраняют компактное представление. Petstore использует `~pretty:true` только
+для `/openapi.json`.
 
 | Пакеты | Минимальный OCaml | Версии HTTP-библиотек |
 | --- | --- | --- |

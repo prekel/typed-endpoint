@@ -1,0 +1,46 @@
+(copy_files ../../lib/openapi_normalize.ml)
+
+(copy_files ../../lib/openapi_normalize.mli)
+
+(test
+ (name schema_conformance)
+ (modules schema_conformance)
+ (package typed-endpoint-testing)
+ (libraries base qcheck typed-endpoint contract_test_support yojson)
+ (preprocess
+  (pps ppx_deriving_yojson typed-endpoint-ppx)))
+
+(test
+ (name normalization_conformance)
+ (modules normalization_conformance openapi_normalize)
+ (package typed-endpoint-testing)
+ (libraries base qcheck contract_test_support yojson))
+
+(test
+ (name http_conformance)
+ (modules http_conformance)
+ (package typed-endpoint-testing)
+ (libraries
+  base
+  typed-endpoint
+  typed-endpoint-testing
+  contract_test_support
+  yojson)
+ (preprocess
+  (pps ppx_deriving_yojson typed-endpoint-ppx)))
+
+(executable
+ (name client_wire_fixture)
+ (modules client_wire_fixture)
+ (libraries base typed-endpoint yojson)
+ (preprocess
+  (pps ppx_deriving_yojson typed-endpoint-ppx)))
+
+(rule
+ (alias client-conformance)
+ (package typed-endpoint-testing)
+ (deps client_numbers.mjs)
+ (action
+  (pipe-stdout
+   (run %{exe:client_wire_fixture.exe})
+   (run node %{dep:client_numbers.mjs}))))

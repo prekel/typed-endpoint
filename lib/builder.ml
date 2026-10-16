@@ -252,7 +252,7 @@ module Backend = struct
     val respond_empty : ?status:Status.t -> unit -> resp io
     val respond_string : ?status:Status.t -> string -> resp io
     val respond_html : ?status:Status.t -> string -> resp io
-    val respond_json : ?status:Status.t -> Yojson.Safe.t -> resp io
+    val respond_json : ?status:Status.t -> ?pretty:bool -> Yojson.Safe.t -> resp io
     val combine : app_builder -> app_builder -> app_builder
     val empty : app_builder
   end
@@ -456,6 +456,45 @@ module Parameter = struct
         | "false" -> Ok false
         | _ -> Error "expected true or false")
       ()
+  ;;
+end
+
+module Query = struct
+  type encoding = Contract.query_encoding
+
+  type 'a t =
+    { encoding : encoding
+    ; metadata : 'a Metadata.t
+    ; of_values : string list -> ('a, string) Result.t
+    }
+
+  let v ~encoding ~metadata ~of_values () = { encoding; metadata; of_values }
+
+  let collection
+        (type a)
+        encoding
+        ?schema_name
+        ~description
+        (module Item : Parameter.S with type t = a)
+    =
+    let metadata =
+      Metadata.v
+        ?schema_name
+        ~description
+        ~schema:(Json_schema.list_exn ~items:Item.metadata.schema ())
+        ()
+    in
+    v
+      ~encoding
+      ~metadata
+      ~of_values:(fun values -> List.map values ~f:Item.of_string |> Result.all)
+      ()
+  ;;
+
+  let csv ?schema_name ~description item = collection `Csv ?schema_name ~description item
+
+  let repeated ?schema_name ~description item =
+    collection `Repeated ?schema_name ~description item
   ;;
 end
 
@@ -704,10 +743,17 @@ module Make (B : Backend.S) = struct
           -> 'a t
       | With_header : 'header Header.t * 'body t -> ('header * 'body) t
 
-    let json : type a. (module Response_payload.S with type t = a) -> a t =
-      fun (module P : Response_payload.S with type t = a) ->
-      Payload
-        { payload = Json (module P); metadata = documentation_of_metadata P.metadata }
+    let json
+      : type a. ?description:string -> (module Response_payload.S with type t = a) -> a t
+      =
+      fun ?description (module P : Response_payload.S with type t = a) ->
+      let metadata = documentation_of_metadata P.metadata in
+      let metadata =
+        { metadata with
+          description = Option.value description ~default:metadata.description
+        }
+      in
+      Payload { payload = Json (module P); metadata }
     ;;
 
     let text ~description () : string t =
@@ -975,10 +1021,15 @@ module Make (B : Backend.S) = struct
       | T :
           { response : 'a Response.t
           ; map : Decode_error.t -> 'a
+          ; description : Status.client_error -> string option
           }
           -> t
 
-    let json ~payload ~map = T { response = Response.json payload; map }
+    let json ~payload ~map =
+      T { response = Response.json payload; map; description = (fun _ -> None) }
+    ;;
+
+    let with_description description (T policy) = T { policy with description }
 
     let default =
       json
@@ -987,18 +1038,63 @@ module Make (B : Backend.S) = struct
     ;;
   end
 
+  type 'a query_codec =
+    | Scalar_query of (module Parameter.S with type t = 'a)
+    | Array_query of 'a Query.t
+
+  let query_metadata : type a. a query_codec -> a Metadata.t = function
+    | Scalar_query (module P) -> P.metadata
+    | Array_query query -> query.metadata
+  ;;
+
+  let query_encoding = function
+    | Scalar_query _ -> None
+    | Array_query query -> Some query.Query.encoding
+  ;;
+
+  let parse_query
+    : type a.
+      name:string -> a query_codec -> string list -> (a option, Decode_error.t) Result.t
+    =
+    fun ~name codec values ->
+    match values with
+    | [] -> Ok None
+    | _ ->
+      let duplicate =
+        match codec with
+        | Scalar_query _ -> List.length values > 1
+        | Array_query { encoding = `Csv; _ } -> List.length values > 1
+        | Array_query { encoding = `Repeated; _ } -> false
+      in
+      if duplicate then
+        Error (Decode_error.Duplicate_parameter { source = `Query; name })
+      else (
+        let result =
+          match codec with
+          | Scalar_query (module P) -> P.of_string (List.hd_exn values)
+          | Array_query query ->
+            let values =
+              match query.encoding with
+              | `Csv -> String.split (List.hd_exn values) ~on:','
+              | `Repeated -> values
+            in
+            query.of_values values
+        in
+        result
+        |> Result.map ~f:Option.some
+        |> Result.map_error ~f:(fun error ->
+          Decode_error.Invalid_parameter
+            { source = `Query; name; value = List.hd_exn values; error }))
+  ;;
+
   type (_, _) path =
     | End : ('f, 'f) path
     | Static : string * ('h, 'f) path -> ('h, 'f) path
     | Param :
         string * (module Parameter.S with type t = 'p) * ('h, 'f) path
         -> ('p -> 'h, 'f) path
-    | Query :
-        string * (module Parameter.S with type t = 'q) * ('h, 'f) path
-        -> ('q option -> 'h, 'f) path
-    | QueryReq :
-        string * (module Parameter.S with type t = 'q) * ('h, 'f) path
-        -> ('q -> 'h, 'f) path
+    | Query : string * 'q query_codec * ('h, 'f) path -> ('q option -> 'h, 'f) path
+    | QueryReq : string * 'q query_codec * ('h, 'f) path -> ('q -> 'h, 'f) path
     | Request_header : 'header Header.t * ('h, 'f) path -> ('header -> 'h, 'f) path
 
   let path_to_string : type h f. (h, f) path -> string =
@@ -1060,56 +1156,16 @@ module Make (B : Backend.S) = struct
        | Ok v ->
          let handler' = handler v in
          apply_path rest handler' req0)
-    | Query (name, (module Q : Parameter.S with type t = _), rest) ->
-      let raw_values = B.query req0 name in
-      let parsed =
-        match raw_values with
-        | [] -> Ok None
-        | [ value ] ->
-          Q.of_string value
-          |> Result.map ~f:Option.some
-          |> Result.map_error ~f:(fun error -> `Parse error)
-        | _ -> Error `Duplicate
-      in
-      (match parsed with
-       | Error `Duplicate ->
-         Error (Decode_error.Duplicate_parameter { source = `Query; name })
-       | Error (`Parse error) ->
-         Error
-           (Decode_error.Invalid_parameter
-              { source = `Query
-              ; name
-              ; value = List.hd raw_values |> Option.value ~default:""
-              ; error
-              })
-       | Ok v_opt ->
-         let handler' = handler v_opt in
-         apply_path rest handler' req0)
-    | QueryReq (name, (module Q : Parameter.S with type t = _), rest) ->
-      let raw_values = B.query req0 name in
-      let parsed =
-        match raw_values with
-        | [] -> Error (`Missing : [ `Missing | `Duplicate | `Invalid of string ])
-        | [ value ] ->
-          Result.map_error (Q.of_string value) ~f:(fun error -> `Invalid error)
-        | _ -> Error `Duplicate
-      in
-      (match parsed with
-       | Error `Missing ->
-         Error (Decode_error.Missing_parameter { source = `Query; name })
-       | Error `Duplicate ->
-         Error (Decode_error.Duplicate_parameter { source = `Query; name })
-       | Error (`Invalid error) ->
-         Error
-           (Decode_error.Invalid_parameter
-              { source = `Query
-              ; name
-              ; value = List.hd raw_values |> Option.value ~default:""
-              ; error
-              })
-       | Ok v_opt ->
-         let handler' = handler v_opt in
-         apply_path rest handler' req0)
+    | Query (name, codec, rest) ->
+      let open Result.Let_syntax in
+      let%bind value = parse_query ~name codec (B.query req0 name) in
+      apply_path rest (handler value) req0
+    | QueryReq (name, codec, rest) ->
+      let open Result.Let_syntax in
+      let%bind value = parse_query ~name codec (B.query req0 name) in
+      (match value with
+       | None -> Error (Decode_error.Missing_parameter { source = `Query; name })
+       | Some value -> apply_path rest (handler value) req0)
     | Request_header (header, rest) ->
       let name = Header.name header in
       (match header with
@@ -1418,9 +1474,14 @@ module Make (B : Backend.S) = struct
           ~(statuses : Status.client_error list)
       =
       List.map statuses ~f:(fun status ->
-        { Contract.status = Status.code (status :> Status.t)
-        ; payload = response_payload_spec_of_response policy.response
-        })
+        let payload = response_payload_spec_of_response policy.response in
+        let payload =
+          match policy.description status with
+          | None -> payload
+          | Some description ->
+            { payload with metadata = { payload.metadata with description } }
+        in
+        { Contract.status = Status.code (status :> Status.t); payload })
     ;;
 
     let response_specs_of_context context =
@@ -1438,25 +1499,30 @@ module Make (B : Backend.S) = struct
       | Param (name, (module P : Parameter.S with type t = _), rest) ->
         { name
         ; kind = `Path
+        ; query_encoding = None
         ; required = true
         ; schema = schema_of_metadata P.metadata
         ; metadata = documentation_of_metadata P.metadata
         }
         :: path_params rest
-      | Query (name, (module Q : Parameter.S with type t = _), rest) ->
-        { name
+      | Query (name, codec, rest) ->
+        let metadata = query_metadata codec in
+        { Contract.name
         ; kind = `Query
         ; required = false
-        ; schema = schema_of_metadata Q.metadata
-        ; metadata = documentation_of_metadata Q.metadata
+        ; schema = schema_of_metadata metadata
+        ; query_encoding = query_encoding codec
+        ; metadata = documentation_of_metadata metadata
         }
         :: path_params rest
-      | QueryReq (name, (module Q : Parameter.S with type t = _), rest) ->
-        { name
+      | QueryReq (name, codec, rest) ->
+        let metadata = query_metadata codec in
+        { Contract.name
         ; kind = `Query
         ; required = true
-        ; schema = schema_of_metadata Q.metadata
-        ; metadata = documentation_of_metadata Q.metadata
+        ; schema = schema_of_metadata metadata
+        ; query_encoding = query_encoding codec
+        ; metadata = documentation_of_metadata metadata
         }
         :: path_params rest
       | Request_header (header, rest) ->
@@ -1473,7 +1539,14 @@ module Make (B : Backend.S) = struct
             , schema_of_metadata H.metadata
             , documentation_of_metadata H.metadata )
         in
-        { Contract.name; kind = `Header; required; schema; metadata } :: path_params rest
+        { Contract.name
+        ; kind = `Header
+        ; required
+        ; schema
+        ; query_encoding = None
+        ; metadata
+        }
+        :: path_params rest
     ;;
 
     let collect_responses cases =
@@ -1710,6 +1783,11 @@ module Make (B : Backend.S) = struct
           ; kind : Contract.param_kind
           ; name : string
           }
+      | Array_query_requires_codec of
+          { meth : string
+          ; path : string
+          ; name : string
+          }
       | Duplicate_response_status of
           { meth : string
           ; path : string
@@ -1892,12 +1970,20 @@ module Make (B : Backend.S) = struct
     }
   ;;
 
-  type 'a argument =
-    { name : string
-    ; codec : (module Parameter.S with type t = 'a)
-    }
+  type (_, _) argument =
+    | Scalar_argument :
+        string * (module Parameter.S with type t = 'a)
+        -> ('a, [ `Scalar ]) argument
+    | Query_argument : string * 'a Query.t -> ('a, [ `Query ]) argument
 
-  let arg name codec = { name; codec }
+  let arg name codec = Scalar_argument (name, codec)
+  let query_arg name codec = Query_argument (name, codec)
+
+  let query_argument : type a kind. (a, kind) argument -> string * a query_codec =
+    function
+    | Scalar_argument (name, codec) -> name, Scalar_query codec
+    | Query_argument (name, codec) -> name, Array_query codec
+  ;;
 
   type ('phase, 'handler, 'terminal) uri =
     { meth : Method.t
@@ -1910,11 +1996,9 @@ module Make (B : Backend.S) = struct
         string * (module Parameter.S with type t = 'a)
         -> ('a -> 'tail, 'tail) segment
     | Optional_query_segment :
-        string * (module Parameter.S with type t = 'a)
+        string * 'a query_codec
         -> ('a option -> 'tail, 'tail) segment
-    | Required_query_segment :
-        string * (module Parameter.S with type t = 'a)
-        -> ('a -> 'tail, 'tail) segment
+    | Required_query_segment : string * 'a query_codec -> ('a -> 'tail, 'tail) segment
     | Header_segment : 'a Header.t -> ('a -> 'tail, 'tail) segment
 
   let prepend_segment
@@ -1958,7 +2042,7 @@ module Make (B : Backend.S) = struct
   let ( /: )
         (type handler value terminal)
         (builder : ([ `Path ], handler, value -> terminal) uri)
-        ({ name; codec } : value argument)
+        (Scalar_argument (name, codec) : (value, [ `Scalar ]) argument)
     : ([ `Path ], handler, terminal) uri
     =
     { meth = builder.meth
@@ -1967,22 +2051,24 @@ module Make (B : Backend.S) = struct
   ;;
 
   let ( /? )
-        (type phase handler value terminal)
+        (type phase handler value terminal kind)
         (builder : (phase, handler, value option -> terminal) uri)
-        ({ name; codec } : value argument)
+        (argument : (value, kind) argument)
     : ([ `Query ], handler, terminal) uri
     =
+    let name, codec = query_argument argument in
     { meth = builder.meth
     ; path = append_segment builder.path (Optional_query_segment (name, codec))
     }
   ;;
 
   let ( /! )
-        (type phase handler value terminal)
+        (type phase handler value terminal kind)
         (builder : (phase, handler, value -> terminal) uri)
-        ({ name; codec } : value argument)
+        (argument : (value, kind) argument)
     : ([ `Query ], handler, terminal) uri
     =
+    let name, codec = query_argument argument in
     { meth = builder.meth
     ; path = append_segment builder.path (Required_query_segment (name, codec))
     }

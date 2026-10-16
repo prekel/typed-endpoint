@@ -88,6 +88,12 @@ end
 
 (** User profile values keyed by username. *)
 module User : sig
+  (** Trusted application identity, supplied by the authenticated controller.
+      Session users may replace or delete only their own profile. *)
+  type actor =
+    | Administrator
+    | Session_user of string
+
   (** Editable user profile and credentials. The username is kept outside this
       record because it is the service-level identity. *)
   type attributes =

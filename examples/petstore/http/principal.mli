@@ -1,23 +1,29 @@
 open! Base
 
-(** Authenticated Petstore caller carried by protected group contexts. *)
+(** Credentials are distinct so a login session never inherits administrative
+    authority from a demo bearer or API key. *)
 type credential =
   [ `Api_key
-  | `Oauth
+  | `Demo_bearer
+  | `Session
   ]
 
-(** Application identity recorded for a successful authentication. *)
 type identity =
   { subject : string
   ; credential : credential
   ; session_id : string option
   }
 
-(** Principal carried by typed-endpoint request contexts. *)
 type t = identity Typed_endpoint.Principal.t
 
-(** Builds an OAuth principal with the scopes granted to the caller. *)
-val oauth : ?subject:string -> ?session_id:string -> scopes:string list -> unit -> t
+(** Builds the administrative development identity. *)
+val demo : unit -> t
 
-(** Builds an API-key principal, which carries no OAuth scopes. *)
+(** Builds a user identity bound to a revocable login session. *)
+val session : username:string -> token:string -> t
+
+(** Builds the administrative API-key identity. *)
 val api_key : unit -> t
+
+(** Converts transport credentials into the domain's user-access policy. *)
+val actor : t -> Domain.User.actor

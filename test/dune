@@ -5,10 +5,19 @@
   invariants
   bug_regressions
   json_schema_test
+  openapi_test
+  openapi_readability_test
+  response_description_test
   yojson_annotations
   schema_dependency
   typed_schema_signature)
- (libraries base jsonschema typed-endpoint typed-endpoint-testing yojson)
+ (libraries
+  base
+  jsonschema
+  typed-endpoint
+  typed-endpoint-testing
+  contract_test_support
+  yojson)
  (inline_tests)
  (preprocess
   (pps ppx_let ppx_deriving_yojson typed-endpoint-ppx ppx_expect)))
@@ -29,7 +38,10 @@
   compile_fail/wrong_handler_arguments.ml
   compile_fail/wrong_payload.ml
   compile_fail/wrong_status.ml
-  compile_fail/wrong_stage_order.ml)
+  compile_fail/wrong_stage_order.ml
+  compile_fail/wrong_collection_phase.ml
+  compile_fail/wrong_collection_handler.ml
+  compile_fail/wrong_collection_path.ml)
  (action
   (run
    %{test}
@@ -38,7 +50,10 @@
    %{dep:compile_fail/wrong_payload.ml}
    %{dep:compile_fail/wrong_status.ml}
    %{dep:compile_fail/wrong_handler_arguments.ml}
-   %{dep:compile_fail/wrong_stage_order.ml})))
+   %{dep:compile_fail/wrong_stage_order.ml}
+   %{dep:compile_fail/wrong_collection_phase.ml}
+   %{dep:compile_fail/wrong_collection_handler.ml}
+   %{dep:compile_fail/wrong_collection_path.ml})))
 
 (executable
  (name schema_ppx)

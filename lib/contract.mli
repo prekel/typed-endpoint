@@ -190,6 +190,12 @@ type param_kind =
   | `Header
   ]
 
+(** Supported collection query representations. Absence denotes a scalar codec. *)
+type query_encoding =
+  [ `Csv
+  | `Repeated
+  ]
+
 (** The documentation contract for a path, query, or header parameter. Path
     parameters are required by construction; query and header parameters may
     be optional. [schema] describes the value after decoding. *)
@@ -198,6 +204,7 @@ type param =
   ; kind : param_kind
   ; required : bool
   ; schema : Schema.t
+  ; query_encoding : query_encoding option
   ; metadata : Documentation.t
   }
 
@@ -337,6 +344,11 @@ module Compile_error : sig
         }
     (** One endpoint declares the same parameter name more than once in the
         same path or query location. *)
+    | Array_query_requires_codec of
+        { meth : string
+        ; path : string
+        ; name : string
+        }
     | Duplicate_response_status of
         { meth : string
         ; path : string

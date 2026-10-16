@@ -27,6 +27,10 @@ build:
 test:
 	opam exec -- dune runtest --root .
 
+.PHONY: test-js
+test-js:
+	opam exec -- dune build --root . @test/conformance/client-conformance
+
 .PHONY: fmt
 fmt:
 	opam exec -- dune build --root . @fmt

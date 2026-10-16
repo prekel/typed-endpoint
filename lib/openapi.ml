@@ -17,17 +17,28 @@ let render_schema (schema : Contract.Schema.t) =
 
 let render_param (param : Contract.param) =
   yo_obj
-    [ "name", yo_str param.name
-    ; ( "in"
-      , yo_str
-          (match param.kind with
-           | `Path -> "path"
-           | `Query -> "query"
-           | `Header -> "header") )
-    ; "required", yo_bool param.required
-    ; "description", yo_str param.metadata.description
-    ; "schema", render_schema param.schema
-    ]
+    ([ "name", yo_str param.name
+     ; ( "in"
+       , yo_str
+           (match param.kind with
+            | `Path -> "path"
+            | `Query -> "query"
+            | `Header -> "header") )
+     ; "required", yo_bool param.required
+     ; "description", yo_str param.metadata.description
+     ; "schema", render_schema param.schema
+     ]
+     @
+     match param.query_encoding with
+     | None -> []
+     | Some encoding ->
+       [ "style", yo_str "form"
+       ; ( "explode"
+         , yo_bool
+             (match encoding with
+              | `Csv -> false
+              | `Repeated -> true) )
+       ])
 ;;
 
 let render_request_body = function
@@ -134,7 +145,13 @@ let render_operation
       Int.to_string response.status, render_response_payload response.payload)
     |> yo_obj
   in
-  let base = [ "parameters", params; "responses", responses ] in
+  let base =
+    (if List.is_empty endpoint.params then
+       []
+     else
+       [ "parameters", params ])
+    @ [ "responses", responses ]
+  in
   let base =
     match request_body with
     | None -> base
@@ -302,4 +319,5 @@ let render ~config (compiled : Contract.Compiled.t) =
           | None -> []
           | Some components -> [ "components", components ])
        ])
+  |> Openapi_normalize.document
 ;;

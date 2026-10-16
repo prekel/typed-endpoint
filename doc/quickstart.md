@@ -89,6 +89,27 @@ custom scalar экспортируйте типизированную схему
 ``~format:`Int64`` или ``~format:`Double``. Нестандартное расширение записывается
 явно как ``~format:(`Custom "vendor-format")``.
 
+Для массивов query используются `/! query_arg` или `/? query_arg` и `Query.t`.
+`Query.csv ~description (module Item)` принимает одно CSV-значение и
+публикует `style: form`, `explode: false`. `Query.repeated` принимает повторные
+ключи и публикует `explode: true`. `Item` реализует `Parameter.S` для одного
+элемента; результат обоих codecs — список элементов. `Query.v` задаёт
+собственную обработку списка с типизированными metadata. Scalar `arg` с
+array-схемой в query отклоняется. Для CSV-элементов с запятыми используйте
+repeated; CSV escaping не поддерживается.
+
+`Compiled.openapi` выводит вложенные копии именованных объектных моделей через
+`$ref`, а Response Objects оставляет inline. Одинаковые path-параметры всех
+операций пути поднимаются в Path Item. Анонимные примитивы и коллекции остаются
+inline; явно заданные имена схем сохраняются. Схемы с локальными ресурсами и
+ссылками, `default` и примеры не сокращаются.
+
+Для локального описания используйте
+`Response.json ~description:"Pet not found" (module Dto.Api_response)`.
+Без аргумента сохраняется description DTO; пустая строка — явный override.
+`Decode_error_response.with_description` задаёт описания автоматических ошибок
+по статусу без изменения JSON mapping и runtime-ответов.
+
 `Request.json`, `Request.text` и `Request.binary` передают handler значение
 `'a Request_body.t`. Тело не читается и `Content-Type` не проверяется, пока
 handler не вызовет `Request_body.read`. Первый вызов проверяет media type,

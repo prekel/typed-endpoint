@@ -158,10 +158,14 @@ let respond_html ?status body =
   respond ?status ~headers:[ "content-type", "text/html; charset=utf-8" ] ~body ()
 ;;
 
-let respond_json ?status json =
+let respond_json ?status ?(pretty = false) json =
   respond
     ?status
     ~headers:[ "content-type", "application/json" ]
-    ~body:(Yojson.Safe.to_string json)
+    ~body:
+      (if pretty then
+         Yojson.Safe.pretty_to_string json
+       else
+         Yojson.Safe.to_string json)
     ()
 ;;

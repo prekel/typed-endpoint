@@ -71,6 +71,10 @@ module Order = struct
 end
 
 module User = struct
+  type actor =
+    | Administrator
+    | Session_user of string
+
   type attributes =
     { id : int option
     ; first_name : string option

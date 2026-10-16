@@ -32,11 +32,14 @@ Typed-endpoint генерирует документ OpenAPI `3.1.0` из ско
   умолчанию.
 - `servers` — частично: есть URL и описание; нет `variables`.
 - `paths` — частично: создаются пути с типизированными capture и операции
-  GET, POST, PUT, DELETE, PATCH; нет HEAD, OPTIONS, TRACE и общих полей Path
-  Item, например `servers`, `parameters` и `$ref`.
+  GET, POST, PUT, DELETE, PATCH. Одинаковые path-параметры нескольких операций
+  автоматически поднимаются в Path Item. Нет HEAD, OPTIONS, TRACE и явного
+  объявления общих полей Path Item, например `servers` и `$ref`.
 - `webhooks` — отсутствует.
-- `components` — частично: создаются `schemas` и `securitySchemes`; остальные
-  виды переиспользуемых компонентов не объявляются.
+- `components` — частично: создаются `schemas` и `securitySchemes`.
+  Вложенные копии зарегистрированных объектных моделей переиспользуются через
+  `$ref`. Response Objects остаются inline; `components.responses` и другие
+  виды компонентов не объявляются.
 - `security` — отсутствует на уровне документа; требования задаются у
   отдельных операций.
 - `tags` — частично: выводятся имя и описание тега группы; нет
@@ -54,7 +57,8 @@ Typed-endpoint генерирует документ OpenAPI `3.1.0` из ско
   при компиляции.
 - `parameters` — частично: есть path, query и header со схемой, обязательностью
   и описанием; reserved headers `Accept`, `Content-Type` и `Authorization`
-  отклоняются. Нет cookie, настройки `style`/`explode`, `content` и примеров.
+  отклоняются. `Query.csv`/`Query.repeated` задают `style: form` и `explode`
+  для query-массивов. Нет cookie, остальных стилей, `content` и примеров.
 - `requestBody` — частично: есть JSON, обычный текст и бинарное тело с
   `required=true`. Для JSON `Request.json ~media_types` публикует несколько
   конкретных media types с одним codec и схемой; по умолчанию — `application/json`.

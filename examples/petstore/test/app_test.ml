@@ -40,13 +40,56 @@ module Failing_app =
 let auth = Petstore_app.Routes.{ bearer_token = "test-token"; api_key = "test-key" }
 let compiled = App.compile ~auth ~database:(Database.create ()) ()
 let routes = Endpoint.Compiled.app compiled
-let request = Typed_endpoint_testing.Client.call routes
+let document = Endpoint.Compiled.openapi compiled
+let covered = ref (Set.empty (module String))
+
+let request ?(headers = []) ?(body = "") meth target =
+  let response = Typed_endpoint_testing.Client.call routes ~headers ~body meth target in
+  (* Runtime-only documentation routes are deliberately absent from OpenAPI. *)
+  let runtime_only =
+    String.equal target "/openapi.json"
+    || String.equal target "/docs"
+    || String.is_prefix target ~prefix:"/docs/"
+  in
+  if not runtime_only then (
+    let meth = Contract_test_support.method_name meth in
+    let path = Contract_test_support.path_for_target_exn document ~meth ~target in
+    Contract_test_support.response_exn
+      ~document
+      ~path
+      ~meth
+      ~status:(Typed_endpoint_testing.Response.status response)
+      ~headers:(Typed_endpoint_testing.Response.headers response)
+      ~body:(Typed_endpoint_testing.Response.body response);
+    covered := Set.add !covered (meth ^ " " ^ path);
+    if Typed_endpoint_testing.Response.status response < 400 then (
+      match
+        List.Assoc.find headers "content-type" ~equal:String.Caseless.equal
+      with
+      | Some "application/json" ->
+        Contract_test_support.request_json_exn
+          ~document
+          ~path
+          ~meth
+          ~media_type:"application/json"
+          (Yojson.Safe.from_string body)
+      | _ -> ()));
+  response
+;;
+
 let bearer_headers = [ "authorization", "Bearer test-token" ]
 let api_key_headers = [ "api_key", "test-key" ]
 let json headers = ("content-type", "application/json") :: headers
 
 let assert_status expected response =
-  assert (Int.equal (Typed_endpoint_testing.Response.status response) expected)
+  let actual = Typed_endpoint_testing.Response.status response in
+  if not (Int.equal actual expected) then
+    Stdlib.failwith
+      (Stdlib.Printf.sprintf
+         "expected HTTP %d, got %d: %s"
+         expected
+         actual
+         (Typed_endpoint_testing.Response.body response))
 ;;
 
 let response_json response =
@@ -241,11 +284,13 @@ let test_user_api () =
       String.equal
       (Typed_endpoint_testing.Response.header logged_in "X-Rate-Limit")
       None);
-  let update =
-    user_json ~username:"ignored" ~first_name:"Alicia" ~password:"new-secret" ()
-  in
+  let update = user_json ~first_name:"Alicia" ~password:"new-secret" () in
   let updated =
-    request ~headers:(json []) ~body:(Yojson.Safe.to_string update) `PUT "/user/alice"
+    request
+      ~headers:(json [ "authorization", "Bearer " ^ login_token ])
+      ~body:(Yojson.Safe.to_string update)
+      `PUT
+      "/user/alice"
   in
   assert_status 200 updated;
   let found = request `GET "/user/alice" in
@@ -262,7 +307,7 @@ let test_user_api () =
   in
   let bulk =
     request
-      ~headers:(json [])
+      ~headers:(json api_key_headers)
       ~body:(Yojson.Safe.to_string users)
       `POST
       "/user/createWithList"
@@ -270,17 +315,34 @@ let test_user_api () =
   assert_status 200 bulk;
   assert (
     String.equal
-      Yojson.Safe.Util.(response_json bulk |> member "username" |> to_string)
+      Yojson.Safe.Util.(
+        response_json bulk |> to_list |> List.last_exn |> member "username" |> to_string)
       "carol");
+  assert_status
+    200
+    (request
+       ~headers:(json api_key_headers)
+       ~body:{|[{"username":"dave","password":"three"}]|}
+       `POST
+       "/user/createWithArray");
   assert_status 200 (request ~headers:bearer_headers `POST "/user/logout");
-  assert_status 200 (request `DELETE "/user/alice");
+  assert_status 200 (request ~headers:bearer_headers `DELETE "/user/alice");
   assert_status 404 (request `GET "/user/alice")
 ;;
+
+let resolve_response = Contract_test_support.resolve_response_exn
 
 let test_openapi () =
   let response = request `GET "/openapi.json" in
   assert_status 200 response;
   let document = response_json response in
+  assert (
+    String.is_substring (Typed_endpoint_testing.Response.body response) ~substring:"\n  ");
+  assert (
+    Option.equal
+      String.equal
+      (Typed_endpoint_testing.Response.header response "content-type")
+      (Some "application/json"));
   validate_openapi_schemas document;
   let open Yojson.Safe.Util in
   assert (
@@ -324,6 +386,7 @@ let test_openapi () =
     |> member "get"
     |> member "responses"
     |> member "200"
+    |> resolve_response document
     |> member "content"
     |> member "application/json"
     |> member "schema"
@@ -335,6 +398,7 @@ let test_openapi () =
     |> member "get"
     |> member "responses"
     |> member "200"
+    |> resolve_response document
     |> member "content"
     |> member "application/json"
     |> member "schema"
@@ -380,13 +444,13 @@ let test_openapi () =
       "header");
   assert (
     String.equal
-      (security_schemes
-       |> member "petstore_auth"
-       |> member "flows"
-       |> member "implicit"
-       |> member "authorizationUrl"
-       |> to_string)
-      "https://petstore3.swagger.io/oauth/authorize");
+      (security_schemes |> member "session_auth" |> member "type" |> to_string)
+      "http");
+  assert (
+    String.equal
+      (security_schemes |> member "session_auth" |> member "scheme" |> to_string)
+      "bearer");
+  assert (Yojson.Safe.equal (security_schemes |> member "petstore_auth") `Null);
   let docs = request `GET "/docs" in
   assert_status 200 docs;
   assert (
@@ -432,7 +496,20 @@ let test_static_repository_substitution () =
 let () =
   let pet_id = test_pet_api () in
   test_store_api pet_id;
+  assert_status
+    200
+    (request ~headers:bearer_headers `DELETE ("/pet/" ^ Int.to_string pet_id));
   test_user_api ();
   test_openapi ();
-  test_static_repository_substitution ()
+  test_static_repository_substitution ();
+  document
+  |> Yojson.Safe.Util.member "paths"
+  |> Yojson.Safe.Util.to_assoc
+  |> List.iter ~f:(fun (path, item) ->
+    Yojson.Safe.Util.to_assoc item
+    |> List.iter ~f:(fun (meth, _) ->
+      if not (String.equal meth "parameters") then (
+        let operation = meth ^ " " ^ path in
+        if not (Set.mem !covered operation) then
+          Stdlib.failwith ("missing HTTP conformance scenario: " ^ operation))))
 ;;

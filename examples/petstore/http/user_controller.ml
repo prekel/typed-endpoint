@@ -1,4 +1,5 @@
 open! Base
+module Petstore_principal = Principal
 open Typed_endpoint
 
 module Make
@@ -26,18 +27,28 @@ struct
          ~operation_id:"createUser"
          ~summary:"Create user."
          ~description:"Creates one Petstore user."
-    |> accepts (Request.json (module Dto.User_input))
+    |> accepts (Request.json (module Dto.User_create))
     |> returns
          (case `OK (Response.json (module Dto.User))
-          <|> case `Bad_request (Response.json (module Dto.Api_response))
-          <|> case `Conflict (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Bad_request
+                (Response.json ~description:"Invalid request" (module Dto.Api_response))
+          <|> case
+                `Conflict
+                (Response.json
+                   ~description:"Username already exists"
+                   (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun ok bad_request conflict service_unavailable database body ->
     let%bind user = Request_body.read body in
     match user with
     | Error error -> Request_body.reject error
     | Ok user ->
-      (match Dto.User_input.to_domain user with
+      (match Dto.User_create.to_domain user with
        | Error message -> respond bad_request (Dto.Api_response.bad_request message)
        | Ok user ->
          let%bind result = Users.add ~database user in
@@ -53,28 +64,47 @@ struct
     |> documented
          ~operation_id
          ~summary:"Creates list of users with given input array."
-         ~description:"Creates all users atomically and returns the final created user."
-    |> accepts (Request.json (module Dto.User_list))
+         ~description:
+           "Creates all users atomically and returns all created users in request order."
+    |> accepts (Request.json (module Dto.User_create_list))
     |> returns
-         (case `OK (Response.json (module Dto.User))
-          <|> case `Bad_request (Response.json (module Dto.Api_response))
-          <|> case `Conflict (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
-    ==> fun ok bad_request conflict service_unavailable database body ->
+         (case `OK (Response.json (module Dto.User_list))
+          <|> case
+                `Forbidden
+                (Response.json
+                   ~description:"Insufficient permissions"
+                   (module Dto.Api_response))
+          <|> case
+                `Bad_request
+                (Response.json ~description:"Invalid request" (module Dto.Api_response))
+          <|> case
+                `Conflict
+                (Response.json
+                   ~description:"Username already exists"
+                   (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
+    ==> fun ok forbidden bad_request conflict service_unavailable context body ->
+    let database = Common.Secured.dependency context in
+    let actor = Petstore_principal.actor (Common.Secured.principal context) in
     let%bind users = Request_body.read body in
     match users with
     | Error error -> Request_body.reject error
     | Ok users ->
-      (match Dto.User_list.to_domain users with
+      (match Dto.User_create_list.to_domain users with
        | Error message -> respond bad_request (Dto.Api_response.bad_request message)
        | Ok [] ->
          respond
            bad_request
            (Dto.Api_response.bad_request "at least one user is required")
        | Ok users ->
-         let%bind result = Users.add_many ~database users in
+         let%bind result = Users.add_many ~database ~actor users in
          (match result with
-          | Ok users -> respond ok (Dto.User.of_domain (List.last_exn users))
+          | Ok users -> respond ok (Dto.User_list.of_domain users)
+          | Error `Forbidden -> respond forbidden (Dto.Api_response.forbidden ())
           | Error (`Already_exists username) ->
             respond conflict (Dto.Api_response.user_conflict username)
           | Error (`Persistence error) -> unavailable service_unavailable error))
@@ -89,8 +119,16 @@ struct
     |> accepts (Request.json (module Dto.Login_request))
     |> returns
          (case `OK (Response.json (module Dto.Login_token))
-          <|> case `Bad_request (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Bad_request
+                (Response.json
+                   ~description:"Invalid request or credentials"
+                   (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun ok bad_request service_unavailable database body ->
     let%bind credentials = Request_body.read body in
     match credentials with
@@ -116,8 +154,16 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.empty ~description:"Successful operation" ())
-          <|> case `Unauthorized (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Unauthorized
+                (Response.json
+                   ~description:"Authentication required"
+                   (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun ok unauthorized service_unavailable context () ->
     let identity = Typed_endpoint.Principal.identity (Common.Secured.principal context) in
     match identity.session_id with
@@ -144,8 +190,14 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.json (module Dto.User))
-          <|> case `Not_found (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
+          <|> case
+                `Not_found
+                (Response.json ~description:"User not found" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
     ==> fun username ok not_found service_unavailable database () ->
     let%bind result = Users.find ~database username in
     match result with
@@ -160,23 +212,40 @@ struct
          ~operation_id:"updateUser"
          ~summary:"Update user resource."
          ~description:"Replaces the user selected by the path username."
-    |> accepts (Request.json (module Dto.User_input))
+    |> accepts (Request.json (module Dto.User_update))
     |> returns
          (case `OK (Response.empty ~description:"Successful operation" ())
-          <|> case `Bad_request (Response.json (module Dto.Api_response))
-          <|> case `Not_found (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
-    ==> fun username ok bad_request not_found service_unavailable database body ->
+          <|> case
+                `Forbidden
+                (Response.json
+                   ~description:"Insufficient permissions"
+                   (module Dto.Api_response))
+          <|> case
+                `Bad_request
+                (Response.json ~description:"Invalid request" (module Dto.Api_response))
+          <|> case
+                `Not_found
+                (Response.json ~description:"User not found" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
+    ==>
+    fun username ok forbidden bad_request not_found service_unavailable context body ->
+    let database = Common.Secured.dependency context in
+    let actor = Petstore_principal.actor (Common.Secured.principal context) in
     let%bind user = Request_body.read body in
     match user with
     | Error error -> Request_body.reject error
     | Ok user ->
-      (match Dto.User_input.to_domain ~username user with
+      (match Dto.User_update.to_domain ~username user with
        | Error message -> respond bad_request (Dto.Api_response.bad_request message)
        | Ok user ->
-         let%bind result = Users.update ~database ~username user in
+         let%bind result = Users.update ~database ~actor ~username user in
          (match result with
           | Ok _ -> respond ok ()
+          | Error `Forbidden -> respond forbidden (Dto.Api_response.forbidden ())
           | Error (`Not_found username) ->
             respond not_found (Dto.Api_response.user_not_found username)
           | Error (`Persistence error) -> unavailable service_unavailable error))
@@ -191,12 +260,26 @@ struct
     |> accepts Request.empty
     |> returns
          (case `OK (Response.empty ~description:"User deleted" ())
-          <|> case `Not_found (Response.json (module Dto.Api_response))
-          <|> case `Service_unavailable (Response.json (module Dto.Api_response)))
-    ==> fun username ok not_found service_unavailable database () ->
-    let%bind result = Users.delete ~database username in
+          <|> case
+                `Forbidden
+                (Response.json
+                   ~description:"Insufficient permissions"
+                   (module Dto.Api_response))
+          <|> case
+                `Not_found
+                (Response.json ~description:"User not found" (module Dto.Api_response))
+          <|> case
+                `Service_unavailable
+                (Response.json
+                   ~description:"Service temporarily unavailable"
+                   (module Dto.Api_response)))
+    ==> fun username ok forbidden not_found service_unavailable context () ->
+    let database = Common.Secured.dependency context in
+    let actor = Petstore_principal.actor (Common.Secured.principal context) in
+    let%bind result = Users.delete ~database ~actor username in
     match result with
     | Ok () -> respond ok ()
+    | Error `Forbidden -> respond forbidden (Dto.Api_response.forbidden ())
     | Error (`Not_found username) ->
       respond not_found (Dto.Api_response.user_not_found username)
     | Error (`Persistence error) -> unavailable service_unavailable error
@@ -208,11 +291,14 @@ struct
         ~decode_error:Common.decode_errors
         ~tags:[ "user" ]
         ~description:"Operations about users"
-        [ create_user
-        ; create_users ~path:"createWithList" ~operation_id:"createUsersWithListInput"
+        [ create_user; login_user; get_user ]
+    ; Group.make_with_context
+        ~context:(Common.management ~auth database)
+        ~decode_error:Common.decode_errors
+        ~tags:[ "user" ]
+        ~description:"User management with ownership and administrative checks"
+        [ create_users ~path:"createWithList" ~operation_id:"createUsersWithListInput"
         ; create_users ~path:"createWithArray" ~operation_id:"createUsersWithArrayInput"
-        ; login_user
-        ; get_user
         ; update_user
         ; delete_user
         ]

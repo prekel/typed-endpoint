@@ -132,14 +132,16 @@ let () =
     200;
   let bulk =
     send
-      ~headers:[ "content-type", "application/json" ]
+      ~headers:[ "content-type", "application/json"; "api_key", "wire-key" ]
       ~body:{|[{"username":"bob","password":"one"}]|}
       `POST
       "/user/createWithArray"
   in
   check_json_response bulk 200;
   check
-    (Option.is_none (field "password" (Yojson.Safe.from_string (body bulk))))
+    (match Yojson.Safe.from_string (body bulk) with
+     | `List [ user ] -> Option.is_none (field "password" user)
+     | _ -> false)
     "password leaked from batch";
   let invalid_path = send `GET "/user/%20" in
   check_json_response invalid_path 400;
@@ -153,7 +155,7 @@ let () =
        (field "type" invalid_json)
        (Some (`String "decode_error")))
     "decode error type";
-  let deleted = send `DELETE "/user/alice" in
+  let deleted = send ~headers:[ "api_key", "wire-key" ] `DELETE "/user/alice" in
   check (Int.equal (status deleted) 200) "delete status";
   check (String.is_empty (body deleted)) "empty response body";
   check (Option.is_none (header deleted "content-type")) "empty response Content-Type";

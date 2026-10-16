@@ -32,13 +32,7 @@ module Make (B : Backend.S) (Sessions : Session_service.S with type 'a io = 'a B
     val request_id : _ t -> string option
   end
 
-  (** Requires the official OAuth credentials and injects [dependency]. *)
-  val pet_oauth
-    :  auth:Auth.t
-    -> Sessions.database
-    -> Sessions.database Secured.t Endpoint.Context.t
-
-  (** Accepts either the official OAuth credentials or API key. *)
+  (** Accepts either a login/demo bearer or API key. *)
   val pet_lookup
     :  auth:Auth.t
     -> Sessions.database
@@ -56,9 +50,17 @@ module Make (B : Backend.S) (Sessions : Session_service.S with type 'a io = 'a B
     -> Sessions.database
     -> Sessions.database Secured.t Endpoint.Context.t
 
+  (** Authenticates user-management requests. The application service checks
+      ownership and administrative authority and may return HTTP 403. *)
+  val management
+    :  auth:Auth.t
+    -> Sessions.database
+    -> Sessions.database Secured.t Endpoint.Context.t
+
   (** Injects [dependency] without an authorization guard. *)
   val public : 'a -> 'a Endpoint.Context.t
 
-  (** Stable JSON mapping used by all controller groups. *)
+  (** Stable JSON mapping and status-specific OpenAPI descriptions shared by
+      controller groups. Descriptions do not change runtime error responses. *)
   val decode_errors : Endpoint.Decode_error_response.t
 end

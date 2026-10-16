@@ -13,21 +13,23 @@ Multipart, form data и streaming response пока не входят в API.
 ## URI и query
 
 Backend передаёт path capture и query value в codec после однократного
-percent-decoding: например, `%252F` превращается в `%2F`, а не в `/`.
-Параметр `/?` или `/!` является scalar: отсутствие обрабатывается согласно его
-optional/required типу, одно вхождение декодируется, а два и более вхождения
-одного имени возвращают 400 `Duplicate_parameter`. Библиотека не выбирает
-молча первое или последнее значение, поэтому поведение одинаково у Opium,
-Dream, Eio и testing. Запятая внутри одного query value остаётся частью строки;
-например `tags=a,b` не считается двумя вхождениями.
+percent-decoding. Для scalar query-параметров повторный ключ возвращает 400
+`Duplicate_parameter`, вместо выбора первого или последнего значения.
+`arg` с array-схемой в query не компилируется: используйте `Query`.
 
-Числовые параметры и headers используют десятичный wire-формат: OCaml hex
-literals, underscores, hex-float, NaN и infinity отклоняются.
+`query_arg` принимает типизированный `Query.t`; `/!` задаёт обязательный
+параметр, `/?` — необязательный. В path-параметрах `query_arg` недоступен.
+`Query.csv` разбивает одно значение по запятой и публикует `style: form`,
+`explode: false`; повторный CSV-ключ возвращает 400. `Query.repeated`
+декодирует отдельные occurrences в wire order и публикует `explode: true`.
+Значение с запятой внутри элемента представимо через repeated. CSV escaping
+для запятой внутри элемента не поддерживается.
 
-`Accept` пока не используется для server-side content negotiation. Endpoint
-возвращает representation, указанное выбранным response constructor. Если API
-требует несколько representations одного ресурса, их следует оформить
-разными endpoint или выполнить negotiation до handler через явный context.
+Отсутствующий обязательный параметр возвращает missing error; отсутствующий
+необязательный даёт `None` без вызова decoder. Присутствующее пустое значение
+передаётся decoder. `Query.v` получает список уже разделённых элементов и
+metadata того же OCaml list type. Ошибки элементов проходят через обычную
+endpoint/group/compile decode-error policy.
 
 ## Ошибки
 
@@ -47,6 +49,44 @@ JSON с полями `code` и `message` и также не отражает о�
 неподдерживаемый media type — 415. Если handler не вызывает `read`, тело
 остаётся непрочитанным и эти ошибки не возникают. OpenAPI по-прежнему
 документирует возможные ошибки тела.
+
+## Описания ответов
+
+`Response.json ~description:"Pet not found" (module Dto.Api_response)`
+задаёт описание конкретного ответа. Без этого аргумента используется описание
+DTO. Явно переданная пустая строка сохраняется. Обязательный description DTO
+не заменяется стандартной HTTP reason phrase, даже если он общий, например
+`API response`. Локальный override не меняет metadata DTO, схему, имя
+компонента, headers или runtime-кодирование; он сохраняется при
+`Response.with_header` и в ответах Guard.
+
+Автоматические ошибки используют одну decode-error policy для нескольких
+статусов. Их описания настраиваются отдельно от JSON mapping:
+
+```ocaml
+let decode_errors =
+  Decode_error_response.json
+    ~payload:(module Dto.Api_response)
+    ~map:Dto.Api_response.of_decode_error
+  |> Decode_error_response.with_description (function
+    | `Bad_request -> Some "Invalid request"
+    | `Request_entity_too_large -> Some "Request body too large"
+    | `Unsupported_media_type -> Some "Unsupported media type"
+    | _ -> None)
+```
+
+`None` сохраняет исходное описание policy, `Some ""` задаёт пустое описание.
+Повторный вызов `with_description` заменяет предыдущий override; `None`
+возвращает к исходному описанию, а не к предыдущей функции. Функция вызывается
+при компиляции для достижимых автоматических статусов и должна быть чистой
+и детерминированной. При обработке HTTP-запросов она не вызывается.
+Статусы, JSON mapping и приоритет выбора policy endpoint → group → compile
+остаются прежними.
+
+Если явно объявленный и автоматический ответы имеют одинаковый статус,
+их content и headers объединяются по существующим правилам, а описание
+остаётся от явного ответа, включая пустую строку или fallback DTO. Таким
+образом, настройка автоматического 400 не заменяет описание явного `case`.
 
 ## Типизированные request и response headers
 
@@ -112,7 +152,11 @@ keyword, которого ещё нет в DSL. Не используйте ег
 те же категории и синтаксис, включая ``[@jsonschema.format (`Custom "my-format")]``.
 `Custom` в PPX требует непустой строковый литерал; категория определяется по
 wire type, включая `option` и строковое кодирование целого. Аннотации не
-добавляют runtime-валидацию формата в Yojson-кодек.
+добавляют runtime-валидацию формата или других ограничений в Yojson-кодек.
+Например, `[@jsonschema.minimum 0]` само по себе не запрещает декодировать
+отрицательный `int`. Гарантии генерации, нормализации и runtime, тестовые
+сценарии и проверка JS-чисел описаны в
+[проверке соответствия контракту](contract_conformance.md).
 
 Повторение keyword на одном узле, в том числе в `jsonschema.attrs`, отклоняется;
 аннотации внешнего узла могут переопределять вложенную схему. При наличии
@@ -140,8 +184,31 @@ OpenAPI schema fragments дополнительно проверяются Draft
 meta-schema-валидатором. Валидатор остаётся test dependency и не попадает в
 runtime ядра.
 
-`Metadata.schema_name` включает components и `$ref`. Одинаковое имя с разными
-схемами, конфликтующие security schemes, неизвестные OAuth scopes, повторные
+`Metadata.schema_name` включает components и `$ref`. При рендеринге вложенные
+структурные копии уже зарегистрированных объектных моделей тоже заменяются
+ссылками. Анонимные примитивы и стандартные коллекции остаются inline, даже
+если есть структурно равный именованный scalar/collection component; ссылки
+на DTO внутри коллекций сохраняются. Явный `schema_name` всегда учитывается.
+Новые имена для анонимных схем не создаются. Явно выбранные имена сохраняются;
+при равных кандидатах для анонимного вхождения выбирается лексикографически
+первое имя. Дедупликация учитывает ограничения и аннотации. Поддеревья с
+`$id`, `$defs`, ссылками, anchors, собственным диалектом или неизвестными
+keywords не переписываются. `default` и примеры не обходятся как схемы.
+
+Все Response Objects остаются внутри операций вместе с description, headers
+и content. Автоматические `components.responses` и имена с хешами не создаются;
+режима Compact нет. Модели тела ответа по-прежнему используют именованные
+`components.schemas`.
+
+Если путь имеет несколько операций, полностью одинаковые path-параметры всех
+операций объявляются один раз в `Path Item.parameters`. Сравнивается весь
+Parameter Object, включая описание, схему и ограничения. Различающиеся параметры,
+query и headers остаются у операций. При единственной операции подъёма нет.
+Runtime и типы аргументов handler от этого преобразования не меняются.
+Пустые `parameters` и `required` опускаются. Operation description опускается,
+если он пустой или точно совпадает с summary; полезные отличия сохраняются.
+
+Одинаковое имя с разными схемами, конфликтующие security schemes, неизвестные OAuth scopes, повторные
 маршруты, operationId и response status являются ошибками `compile`. Маршруты
 вида `/pets/:id` и `/pets/:name` также конфликтуют: их runtime-shape совпадает,
 даже если имена capture различаются. В одном endpoint нельзя повторять имя
@@ -170,6 +237,13 @@ HTTP(S) URI: authority, IPv6/IPvFuture literals, path и query должны
 требуют percent encoding. Fragment запрещён для authorization endpoint по
 RFC 6749; encoded `%23` в path/query допустим. Ошибка обнаруживается во время
 `compile`; DNS и доступность сервера не проверяются.
+
+`Backend.S.respond_json` принимает необязательный `?pretty:bool` с default
+`false`. Собственные backend adapters должны добавить этот аргумент:
+при `true` сериализовать через `Yojson.Safe.pretty_to_string`, иначе через
+`Yojson.Safe.to_string`. Content-Type и JSON-значение не меняются.
+Petstore включает отступы только для `/openapi.json`; остальные ответы API
+сохраняют компактное представление.
 
 Backend возвращает текст с `Content-Type: text/plain; charset=utf-8`, HTML с
 `text/html; charset=utf-8`, JSON с `application/json`, а body-less response без
