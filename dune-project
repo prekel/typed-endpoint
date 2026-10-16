@@ -39,7 +39,7 @@
  (depends
   (ocaml (>= 4.14.1))
   (typed-endpoint (= :version))
-  (ppxlib (>= 0.35.0))
+  (ppxlib (>= 0.30.0))
   base
   (ocamlformat (and (= 0.29.0) :with-dev-setup))
   (ocaml-lsp-server :with-dev-setup))
