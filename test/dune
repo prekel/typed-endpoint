@@ -1,6 +1,5 @@
 (library
  (name typed_endpoint_test)
- (package typed-endpoint-testing)
  (modules
   invariants
   bug_regressions
@@ -18,7 +17,8 @@
   typed-endpoint-testing
   contract_test_support
   yojson)
- (inline_tests)
+ (inline_tests
+  (enabled_if %{lib-available:typed-endpoint-testing}))
  (preprocess
   (pps ppx_let ppx_deriving_yojson typed-endpoint-ppx ppx_expect)))
 

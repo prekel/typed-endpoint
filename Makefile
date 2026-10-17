@@ -4,7 +4,7 @@ PACKAGES = ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-opiu
 	./typed-endpoint-dream.opam ./typed-endpoint-eio.opam \
 	./typed-endpoint-testing.opam
 
-RELEASE_VERSION = 0.3.2
+RELEASE_VERSION = 0.3.3
 RELEASE_DIR = _release
 
 .PHONY: create_switch
@@ -43,6 +43,7 @@ package: smoke
 .PHONY: smoke
 smoke:
 	opam exec -- dune build -p typed-endpoint @install @runtest
+	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-testing @install
 	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-ppx @install @runtest
 	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-testing @install @runtest
 	opam exec -- dune build --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-testing,typed-endpoint-opium @install @runtest

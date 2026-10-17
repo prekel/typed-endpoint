@@ -205,7 +205,7 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 ## Установка из GitHub
 
 Все шесть пакетов находятся в одном репозитории и требуют одинаковую версию.
-Скрипт ниже устанавливает текущий релиз `v0.3.1`, а если пакеты уже установлены —
+Скрипт ниже устанавливает текущий релиз `v0.3.3`, а если пакеты уже установлены —
 обновляет их до этой версии, предварительно заменяя существующие pin.
 Для установки всех пакетов нужен switch OCaml 5.1.1 или новее:
 
@@ -219,7 +219,7 @@ typed_endpoint_packages=(
   typed-endpoint-eio
 )
 for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.2'
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.3'
 done
 opam install "${typed_endpoint_packages[@]}"
 ```
@@ -231,7 +231,7 @@ opam install "${typed_endpoint_packages[@]}"
 
 `-n` откладывает установку до общего `opam install`, а `-y`
 подтверждает замену существующего pin. Тег указывается после `#` в Git URL.
-Изменения API версии `v0.3.1` описаны в [истории изменений](CHANGES.md).
+История версий доступна в [списке изменений](CHANGES.md).
 
 ## Первый сервер
 
