@@ -32,6 +32,7 @@ for package in \
   typed-endpoint-ppx \
   typed-endpoint-testing \
   typed-endpoint-opium \
+  typed-endpoint-cohttp-lwt \
   typed-endpoint-dream \
   typed-endpoint-eio; do
   package_dir="$opam_dir/packages/$package/$package.$version"

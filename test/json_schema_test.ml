@@ -724,6 +724,136 @@ let print_error = function
   | Error error -> Stdlib.print_endline error
 ;;
 
+let%expect_test "extensions preserve constraints and replace only matching annotations" =
+  let original = Json_schema.string_exn ~min_length:1 () in
+  let schema =
+    original
+    |> Json_schema.with_extension_exn ~name:"x-domain" ~value:(`String "pets")
+    |> Json_schema.with_extension_exn ~name:"x-version" ~value:(`Int 1)
+    |> Json_schema.with_extension_exn ~name:"x-domain" ~value:(`String "owners")
+  in
+  Json_schema.to_yojson schema |> Yojson.Safe.to_string |> Stdlib.print_endline;
+  [%expect {| {"x-domain":"owners","x-version":1,"type":"string","minLength":1} |}];
+  Json_schema.to_yojson original |> Yojson.Safe.to_string |> Stdlib.print_endline;
+  [%expect {| {"type":"string","minLength":1} |}]
+;;
+
+let%expect_test "extension names cannot replace standard schema keywords" =
+  let add name =
+    Json_schema.with_extension ~name ~value:`Null Json_schema.any |> print_error
+  in
+  add "type";
+  [%expect
+    {| extension name must start with x-, have a non-empty suffix and no whitespace |}];
+  add "x-";
+  [%expect
+    {| extension name must start with x-, have a non-empty suffix and no whitespace |}];
+  add "x-domain name";
+  [%expect
+    {| extension name must start with x-, have a non-empty suffix and no whitespace |}];
+  add "x-domain\n";
+  [%expect
+    {| extension name must start with x-, have a non-empty suffix and no whitespace |}]
+;;
+
+let%expect_test "extension values reject non-finite numbers and invalid integer literals" =
+  let add value =
+    Json_schema.with_extension ~name:"x-domain" ~value Json_schema.any |> print_error
+  in
+  add (`Assoc [ "nested", `List [ `Float Float.nan ] ]);
+  [%expect {| extension value must contain only finite floats |}];
+  add (`Float Float.infinity);
+  [%expect {| extension value must contain only finite floats |}];
+  add (`Float Float.neg_infinity);
+  [%expect {| extension value must contain only finite floats |}];
+  add (`List [ `Intlit "01" ]);
+  [%expect {| extension value must contain only valid JSON integer literals |}];
+  add (`Intlit "1.5");
+  [%expect {| extension value must contain only valid JSON integer literals |}]
+;;
+
+let%test_unit "extensions preserve arbitrary JSON values and wide integer literals" =
+  let values =
+    [ `Null
+    ; `Bool false
+    ; `Int 7
+    ; `Float 1.5
+    ; `String "pets"
+    ; `Intlit "9223372036854775808"
+    ; `Intlit "-9223372036854775809"
+    ; `Intlit "0"
+    ; `Intlit "-0"
+    ; `List [ `String "eq"; `String "and" ]
+    ; `Assoc [ "fields", `Assoc [ "name", `Assoc [ "type", `String "string" ] ] ]
+    ]
+  in
+  List.iter values ~f:(fun value ->
+    let schema =
+      Json_schema.string_exn ()
+      |> Json_schema.with_extension_exn ~name:"x-domain" ~value
+      |> Json_schema.to_yojson
+    in
+    assert (Yojson.Safe.equal (Yojson.Safe.Util.member "x-domain" schema) value));
+  List.iter [ ""; "-"; "+1"; "-01"; "1e2"; " 1" ] ~f:(fun literal ->
+    assert (
+      Result.is_error
+        (Json_schema.with_extension
+           ~name:"x-domain"
+           ~value:(`Intlit literal)
+           Json_schema.any)))
+;;
+
+let%test_unit "throwing extension constructor reports invalid arguments" =
+  let raises_invalid_argument f =
+    match f () with
+    | _ -> assert false
+    | exception Invalid_argument _ -> ()
+  in
+  raises_invalid_argument (fun () ->
+    Json_schema.with_extension_exn ~name:"type" ~value:`Null Json_schema.any);
+  raises_invalid_argument (fun () ->
+    Json_schema.with_extension_exn
+      ~name:"x-domain"
+      ~value:(`Float Float.nan)
+      Json_schema.any)
+;;
+
+let%expect_test "extensions preserve boolean schema semantics" =
+  let annotated schema =
+    Json_schema.with_extension_exn ~name:"x-domain" ~value:`Null schema
+  in
+  let check schema expected =
+    let schema = annotated schema |> Json_schema.to_yojson in
+    Yojson.Safe.to_string schema |> Stdlib.print_endline;
+    let validator =
+      match
+        Jsonschema.create_validator_from_json ~schema:(Yojson.Safe.to_basic schema) ()
+      with
+      | Ok validator -> validator
+      | Error error ->
+        Stdlib.failwith (Stdlib.Format.asprintf "%a" Jsonschema.pp_compile_error error)
+    in
+    List.iter
+      [ `Null; `String "name"; `Int 7; `Assoc [] ]
+      ~f:(fun value ->
+        assert (Bool.equal (Result.is_ok (Jsonschema.validate validator value)) expected))
+  in
+  check Json_schema.any true;
+  [%expect {| {"x-domain":null,"allOf":[true]} |}];
+  check (Json_schema.Unsafe.of_yojson (`Bool false)) false;
+  [%expect {| {"x-domain":null,"allOf":[false]} |}]
+;;
+
+let%test_unit "extensions preserve recursive schema definitions and references" =
+  let original = Schema_dependency.node_jsonschema in
+  let annotated =
+    original |> Json_schema.with_extension_exn ~name:"x-domain" ~value:(`String "nodes")
+  in
+  let member name schema = Yojson.Safe.Util.member name (Json_schema.to_yojson schema) in
+  List.iter [ "$defs"; "$id"; "$ref" ] ~f:(fun name ->
+    assert (Yojson.Safe.equal (member name annotated) (member name original)))
+;;
+
 let%expect_test "invalid smart constructor input is rejected" =
   Json_schema.string ~format:(`Custom " ") () |> print_error;
   [%expect {| format must not be empty |}];

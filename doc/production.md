@@ -28,7 +28,7 @@ percent-decoding. Для scalar query-параметров повторный к
 Отсутствующий обязательный параметр возвращает missing error; отсутствующий
 необязательный даёт `None` без вызова decoder. Присутствующее пустое значение
 передаётся decoder. `Query.v` получает список уже разделённых элементов и
-metadata того же OCaml list type. Ошибки элементов проходят через обычную
+`~schema` того же OCaml list type. Ошибки элементов проходят через обычную
 endpoint/group/compile decode-error policy.
 
 ## Ошибки
@@ -54,9 +54,10 @@ JSON с полями `code` и `message` и также не отражает о�
 
 `Response.json ~description:"Pet not found" (module Dto.Api_response)`
 задаёт описание конкретного ответа. Без этого аргумента используется описание
-DTO. Явно переданная пустая строка сохраняется. Обязательный description DTO
-не заменяется стандартной HTTP reason phrase, даже если он общий, например
-`API response`. Локальный override не меняет metadata DTO, схему, имя
+схемы DTO: явно заданное через `Json_schema.with_openapi ~description`, затем
+корневой JSON Schema `description`, затем пустая строка. Явно переданная пустая
+строка сохраняется. Описание не заменяется стандартной HTTP reason phrase,
+даже если оно общее, например `API response`. Локальный override не меняет схему, имя
 компонента, headers или runtime-кодирование; он сохраняется при
 `Response.with_header` и в ответах Guard.
 
@@ -121,8 +122,11 @@ header parameters: representation задаётся payload, авторизаци
 Оценка покрытия OpenAPI 3.1 и ограничения генератора приведены в
 [Покрытие OpenAPI 3.1](openapi_coverage.md).
 
-Публичные metadata принимают абстрактный `'a Json_schema.t`, где `'a` — тип
-DTO. Источник схемы выбирается в следующем порядке:
+Payload-модули публикуют `t_jsonschema : t Json_schema.t`, где `t` — тип DTO.
+Сгенерированных кодеков и схемы достаточно для request/response; отдельного
+`Metadata.t` нет. `Json_schema.with_openapi` добавляет необязательные описание,
+теги и имя компонента, сохраняя тип схемы. Источник схемы выбирается в следующем
+порядке:
 
 - DTO и его wire shape описываются `[@@deriving yojson, jsonschema]` с пакетом
   `typed-endpoint-ppx`; общие `@default`, `@key` и `@name` не дублируются
@@ -184,7 +188,7 @@ OpenAPI schema fragments дополнительно проверяются Draft
 meta-schema-валидатором. Валидатор остаётся test dependency и не попадает в
 runtime ядра.
 
-`Metadata.schema_name` включает components и `$ref`. При рендеринге вложенные
+`Json_schema.with_openapi ~schema_name` включает components и `$ref`. При рендеринге вложенные
 структурные копии уже зарегистрированных объектных моделей тоже заменяются
 ссылками. Анонимные примитивы и стандартные коллекции остаются inline, даже
 если есть структурно равный именованный scalar/collection component; ссылки
@@ -329,8 +333,8 @@ Benchmark нужен для сравнения изменений на одно�
 
 ## Поддержка и release gate
 
-Ядро, PPX, testing backend и Opium adapter поддерживают OCaml >= 4.14.1;
-Petstore с Opium также собирается на 4.14.1. Dream и Eio adapters требуют
+Ядро, PPX, testing backend, Opium и Cohttp/Lwt adapters поддерживают OCaml >= 4.14.1;
+Petstore с Opium или Cohttp/Lwt также собирается на 4.14.1. Dream и Eio adapters требуют
 OCaml >= 5.1.1. Eio adapter сохраняет `cohttp-eio 6.3.0` и требует
 `eio >= 1.2`. Версия конкретного adapter меняется отдельной migration с
 повторным запуском общего conformance suite. Ядро не обещает совместимость с
@@ -346,8 +350,8 @@ framework API вне соответствующего adapter package.
 
 ```sh
 CC='gcc -std=gnu11' opam switch create /tmp/typed-endpoint-ocaml-4.14.1 ocaml-base-compiler.4.14.1
-opam install --switch=/tmp/typed-endpoint-ocaml-4.14.1 --deps-only --with-test ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-testing.opam ./typed-endpoint-opium.opam
-opam exec --switch=/tmp/typed-endpoint-ocaml-4.14.1 -- dune build --root . --build-dir /tmp/typed-endpoint-build414 --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-testing @install @runtest examples/petstore/servers/opium_server.exe
+opam install --switch=/tmp/typed-endpoint-ocaml-4.14.1 --deps-only --with-test ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-testing.opam ./typed-endpoint-opium.opam ./typed-endpoint-cohttp-lwt.opam
+opam exec --switch=/tmp/typed-endpoint-ocaml-4.14.1 -- dune build --root . --build-dir /tmp/typed-endpoint-build414 --only-packages typed-endpoint,typed-endpoint-ppx,typed-endpoint-opium,typed-endpoint-cohttp-lwt,typed-endpoint-testing @install @runtest examples/petstore/servers/opium_server.exe examples/petstore/servers/cohttp_lwt_server.exe
 ```
 
 На Ubuntu транзитивным TLS-зависимостям Opium нужен `libgmp-dev`; Dream также
@@ -366,7 +370,7 @@ make release-install-check
 ```
 
 `make release-artifacts` создаёт в `_release` source archive, SHA-256 и
-заготовки шести пакетов для opam-repository с источником из Git-тега.
+заготовки семи пакетов для opam-repository с источником из Git-тега.
 Релиз публикуется созданием и отправкой Git-тега `v<version>`; GitHub Release
 не создаётся. SHA-256 относится к локальному source archive.
 `make release-install-check`

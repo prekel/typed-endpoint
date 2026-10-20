@@ -1,6 +1,38 @@
 open! Base
 
-type 'a t = Yojson.Safe.t
+type 'a t =
+  { value : Yojson.Safe.t
+  ; schema_name : string option
+  ; description : string option
+  ; tags : string list
+  }
+
+let create value = { value; schema_name = None; description = None; tags = [] }
+let map_value schema ~f = { schema with value = f schema.value }
+
+let with_openapi ?schema_name ?description ?tags schema =
+  { schema with
+    schema_name = Option.first_some schema_name schema.schema_name
+  ; description = Option.first_some description schema.description
+  ; tags = Option.value tags ~default:schema.tags
+  }
+;;
+
+let schema_name schema = schema.schema_name
+let tags schema = schema.tags
+
+let description schema =
+  match schema.description with
+  | Some description -> description
+  | None ->
+    (match schema.value with
+     | `Assoc fields ->
+       (match List.Assoc.find fields "description" ~equal:String.equal with
+        | Some (`String description) -> description
+        | _ -> "")
+     | _ -> "")
+;;
+
 type packed = Pack : 'a t -> packed
 
 type string_format =
@@ -41,11 +73,11 @@ type number_format =
   | `Custom of string
   ]
 
-let any : Yojson.Safe.t t = `Bool true
-let null : unit t = `Assoc [ "type", `String "null" ]
-let to_yojson schema = schema
+let any : Yojson.Safe.t t = create (`Bool true)
+let null : unit t = create (`Assoc [ "type", `String "null" ])
+let to_yojson schema = schema.value
 let pack schema = Pack schema
-let to_yojson_packed (Pack schema) = schema
+let to_yojson_packed (Pack schema) = to_yojson schema
 
 let rec normalize : Yojson.Safe.t -> Yojson.Safe.t = function
   | `Assoc fields ->
@@ -60,7 +92,7 @@ let rec normalize : Yojson.Safe.t -> Yojson.Safe.t = function
 ;;
 
 let equal (left : 'a t) (right : 'b t) =
-  Yojson.Safe.equal (normalize left) (normalize right)
+  Yojson.Safe.equal (normalize left.value) (normalize right.value)
 ;;
 
 let equal_packed (Pack left) (Pack right) = equal left right
@@ -159,18 +191,19 @@ let string ?format ?enum ?min_length ?max_length ?default () =
   in
   let%bind () = validate_enum enum in
   let%map () = validate_string_default ~enum ~default in
-  (`Assoc
-     (List.filter_opt
-        [ Some ("type", `String "string")
-        ; field "format" (fun value -> `String value) format
-        ; field
-            "enum"
-            (fun values -> `List (List.map values ~f:(fun value -> `String value)))
-            enum
-        ; field "minLength" (fun value -> `Int value) min_length
-        ; field "maxLength" (fun value -> `Int value) max_length
-        ; field "default" (fun value -> `String value) default
-        ])
+  (create
+     (`Assoc
+         (List.filter_opt
+            [ Some ("type", `String "string")
+            ; field "format" (fun value -> `String value) format
+            ; field
+                "enum"
+                (fun values -> `List (List.map values ~f:(fun value -> `String value)))
+                enum
+            ; field "minLength" (fun value -> `Int value) min_length
+            ; field "maxLength" (fun value -> `Int value) max_length
+            ; field "default" (fun value -> `String value) default
+            ]))
    : string t)
 ;;
 
@@ -195,14 +228,15 @@ let integer ?format ?minimum ?maximum ?default () =
       ~maximum
   in
   let%map () = validate_default_range ~compare:Int.compare ~minimum ~maximum default in
-  (`Assoc
-     (List.filter_opt
-        [ Some ("type", `String "integer")
-        ; field "format" (fun value -> `String value) format
-        ; field "minimum" (fun value -> `Int value) minimum
-        ; field "maximum" (fun value -> `Int value) maximum
-        ; field "default" (fun value -> `Int value) default
-        ])
+  (create
+     (`Assoc
+         (List.filter_opt
+            [ Some ("type", `String "integer")
+            ; field "format" (fun value -> `String value) format
+            ; field "minimum" (fun value -> `Int value) minimum
+            ; field "maximum" (fun value -> `Int value) maximum
+            ; field "default" (fun value -> `Int value) default
+            ]))
    : int t)
 ;;
 
@@ -219,14 +253,15 @@ let int64 ?format ?minimum ?maximum ?default () =
       ~maximum
   in
   let%map () = validate_default_range ~compare:Int64.compare ~minimum ~maximum default in
-  (`Assoc
-     (List.filter_opt
-        [ Some ("type", `String "integer")
-        ; field "format" (fun value -> `String value) format
-        ; field "minimum" (fun value -> `Intlit (Int64.to_string value)) minimum
-        ; field "maximum" (fun value -> `Intlit (Int64.to_string value)) maximum
-        ; field "default" (fun value -> `Intlit (Int64.to_string value)) default
-        ])
+  (create
+     (`Assoc
+         (List.filter_opt
+            [ Some ("type", `String "integer")
+            ; field "format" (fun value -> `String value) format
+            ; field "minimum" (fun value -> `Intlit (Int64.to_string value)) minimum
+            ; field "maximum" (fun value -> `Intlit (Int64.to_string value)) maximum
+            ; field "default" (fun value -> `Intlit (Int64.to_string value)) default
+            ]))
    : int64 t)
 ;;
 
@@ -246,23 +281,25 @@ let number ?format ?minimum ?maximum ?default () =
       ~maximum
   in
   let%map () = validate_default_range ~compare:Float.compare ~minimum ~maximum default in
-  (`Assoc
-     (List.filter_opt
-        [ Some ("type", `String "number")
-        ; field "format" (fun value -> `String value) format
-        ; field "minimum" (fun value -> `Float value) minimum
-        ; field "maximum" (fun value -> `Float value) maximum
-        ; field "default" (fun value -> `Float value) default
-        ])
+  (create
+     (`Assoc
+         (List.filter_opt
+            [ Some ("type", `String "number")
+            ; field "format" (fun value -> `String value) format
+            ; field "minimum" (fun value -> `Float value) minimum
+            ; field "maximum" (fun value -> `Float value) maximum
+            ; field "default" (fun value -> `Float value) default
+            ]))
    : float t)
 ;;
 
 let boolean ?default () : bool t =
-  `Assoc
-    (List.filter_opt
-       [ Some ("type", `String "boolean")
-       ; field "default" (fun value -> `Bool value) default
-       ])
+  create
+    (`Assoc
+        (List.filter_opt
+           [ Some ("type", `String "boolean")
+           ; field "default" (fun value -> `Bool value) default
+           ]))
 ;;
 
 let array ?min_items ?max_items ~items () =
@@ -277,77 +314,83 @@ let array ?min_items ?max_items ~items () =
       ~minimum:min_items
       ~maximum:max_items
   in
-  (`Assoc
-     (List.filter_opt
-        [ Some ("type", `String "array")
-        ; Some ("items", items)
-        ; field "minItems" (fun value -> `Int value) min_items
-        ; field "maxItems" (fun value -> `Int value) max_items
-        ])
+  (create
+     (`Assoc
+         (List.filter_opt
+            [ Some ("type", `String "array")
+            ; Some ("items", items.value)
+            ; field "minItems" (fun value -> `Int value) min_items
+            ; field "maxItems" (fun value -> `Int value) max_items
+            ]))
    : 'a array t)
 ;;
 
 let list ?min_items ?max_items ~items () =
   let open Result.Let_syntax in
   let%map schema = array ?min_items ?max_items ~items () in
-  (schema : 'a list t)
+  (create schema.value : 'a list t)
 ;;
 
 let dictionary ~values : (string * 'a) list t =
-  `Assoc [ "type", `String "object"; "additionalProperties", values ]
+  create (`Assoc [ "type", `String "object"; "additionalProperties", values.value ])
 ;;
 
 let nullable schema =
-  let constraints_allow_null =
-    match schema with
-    | `Assoc fields ->
-      let enum_allows_null =
-        match List.Assoc.find fields "enum" ~equal:String.equal with
-        | Some (`List values) -> List.mem values null ~equal:Poly.equal
-        | Some _ -> false
-        | None -> true
-      in
-      let const_allows_null =
-        match List.Assoc.find fields "const" ~equal:String.equal with
-        | Some value -> Poly.equal value null
-        | None -> true
-      in
-      enum_allows_null && const_allows_null
-    | _ -> true
-  in
-  let already_nullable =
-    constraints_allow_null
-    &&
-    match schema with
-    | `Assoc fields ->
-      (match List.Assoc.find fields "type" ~equal:String.equal with
-       | Some (`String "null") -> true
-       | Some (`List types) -> List.mem types (`String "null") ~equal:Poly.equal
-       | _ ->
-         (match List.Assoc.find fields "anyOf" ~equal:String.equal with
-          | Some (`List schemas) -> List.mem schemas null ~equal:Poly.equal
-          | _ -> false))
-    | _ -> false
-  in
-  if already_nullable then
-    schema
-  else (
-    match
+  let value = schema.value in
+  let null = null.value in
+  let nullable_value schema =
+    let constraints_allow_null =
+      match schema with
+      | `Assoc fields ->
+        let enum_allows_null =
+          match List.Assoc.find fields "enum" ~equal:String.equal with
+          | Some (`List values) -> List.mem values null ~equal:Poly.equal
+          | Some _ -> false
+          | None -> true
+        in
+        let const_allows_null =
+          match List.Assoc.find fields "const" ~equal:String.equal with
+          | Some value -> Poly.equal value null
+          | None -> true
+        in
+        enum_allows_null && const_allows_null
+      | _ -> true
+    in
+    let already_nullable =
+      constraints_allow_null
+      &&
+      match schema with
+      | `Assoc fields ->
+        (match List.Assoc.find fields "type" ~equal:String.equal with
+         | Some (`String "null") -> true
+         | Some (`List types) -> List.mem types (`String "null") ~equal:Poly.equal
+         | _ ->
+           (match List.Assoc.find fields "anyOf" ~equal:String.equal with
+            | Some (`List schemas) -> List.mem schemas null ~equal:Poly.equal
+            | _ -> false))
+      | _ -> false
+    in
+    if already_nullable then
       schema
-    with
-    | `Assoc _ when not constraints_allow_null ->
-      `Assoc [ "anyOf", `List [ schema; null ] ]
-    | `Assoc fields ->
-      (match List.Assoc.find fields "type" ~equal:String.equal with
-       | Some (`String kind) ->
-         `Assoc
-           (List.map fields ~f:(fun (name, value) ->
-              if String.equal name "type" then
-                name, `List [ `String kind; `String "null" ]
-              else
-                name, value))
-       | _ -> `Assoc [ "anyOf", `List [ schema; null ] ])
-    | _ -> `Assoc [ "anyOf", `List [ schema; null ] ])
+    else (
+      match
+        schema
+      with
+      | `Assoc _ when not constraints_allow_null ->
+        `Assoc [ "anyOf", `List [ schema; null ] ]
+      | `Assoc fields ->
+        (match List.Assoc.find fields "type" ~equal:String.equal with
+         | Some (`String kind) ->
+           `Assoc
+             (List.map fields ~f:(fun (name, value) ->
+                if String.equal name "type" then
+                  name, `List [ `String kind; `String "null" ]
+                else
+                  name, value))
+         | _ -> `Assoc [ "anyOf", `List [ schema; null ] ])
+      | _ -> `Assoc [ "anyOf", `List [ schema; null ] ])
+  in
+  create (nullable_value value)
 ;;
 
 module Deriver = struct
@@ -375,33 +418,38 @@ module Deriver = struct
     | String -> "string"
   ;;
 
-  let packed_schema (Pack schema) = schema
-  let type_schema schema_type : 'a t = `Assoc [ "type", `String (type_name schema_type) ]
-  let const_string value : 'a t = `Assoc [ "const", `String value ]
-  let type_ref name : 'a t = `Assoc [ "$ref", `String ("#/$defs/" ^ name) ]
+  let packed_schema (Pack schema) = to_yojson schema
+
+  let type_schema schema_type : 'a t =
+    create (`Assoc [ "type", `String (type_name schema_type) ])
+  ;;
+
+  let const_string value : 'a t = create (`Assoc [ "const", `String value ])
+  let type_ref name : 'a t = create (`Assoc [ "$ref", `String ("#/$defs/" ^ name) ])
 
   let array ~items : 'a t =
-    `Assoc [ "type", `String "array"; "items", packed_schema items ]
+    create (`Assoc [ "type", `String "array"; "items", packed_schema items ])
   ;;
 
   let tuple items : 'a t =
     let items = List.map items ~f:packed_schema in
     let length = List.length items in
-    `Assoc
-      [ "type", `String "array"
-      ; "prefixItems", `List items
-      ; "unevaluatedItems", `Bool false
-      ; "minItems", `Int length
-      ; "maxItems", `Int length
-      ]
+    create
+      (`Assoc
+          [ "type", `String "array"
+          ; "prefixItems", `List items
+          ; "unevaluatedItems", `Bool false
+          ; "minItems", `Int length
+          ; "maxItems", `Int length
+          ])
   ;;
 
   let any_of schemas : 'a t =
-    `Assoc [ "anyOf", `List (List.map schemas ~f:packed_schema) ]
+    create (`Assoc [ "anyOf", `List (List.map schemas ~f:packed_schema) ])
   ;;
 
   let one_of schemas : 'a t =
-    `Assoc [ "oneOf", `List (List.map schemas ~f:packed_schema) ]
+    create (`Assoc [ "oneOf", `List (List.map schemas ~f:packed_schema) ])
   ;;
 
   let record ~properties ~required ~additional_properties : 'a t =
@@ -414,12 +462,13 @@ module Deriver = struct
       | Deny -> `Bool false
       | Schema schema -> packed_schema schema
     in
-    `Assoc
-      [ "type", `String "object"
-      ; "properties", `Assoc properties
-      ; "required", `List (List.map required ~f:(fun name -> `String name))
-      ; "additionalProperties", additional_properties
-      ]
+    create
+      (`Assoc
+          [ "type", `String "object"
+          ; "properties", `Assoc properties
+          ; "required", `List (List.map required ~f:(fun name -> `String name))
+          ; "additionalProperties", additional_properties
+          ])
   ;;
 
   let merge_definitions first second =
@@ -432,74 +481,68 @@ module Deriver = struct
 
   let root_ref ~root ~definitions : 'a t =
     let definitions = merge_definitions [] definitions in
-    `Assoc
-      [ ( "$defs"
-        , `Assoc
-            (List.map definitions ~f:(fun (name, schema) -> name, packed_schema schema)) )
-      ; "$ref", `String ("#/$defs/" ^ root)
-      ]
+    create
+      (`Assoc
+          [ ( "$defs"
+            , `Assoc
+                (List.map definitions ~f:(fun (name, schema) ->
+                   name, packed_schema schema)) )
+          ; "$ref", `String ("#/$defs/" ^ root)
+          ])
   ;;
 
   let definitions schema =
-    match schema with
+    match schema.value with
     | `Assoc fields ->
       (match List.Assoc.find fields "$defs" ~equal:String.equal with
        | Some (`Assoc definitions) ->
-         List.map definitions ~f:(fun (name, schema) -> name, Pack schema)
+         List.map definitions ~f:(fun (name, value) -> name, Pack (create value))
        | _ -> [])
     | _ -> []
   ;;
 
   let without_definitions schema =
-    match schema with
-    | `Assoc fields ->
-      (`Assoc (List.filter fields ~f:(fun (name, _) -> not (String.equal name "$defs")))
-       : 'a t)
-    | _ -> schema
+    map_value schema ~f:(function
+      | `Assoc fields ->
+        `Assoc (List.filter fields ~f:(fun (name, _) -> not (String.equal name "$defs")))
+      | value -> value)
   ;;
 
   let with_definitions extra schema =
     let definitions = merge_definitions (definitions schema) extra in
     if List.is_empty definitions then
       schema
-    else (
-      match
-        without_definitions schema
-      with
-      | `Assoc fields ->
-        (`Assoc
-           (( "$defs"
-            , `Assoc
-                (List.map definitions ~f:(fun (name, schema) ->
-                   name, packed_schema schema)) )
-            :: fields)
-         : 'a t)
-      | _ -> schema)
+    else
+      map_value (without_definitions schema) ~f:(function
+        | `Assoc fields ->
+          `Assoc
+            (( "$defs"
+             , `Assoc
+                 (List.map definitions ~f:(fun (name, schema) ->
+                    name, packed_schema schema)) )
+             :: fields)
+        | value -> value)
   ;;
 
   let with_id id schema =
     if List.is_empty (definitions schema) then
       schema
-    else (
-      match
-        schema
-      with
-      | `Assoc fields ->
-        (`Assoc
-           (("$id", `String id)
-            :: List.filter fields ~f:(fun (name, _) -> not (String.equal name "$id")))
-         : 'a t)
-      | _ -> schema)
+    else
+      map_value schema ~f:(function
+        | `Assoc fields ->
+          `Assoc
+            (("$id", `String id)
+             :: List.filter fields ~f:(fun (name, _) -> not (String.equal name "$id")))
+        | value -> value)
   ;;
 
   let with_annotation name value schema =
-    match schema with
-    | `Assoc fields ->
-      (`Assoc
-         ((name, value)
-          :: List.filter fields ~f:(fun (field, _) -> not (String.equal field name)))
-       : 'a t)
-    | _ -> `Assoc [ name, value; "allOf", `List [ schema ] ]
+    map_value schema ~f:(function
+      | `Assoc fields ->
+        `Assoc
+          ((name, value)
+           :: List.filter fields ~f:(fun (field, _) -> not (String.equal field name)))
+      | schema -> `Assoc [ name, value; "allOf", `List [ schema ] ])
   ;;
 
   let with_title title schema = with_annotation "title" (`String title) schema
@@ -551,6 +594,50 @@ let value_exn = function
   | Error error -> Stdlib.invalid_arg error
 ;;
 
+let with_extension ~name ~value schema =
+  let open Result.Let_syntax in
+  let valid_integer_literal value =
+    let digits =
+      if String.is_prefix value ~prefix:"-" then
+        String.drop_prefix value 1
+      else
+        value
+    in
+    (not (String.is_empty digits))
+    && String.for_all digits ~f:Char.is_digit
+    && (String.length digits = 1 || not (Char.equal digits.[0] '0'))
+  in
+  let rec validate_json = function
+    | `Assoc fields ->
+      List.fold_result fields ~init:() ~f:(fun () (_, value) -> validate_json value)
+    | `List values ->
+      List.fold_result values ~init:() ~f:(fun () value -> validate_json value)
+    | `Float value when not (Float.is_finite value) ->
+      Error "extension value must contain only finite floats"
+    | `Intlit value when not (valid_integer_literal value) ->
+      Error "extension value must contain only valid JSON integer literals"
+    | `Null | `Bool _ | `Int _ | `Intlit _ | `Float _ | `String _ -> Ok ()
+    | _ -> Error "extension value must contain only JSON values"
+      [@@warning "-11"]
+  in
+  let%bind () =
+    if
+      String.is_prefix name ~prefix:"x-"
+      && String.length name > 2
+      && not (String.exists name ~f:Char.is_whitespace)
+    then
+      Ok ()
+    else
+      Error "extension name must start with x-, have a non-empty suffix and no whitespace"
+  in
+  let%map () = validate_json value in
+  Deriver.with_annotation name value schema
+;;
+
+let with_extension_exn ~name ~value schema =
+  with_extension ~name ~value schema |> value_exn
+;;
+
 let string_exn ?format ?enum ?min_length ?max_length ?default () =
   string ?format ?enum ?min_length ?max_length ?default () |> value_exn
 ;;
@@ -576,13 +663,15 @@ let list_exn ?min_items ?max_items ~items () =
 ;;
 
 module Unsafe = struct
-  let rec of_yojson : Yojson.Safe.t -> 'a t = function
+  let rec validate : Yojson.Safe.t -> Yojson.Safe.t = function
     | `Assoc fields ->
-      `Assoc (List.map fields ~f:(fun (name, value) -> name, of_yojson value))
-    | `List values -> `List (List.map values ~f:of_yojson)
+      `Assoc (List.map fields ~f:(fun (name, value) -> name, validate value))
+    | `List values -> `List (List.map values ~f:validate)
     | `Intlit value -> `Intlit value
     | (`Null | `Bool _ | `Int _ | `Float _ | `String _) as value -> value
     | _ -> Stdlib.invalid_arg "JSON Schema must contain only JSON values"
   [@@warning "-11"]
   ;;
+
+  let of_yojson value = create (validate value)
 end

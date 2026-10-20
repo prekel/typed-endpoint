@@ -37,16 +37,14 @@ module Conformance = Typed_endpoint_testing.Backend_conformance.Make (struct
 module Error_payload = struct
   type t = { message : string }
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:
-        (Json_schema.Unsafe.of_yojson
-           (`Assoc
-               [ "type", `String "object"
-               ; "properties", `Assoc [ "message", `Assoc [ "type", `String "string" ] ]
-               ]))
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi
       ~description:"Error"
-      ()
+      (Json_schema.Unsafe.of_yojson
+         (`Assoc
+             [ "type", `String "object"
+             ; "properties", `Assoc [ "message", `Assoc [ "type", `String "string" ] ]
+             ]))
   ;;
 
   let to_yojson error = `Assoc [ "message", `String error.message ]

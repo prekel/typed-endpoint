@@ -231,7 +231,6 @@ module Login_request : sig
   val of_yojson : Yojson.Safe.t -> (t, string) Result.t
   val to_yojson : t -> Yojson.Safe.t
   val t_jsonschema : t Json_schema.t
-  val metadata : t Metadata.t
 end
 
 (** Non-empty request batch, decoded before any database mutation. *)

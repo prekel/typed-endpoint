@@ -1,0 +1,6 @@
+(library
+ (name typed_endpoint_cohttp_lwt)
+ (public_name typed-endpoint-cohttp-lwt)
+ (libraries base cohttp cohttp-lwt lwt typed-endpoint uri yojson)
+ (preprocess
+  (pps ppx_let)))

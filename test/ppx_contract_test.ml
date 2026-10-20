@@ -23,7 +23,7 @@ let run ?(kind = "--impl") driver source output =
   Stdlib.Sys.command (command ^ " 2> " ^ Stdlib.Filename.quote (output ^ ".log"))
 ;;
 
-let typecheck ~root source output =
+let typecheck ~include_directory source output =
   let command =
     String.concat
       ~sep:" "
@@ -35,7 +35,7 @@ let typecheck ~root source output =
          ; "-package"
          ; "base,yojson,ppx_deriving_yojson.runtime"
          ; "-I"
-         ; root ^ "/lib/.typed_endpoint.objs/byte"
+         ; include_directory
          ; "-c"
          ; source
          ]
@@ -46,7 +46,7 @@ let typecheck ~root source output =
 
 let () =
   let driver = Stdlib.Sys.argv.(1) in
-  let root = Stdlib.Sys.argv.(2) in
+  let include_directory = Stdlib.Filename.dirname Stdlib.Sys.argv.(2) in
   let directory = Stdlib.Filename.temp_file "typed-endpoint-ppx" "" in
   Stdlib.Sys.remove directory;
   Unix.mkdir directory 0o700;
@@ -194,7 +194,7 @@ end
         write bad_source ("open! Base\n" ^ fixture);
         if run driver bad_source bad_output <> 0 then
           Stdlib.failwith ("unexpected expansion failure: " ^ read (bad_output ^ ".log"));
-        typecheck ~root bad_output (bad_output ^ ".log")
+        typecheck ~include_directory bad_output (bad_output ^ ".log")
       in
       let good_formats =
         {|type t = { date : string [@jsonschema.format `Date_time];
@@ -218,6 +218,32 @@ end
           let actual = read (bad_output ^ ".log") in
           assert (String.is_substring actual ~substring:"format");
           assert (String.is_substring actual ~substring:"does not allow tag"));
+      List.iter
+        [ {|module Payload = struct
+              type t = int [@@deriving jsonschema]
+              let of_yojson _ = Ok 0
+              let t_jsonschema =
+                Typed_endpoint.Json_schema.with_openapi ~schema_name:"Wrong"
+                  (Typed_endpoint.Json_schema.string_exn ())
+            end
+            let _ : (module Typed_endpoint.Request_payload.S with type t = int) =
+              (module Payload)|}
+        ; {|module Payload = struct
+              type t = int [@@deriving jsonschema]
+              let to_yojson value = `Int value
+              let t_jsonschema =
+                Typed_endpoint.Json_schema.with_openapi ~description:"Wrong"
+                  (Typed_endpoint.Json_schema.string_exn ())
+            end
+            let _ : (module Typed_endpoint.Response_payload.S with type t = int) =
+              (module Payload)|}
+        ]
+        ~f:(fun fixture ->
+          if compile fixture = 0 then
+            Stdlib.failwith ("expected payload schema type rejection: " ^ fixture);
+          let actual = read (bad_output ^ ".log") in
+          assert (String.is_substring actual ~substring:"t_jsonschema");
+          assert (String.is_substring actual ~substring:"not included"));
       write
         bad_source
         {|type t = { value : int [@jsonschema.key "wire"] } [@@deriving jsonschema]|};

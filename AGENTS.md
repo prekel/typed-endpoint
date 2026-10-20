@@ -7,6 +7,8 @@
 - `opium/` — единственное место для зависимости от Opium.
 - Текущий адаптер использует API Opium 0.18; смену major/minor версии оформляй
   как отдельную migration с проверкой публичного adapter API.
+- `cohttp-lwt/` — нативный адаптер для Cohttp/Lwt без зависимости от Unix;
+  запуск сервера и middleware остаются в приложении.
 - `dream/` — адаптер для Dream 1.0.0~alpha8; Dream API не добавляй в ядро.
 - `eio/` — нативный direct-style адаптер для cohttp-eio 6.3; собственный router
   остаётся внутренней деталью пакета `typed-endpoint-eio`.

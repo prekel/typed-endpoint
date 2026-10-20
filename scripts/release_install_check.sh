@@ -43,6 +43,7 @@ opam exec -- dune build --root "$source_dir" @all @runtest @doc @install
 for package in \
   typed-endpoint \
   typed-endpoint-opium \
+  typed-endpoint-cohttp-lwt \
   typed-endpoint-dream \
   typed-endpoint-eio; do
   OCAMLPATH="$source_dir/_build/install/default/lib${OCAMLPATH:+:$OCAMLPATH}" \

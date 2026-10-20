@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries base cohttp cohttp-lwt typed-endpoint typed-endpoint-cohttp-lwt))

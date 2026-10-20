@@ -13,12 +13,10 @@ module Pet_id = struct
     | _ -> Error "petId must be a positive integer"
   ;;
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:
-        (Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ())
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi
       ~description:"ID of the pet"
-      ()
+      (Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ())
   ;;
 end
 
@@ -31,12 +29,10 @@ module Order_id = struct
     | _ -> Error "orderId must be a positive integer"
   ;;
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:
-        (Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ())
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi
       ~description:"ID of the order"
-      ()
+      (Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ())
   ;;
 end
 
@@ -50,11 +46,10 @@ module Username = struct
       Ok username
   ;;
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.string_exn ~min_length:1 ())
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi
       ~description:"Petstore username"
-      ()
+      (Json_schema.string_exn ~min_length:1 ())
   ;;
 end
 
@@ -68,11 +63,10 @@ module Password = struct
       Ok password
   ;;
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.string_exn ~min_length:1 ())
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi
       ~description:"Password in clear text for this demo"
-      ()
+      (Json_schema.string_exn ~min_length:1 ())
   ;;
 end
 
@@ -86,11 +80,10 @@ module Pet_name = struct
       Ok name
   ;;
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:(Json_schema.string_exn ~min_length:1 ())
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi
       ~description:"Updated pet name"
-      ()
+      (Json_schema.string_exn ~min_length:1 ())
   ;;
 end
 
@@ -108,16 +101,14 @@ module Page = struct
       Error ("page must be between 1 and " ^ Int.to_string Domain.Page_request.max_page)
   ;;
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:
-        (bounded_integer_schema
-           ~maximum:Domain.Page_request.max_page
-           ~default:Domain.Page_request.default_page)
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi
       ~description:
         ("One-based page number; defaults to "
          ^ Int.to_string Domain.Page_request.default_page)
-      ()
+      (bounded_integer_schema
+         ~maximum:Domain.Page_request.max_page
+         ~default:Domain.Page_request.default_page)
   ;;
 end
 
@@ -131,14 +122,12 @@ module Limit = struct
       Error ("limit must be between 1 and " ^ Int.to_string Domain.Page_request.max_limit)
   ;;
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:
-        (bounded_integer_schema
-           ~maximum:Domain.Page_request.max_limit
-           ~default:Domain.Page_request.default_limit)
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi
       ~description:
         ("Page size; defaults to " ^ Int.to_string Domain.Page_request.default_limit)
-      ()
+      (bounded_integer_schema
+         ~maximum:Domain.Page_request.max_limit
+         ~default:Domain.Page_request.default_limit)
   ;;
 end

@@ -9,8 +9,8 @@ module Payload = struct
   type t = { value : int [@jsonschema.minimum 0] [@jsonschema.maximum 10] }
   [@@deriving yojson, jsonschema]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Payload" ~description:"Payload" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~schema_name:"Payload" ~description:"Payload" t_jsonschema
   ;;
 end
 

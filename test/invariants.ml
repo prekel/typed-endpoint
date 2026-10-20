@@ -102,8 +102,8 @@ module Item = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata : t Metadata.t =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Item" ~description:"An item" ()
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi ~schema_name:"Item" ~description:"An item" t_jsonschema
   ;;
 
   let of_yojson = of_yojson
@@ -116,12 +116,11 @@ module Error_payload = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi
       ~schema_name:"RequestError"
       ~description:"A request error"
-      ()
+      t_jsonschema
   ;;
 end
 
@@ -922,8 +921,8 @@ let%expect_test "guard security is rendered as OR alternatives" =
 module Conflicting_item = struct
   type t = string [@@deriving yojson, jsonschema]
 
-  let metadata : t Metadata.t =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Item" ~description:"Wrong item" ()
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi ~schema_name:"Item" ~description:"Wrong item" t_jsonschema
   ;;
 end
 

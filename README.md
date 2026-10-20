@@ -10,6 +10,7 @@ OpenAPI 3.1.
 - `typed-endpoint-ppx` — typed JSON Schema deriver с wire-аннотациями Yojson;
 - `typed-endpoint-testing` — прямой in-memory backend для тестов без сервера;
 - `typed-endpoint-opium` — интеграция с Opium >= 0.17.1 и < 0.19.0;
+- `typed-endpoint-cohttp-lwt` — нативная интеграция с Cohttp/Lwt без зависимости от Unix;
 - `typed-endpoint-dream` — интеграция с Dream 1.0.0~alpha8;
 - `typed-endpoint-eio` — direct-style интеграция с cohttp-eio 6.3.
 
@@ -149,8 +150,41 @@ let find =
 CSV принимает `?tags=cat,dog`, repeated — `?tags=cat&tags=dog`.
 OpenAPI выводит `style: form` и соответствующий `explode`. CSV не экранирует
 запятую внутри элемента; для таких значений используйте repeated. `Query.v`
-позволяет связать собственный decoder списка элементов с его типизированными
-metadata. Scalar query-codec с явной array-схемой отклоняется при компиляции.
+позволяет связать собственный decoder списка элементов с типизированной
+схемой. Scalar query-codec с явной array-схемой отклоняется при компиляции.
+
+Произвольные JSON-метаданные схемы добавляются через
+`Json_schema.with_extension` или `with_extension_exn`. Например, строковый
+query-параметр может документировать язык фильтрации конкретной сущности:
+
+```ocaml
+let pet_filter_domain =
+  `Assoc
+    [ "fields", `Assoc [ "name", `Assoc [ "type", `String "string" ] ]
+    ; "operators", `List [ `String "eq"; `String "and" ]
+    ]
+
+let filter_schema =
+  Json_schema.string_exn ()
+  |> Json_schema.with_extension_exn ~name:"x-domain" ~value:pet_filter_domain
+
+let filter_parameter =
+  Parameter.v
+    ~schema:filter_schema
+    ~description:"Pet filter expression"
+    ~of_string:(fun value -> Ok value)
+    ()
+```
+
+При использовании `/! arg "filter" filter_parameter` OpenAPI содержит
+`schema: { "type": "string", "x-domain": ... }`. Имя расширения должно
+начинаться с `x-`, иметь непустой суффикс и не содержать пробельных символов.
+Значение — произвольный JSON с конечными числами; повторное добавление того же
+имени заменяет значение. `with_extension` возвращает `Result`, а
+`with_extension_exn` при ошибке поднимает `Invalid_argument`.
+Расширение сохраняет тип и ограничения схемы; его содержимое, включая `$ref`,
+передаётся в OpenAPI без интерпретации. Формат `x-domain` и проверку выражения
+определяет приложение. PPX-аннотации для расширений не добавляются.
 
 OpenAPI оптимизирован для чтения: именованные DTO переиспользуются через
 `components.schemas`, а сами HTTP-ответы остаются внутри операций. Искусственные
@@ -202,10 +236,16 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 библиотеке. Пошаговый процесс с примерами описан в
 [руководстве по миграции с Opium](doc/opium_migration.md).
 
+Для сервера без HTTP-фреймворка используйте `typed-endpoint-cohttp-lwt`:
+`Typed_endpoint_cohttp_lwt.callback routes` подключается к
+`Cohttp_lwt_unix.Server.make`, а handlers и сервисы сохраняют эффект `Lwt.t`.
+Запуск, TLS и middleware выбирает приложение. Пример сервера и переход с Opium
+описаны в [руководстве Cohttp/Lwt](doc/cohttp_lwt.md).
+
 ## Установка из GitHub
 
-Все шесть пакетов находятся в одном репозитории и требуют одинаковую версию.
-Скрипт ниже устанавливает текущий релиз `v0.3.3`, а если пакеты уже установлены —
+Пакеты находятся в одном репозитории и требуют одинаковую версию.
+Скрипт ниже устанавливает текущий релиз `v0.3.4`, а если пакеты уже установлены —
 обновляет их до этой версии, предварительно заменяя существующие pin.
 Для установки всех пакетов нужен switch OCaml 5.1.1 или новее:
 
@@ -215,11 +255,12 @@ typed_endpoint_packages=(
   typed-endpoint-ppx
   typed-endpoint-testing
   typed-endpoint-opium
+  typed-endpoint-cohttp-lwt
   typed-endpoint-dream
   typed-endpoint-eio
 )
 for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.3'
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.4'
 done
 opam install "${typed_endpoint_packages[@]}"
 ```
@@ -274,10 +315,6 @@ open Endpoint
 
 module Greeting = struct
   type t = { name : string } [@@deriving yojson, jsonschema]
-
-  let metadata : t Metadata.t =
-    Metadata.v ~schema:t_jsonschema ~description:"Name to greet" ()
-  ;;
 end
 
 let route =
@@ -372,6 +409,7 @@ opam exec -- dune exec examples/petstore/servers/opium_server.exe
 | --- | --- | --- |
 | `typed-endpoint`, `typed-endpoint-ppx`, `typed-endpoint-testing` | 4.14.1 | — |
 | `typed-endpoint-opium` | 4.14.1 | Opium >= 0.17.1 и < 0.19.0 |
+| `typed-endpoint-cohttp-lwt` | 4.14.1 | cohttp-lwt >= 6.3.0; транспорт выбирает приложение |
 | `typed-endpoint-dream` | 5.1.1 | Dream 1.0.0~alpha8 |
 | `typed-endpoint-eio` | 5.1.1 | cohttp-eio 6.3.0, Eio >= 1.2 |
 
@@ -397,6 +435,7 @@ make check
 ## Документация
 
 - [Быстрый старт и DTO](doc/quickstart.md)
+- [Cohttp/Lwt и переход с Opium](doc/cohttp_lwt.md)
 - [Архитектура](doc/architecture.md)
 - [Эксплуатация и ограничения](doc/production.md)
 - [Покрытие OpenAPI 3.1](doc/openapi_coverage.md)

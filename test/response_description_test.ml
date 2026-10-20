@@ -10,8 +10,11 @@ let print json = Stdlib.print_endline (Yojson.Safe.to_string json)
 module Payload = struct
   type t = { message : string } [@@deriving yojson, jsonschema]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Payload" ~description:"DTO response" ()
+  let t_jsonschema =
+    Json_schema.with_openapi
+      ~schema_name:"Payload"
+      ~description:"DTO response"
+      t_jsonschema
   ;;
 end
 

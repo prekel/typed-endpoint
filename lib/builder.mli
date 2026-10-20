@@ -1,27 +1,7 @@
 open! Base
 
-(** Typed JSON Schema constructors shared by endpoint metadata and OpenAPI. *)
+(** Typed JSON Schema constructors shared by endpoint codecs and OpenAPI. *)
 module Json_schema : module type of Json_schema
-
-(** OpenAPI schema, tag, and human-readable description metadata. *)
-module Metadata : sig
-  (** Metadata keeps a schema tied to the OCaml wire type. [schema_name], when
-      present, registers the schema in OpenAPI [components/schemas] and renders
-      references to it. Reusing a name for a different schema is a compile error.
-      Schema constraints are declarative: metadata does not add runtime schema
-      validation to request decoders or response encoders. *)
-  type 'a t
-
-  (** Creates metadata for exactly ['a]. [schema_name] opts into a reusable
-      OpenAPI component; names are validated during compilation. *)
-  val v
-    :  schema:'a Json_schema.t
-    -> ?schema_name:string
-    -> ?tags:string list
-    -> description:string
-    -> unit
-    -> 'a t
-end
 
 (** OpenAPI security schemes and requirements. A list of requirements denotes
     alternatives (OR); use {!Security.all} inside one requirement for AND. *)
@@ -165,16 +145,6 @@ module Openapi : sig
       -> unit
       -> t
   end
-end
-
-(** A wire type carrying the schema and documentation used by OpenAPI. Keeping
-    the metadata typed prevents accidentally passing metadata for another DTO. *)
-module type Metadatable = sig
-  (** OCaml value represented by the accompanying metadata. *)
-  type t
-
-  (** The runtime JSON shape and documentation for [t]. *)
-  val metadata : t Metadata.t
 end
 
 (** HTTP methods accepted by typed and runtime-only routes. [`Other] preserves
@@ -394,7 +364,7 @@ module Parameter : sig
     val of_string : string -> (t, string) Result.t
 
     (** Schema and description used to document the decoded value. *)
-    include Metadatable with type t := t
+    val t_jsonschema : t Json_schema.t
   end
 
   (** Builds a first-class codec without requiring a named module. *)
@@ -402,7 +372,7 @@ module Parameter : sig
     :  schema:'a Json_schema.t
     -> ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> of_string:(string -> ('a, string) Result.t)
     -> unit
     -> (module S with type t = 'a)
@@ -412,7 +382,7 @@ module Parameter : sig
   val string
     :  ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> unit
     -> (module S with type t = string)
 
@@ -420,7 +390,7 @@ module Parameter : sig
   val int
     :  ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> unit
     -> (module S with type t = int)
 
@@ -428,7 +398,7 @@ module Parameter : sig
   val int64
     :  ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> unit
     -> (module S with type t = int64)
 
@@ -436,7 +406,7 @@ module Parameter : sig
   val float
     :  ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> unit
     -> (module S with type t = float)
 
@@ -444,7 +414,7 @@ module Parameter : sig
   val bool
     :  ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> unit
     -> (module S with type t = bool)
 end
@@ -466,7 +436,7 @@ module Query : sig
       occurrences are rejected before this decoder runs. *)
   val v
     :  encoding:encoding
-    -> metadata:'a list Metadata.t
+    -> schema:'a list Json_schema.t
     -> of_values:(string list -> ('a list, string) Result.t)
     -> unit
     -> 'a list t
@@ -474,7 +444,7 @@ module Query : sig
   (** Decodes each comma-separated element with the supplied scalar codec. *)
   val csv
     :  ?schema_name:string
-    -> description:string
+    -> ?description:string
     -> (module Parameter.S with type t = 'a)
     -> 'a list t
 
@@ -482,7 +452,7 @@ module Query : sig
       An element containing a comma remains a single element. *)
   val repeated
     :  ?schema_name:string
-    -> description:string
+    -> ?description:string
     -> (module Parameter.S with type t = 'a)
     -> 'a list t
 end
@@ -503,7 +473,7 @@ module Header : sig
     val to_string : t -> string
 
     (** Associates the header value type with its schema and documentation. *)
-    include Metadatable with type t := t
+    val t_jsonschema : t Json_schema.t
   end
 
   (** Creates a first-class bidirectional codec for a header value. *)
@@ -511,7 +481,7 @@ module Header : sig
     :  schema:'a Json_schema.t
     -> ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> of_string:(string -> ('a, string) Result.t)
     -> to_string:('a -> string)
     -> unit
@@ -521,7 +491,7 @@ module Header : sig
   val string
     :  ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> unit
     -> (module S with type t = string)
 
@@ -529,7 +499,7 @@ module Header : sig
   val int
     :  ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> unit
     -> (module S with type t = int)
 
@@ -537,7 +507,7 @@ module Header : sig
   val int64
     :  ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> unit
     -> (module S with type t = int64)
 
@@ -545,7 +515,7 @@ module Header : sig
   val bool
     :  ?schema_name:string
     -> ?tags:string list
-    -> description:string
+    -> ?description:string
     -> unit
     -> (module S with type t = bool)
 
@@ -569,8 +539,9 @@ module Request_payload : sig
     (** OCaml representation decoded from the JSON body. *)
     type t
 
-    (** Documents the payload schema and metadata. *)
-    include Metadatable with type t := t
+    (** Describes the wire shape of [t]. The value generated by [jsonschema] is
+        sufficient; {!Json_schema.with_openapi} adds optional documentation. *)
+    val t_jsonschema : t Json_schema.t
 
     (** Decodes one already-parsed JSON value into the request DTO. *)
     val of_yojson : Yojson.Safe.t -> (t, string) Result.t
@@ -585,8 +556,9 @@ module Response_payload : sig
     (** OCaml representation encoded in the JSON body. *)
     type t
 
-    (** Documents the payload schema and metadata. *)
-    include Metadatable with type t := t
+    (** Describes the wire shape of [t]. The value generated by [jsonschema] is
+        sufficient; {!Json_schema.with_openapi} adds optional documentation. *)
+    val t_jsonschema : t Json_schema.t
 
     (** Encodes the response DTO as its declared JSON wire shape. *)
     val to_yojson : t -> Yojson.Safe.t
@@ -601,13 +573,14 @@ module Json_payload : sig
     (** OCaml representation used for both request and response bodies. *)
     type t
 
-    (** Documents the payload schema and metadata. *)
-    include Metadatable with type t := t
+    (** Describes the wire shape of [t]. The value generated by [jsonschema] is
+        sufficient; {!Json_schema.with_openapi} adds optional documentation. *)
+    val t_jsonschema : t Json_schema.t
 
     (** Decodes one JSON value into the DTO. *)
     val of_yojson : Yojson.Safe.t -> (t, string) Result.t
 
-    (** Encodes the DTO using the same wire shape documented by metadata. *)
+    (** Encodes the DTO using the same wire shape documented by [t_jsonschema]. *)
     val to_yojson : t -> Yojson.Safe.t
   end
 end
@@ -721,8 +694,9 @@ module Make (B : Backend.S) : sig
 
     (** Declares the exact JSON wire type returned by the handler. [description]
         overrides the DTO description for this response only, including an
-        explicitly empty string. Omission preserves the DTO description. The
-        DTO metadata, schema, component name, and runtime encoder are unchanged. *)
+        explicitly empty string. Omission preserves the schema description,
+        which defaults to the empty string. The DTO schema, component name,
+        and runtime encoder are unchanged. *)
     val json : ?description:string -> (module Response_payload.S with type t = 'a) -> 'a t
 
     (** Declares a [text/plain] response. *)

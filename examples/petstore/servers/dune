@@ -19,6 +19,20 @@
   (pps ppx_let)))
 
 (executable
+ (name cohttp_lwt_server)
+ (modules cohttp_lwt_server)
+ (libraries
+  base
+  cohttp
+  cohttp-lwt-unix
+  lwt.unix
+  petstore_app
+  petstore_server_support
+  typed-endpoint-cohttp-lwt)
+ (preprocess
+  (pps ppx_let)))
+
+(executable
  (name dream_server)
  (modules dream_server)
  (libraries

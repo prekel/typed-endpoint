@@ -7,6 +7,7 @@
   openapi_test
   openapi_readability_test
   response_description_test
+  schema_payload_test
   yojson_annotations
   schema_dependency
   typed_schema_signature)
@@ -45,7 +46,8 @@
  (action
   (run
    %{test}
-   %{workspace_root}
+   %{lib:typed-endpoint:typed_endpoint.cmi}
+   %{lib:typed-endpoint-testing:typed_endpoint_testing.cmi}
    %{dep:compile_fail/valid.ml}
    %{dep:compile_fail/wrong_payload.ml}
    %{dep:compile_fail/wrong_status.ml}
@@ -66,4 +68,7 @@
  (package typed-endpoint-testing)
  (libraries base unix typed-endpoint)
  (action
-  (run %{test} %{exe:schema_ppx.exe} %{workspace_root})))
+  (run
+   %{test}
+   %{exe:schema_ppx.exe}
+   %{lib:typed-endpoint:typed_endpoint.cmi})))

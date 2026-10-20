@@ -1,5 +1,43 @@
 # История изменений
 
+## 0.3.4 — 2026-10-20
+
+- Исправлена установка `typed-endpoint-testing` с `--with-test`: compile-fail
+  и PPX contract tests получают пути к интерфейсам библиотек через Dune,
+  включая отдельно установленное ядро. Удалена лишняя зависимость проверки
+  типов от Cohttp. В `make smoke` добавлена последовательная установка ядра,
+  testing и PPX во временный prefix с проверкой тестов отдельного пакета.
+
+- **Несовместимое изменение API:** удалены `Metadata.t`, `Metadata.v` и
+  `Metadatable`. Payload-модули, параметры и заголовки
+  используют `t_jsonschema : t Json_schema.t` напрямую. Для request/response
+  достаточно `[@@deriving yojson, jsonschema]`. Необязательные имя компонента,
+  описание и теги задаются через `Json_schema.with_openapi`; без override
+  используется корневой JSON Schema `description`, а при его отсутствии —
+  пустая строка.
+  `Query.v` принимает `~schema` вместо `~metadata`; описания в конструкторах
+  параметров, заголовков и query-коллекций стали необязательными.
+
+- Добавлены `Json_schema.with_extension` и `with_extension_exn` для произвольных
+  JSON-метаданных `x-*`, например описания языка фильтрации в `x-domain`.
+  Комбинаторы сохраняют тип схемы; расширения попадают в OpenAPI без
+  интерпретации содержимого. PPX не меняется.
+- Добавлен `typed-endpoint-cohttp-lwt`: отдельный Cohttp/Lwt backend с
+  собственным роутером, ограниченным чтением body и native server callback.
+  Он не зависит от Unix, Opium, Dream или Eio и сохраняет эффект `Lwt.t`.
+  Добавлены общий backend conformance suite, проверки потокового body,
+  сетевой тест повторного использования соединения и entrypoint Petstore.
+
+### Миграция с 0.3.3
+
+- Вместо `let metadata = Metadata.v ~schema:t_jsonschema ... ()` экспортируйте
+  `let t_jsonschema = Json_schema.with_openapi ... t_jsonschema`. Параметры
+  `~schema_name`, `~description` и `~tags` передаются в `with_openapi`.
+- Для payload-модулей без дополнительных настроек удалите `metadata`:
+  `[@@deriving yojson, jsonschema]` уже создаёт всё необходимое. В собственных
+  parameter/header-модулях экспортируйте `t_jsonschema : t Json_schema.t`.
+- Замените `Query.v ~metadata` на `Query.v ~schema:t_jsonschema`.
+
 ## 0.3.3 — 2026-10-17
 
 - Исправлена установка `typed-endpoint-testing` без тестовых зависимостей:

@@ -7,7 +7,7 @@ domain/          доменная модель и её инварианты
 application/     repository ports и сервисы
 infrastructure/  in-memory реализации портов
 http/            DTO, guards, контроллеры и сборка маршрутов
-servers/         composition root и entrypoint для Opium, Dream и Eio
+servers/         composition root и entrypoint для Opium, Cohttp/Lwt, Dream и Eio
 test/            тесты сервисов и HTTP-контракта без запуска сервера
 ```
 
@@ -166,6 +166,7 @@ opam exec -- dune runtest examples/petstore/test
 
 ```sh
 opam exec -- dune exec examples/petstore/servers/opium_server.exe
+opam exec -- dune exec examples/petstore/servers/cohttp_lwt_server.exe
 opam exec -- dune exec examples/petstore/servers/dream_server.exe
 opam exec -- dune exec examples/petstore/servers/eio_server.exe
 ```

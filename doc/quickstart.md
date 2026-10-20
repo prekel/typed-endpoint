@@ -3,6 +3,7 @@
 Создайте backend и откройте его DSL:
 
 ```ocaml
+open Typed_endpoint
 module Endpoint = Typed_endpoint.Make (Typed_endpoint_testing)
 module Io = Endpoint.Io
 open Io.Let_syntax
@@ -10,15 +11,33 @@ open Endpoint
 ```
 
 JSON-модуль реализует `Request_payload.S` и/или `Response_payload.S`, а DTO для
-обоих направлений — общую сигнатуру `Json_payload.S`. Метаданные
-типизированы тем же `t`, поэтому случайно передать метаданные другого DTO
-нельзя. `schema_name` необязателен; он переносит схему в OpenAPI components.
+обоих направлений — общую сигнатуру `Json_payload.S`. Достаточно сгенерированных
+кодеков и `t_jsonschema`; отдельного значения метаданных нет:
 
 ```ocaml
-let metadata : t Typed_endpoint.Metadata.t =
-  Metadata.v ~schema:t_jsonschema ~schema_name:"Pet" ~description:"A pet"
+module Pet = struct
+  type t = { name : string } [@@deriving yojson, jsonschema]
+end
+```
+
+При необходимости добавьте имя OpenAPI-компонента, описание и теги к схеме:
+
+```ocaml
+let t_jsonschema =
+  Json_schema.with_openapi
+    ~schema_name:"Pet"
+    ~description:"A pet"
+    ~tags:[ "pets" ]
+    t_jsonschema
 ;;
 ```
+
+Второй фрагмент размещается внутри DTO-модуля после объявления типа.
+`with_openapi` возвращает новую схему того же OCaml-типа и сохраняет поля,
+которые не переданы. Эти настройки не меняют JSON Schema и wire shape.
+Описание по умолчанию берётся из корневого `[@@jsonschema.description]`,
+а при его отсутствии равно пустой строке. `schema_name` необязателен; он
+переносит схему в OpenAPI components.
 
 `Json_schema.t` скрывает представление схемы от публичного HTTP API и
 параметризован типом DTO. Для DTO подключите пакет `typed-endpoint-ppx` в Dune
@@ -94,7 +113,7 @@ custom scalar экспортируйте типизированную схему
 публикует `style: form`, `explode: false`. `Query.repeated` принимает повторные
 ключи и публикует `explode: true`. `Item` реализует `Parameter.S` для одного
 элемента; результат обоих codecs — список элементов. `Query.v` задаёт
-собственную обработку списка с типизированными metadata. Scalar `arg` с
+собственную обработку списка с аргументом `~schema` того же OCaml list type. Scalar `arg` с
 array-схемой в query отклоняется. Для CSV-элементов с запятыми используйте
 repeated; CSV escaping не поддерживается.
 

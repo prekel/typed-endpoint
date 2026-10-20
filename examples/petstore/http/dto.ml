@@ -108,7 +108,7 @@ module Status = struct
     |> Json_schema.Unsafe.of_yojson
   ;;
 
-  let metadata = Metadata.v ~schema ~description:"Pet status" ()
+  let t_jsonschema = Json_schema.with_openapi ~description:"Pet status" schema
 end
 
 module Category = struct
@@ -118,12 +118,11 @@ module Category = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~schema_name:"Category"
       ~description:"A pet category"
-      ()
+      t_jsonschema
   ;;
 
   let to_domain { id; name } = Domain.Category.{ id; name }
@@ -137,8 +136,8 @@ module Tag = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Tag" ~description:"A pet tag" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~schema_name:"Tag" ~description:"A pet tag" t_jsonschema
   ;;
 
   let to_domain { id; name } = Domain.Tag.{ id; name }
@@ -171,12 +170,11 @@ module Pet = struct
     | Some _ -> Error "status must be available, pending, or sold"
   ;;
 
-  let metadata =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~schema_name:"Pet"
       ~description:"A pet in the store"
-      ()
+      t_jsonschema
   ;;
 
   let to_domain pet =
@@ -215,17 +213,16 @@ end
 module Tags = struct
   type t = string list
 
-  let metadata =
-    Metadata.v
-      ~schema:(Json_schema.list_exn ~min_items:1 ~items:(Json_schema.string_exn ()) ())
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~description:"Comma-separated tags to filter by"
-      ()
+      (Json_schema.list_exn ~min_items:1 ~items:(Json_schema.string_exn ()) ())
   ;;
 
   let query =
     Query.v
       ~encoding:`Csv
-      ~metadata
+      ~schema:t_jsonschema
       ~of_values:(fun values ->
         let tags =
           List.map values ~f:String.strip |> List.filter ~f:(Fn.non String.is_empty)
@@ -241,8 +238,8 @@ end
 module Pet_list = struct
   type t = Pet.t list [@@deriving to_yojson, jsonschema]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~description:"Pets matching the filter" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~description:"Pets matching the filter" t_jsonschema
   ;;
 
   let of_domain pets = List.map pets ~f:Pet.of_domain
@@ -257,12 +254,11 @@ module Pagination = struct
     }
   [@@deriving to_yojson, jsonschema] [@@jsonschema.disallow_extra_fields]
 
-  let metadata =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~schema_name:"Pagination"
       ~description:"Pagination metadata"
-      ()
+      t_jsonschema
   ;;
 
   let of_domain ({ page; limit; total; total_pages; _ } : _ Domain.Page.t) =
@@ -277,12 +273,11 @@ module Pet_page = struct
     }
   [@@deriving to_yojson, jsonschema] [@@jsonschema.disallow_extra_fields]
 
-  let metadata =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~schema_name:"PetPage"
       ~description:"One page of pets matching the query"
-      ()
+      t_jsonschema
   ;;
 
   let of_domain (page : Domain.Pet.t Domain.Page.t) =
@@ -299,18 +294,16 @@ module Inventory = struct
     `Assoc (List.map inventory ~f:(fun (status, count) -> status, `Int count))
   ;;
 
-  let metadata =
-    Metadata.v
-      ~schema:
-        (Json_schema.dictionary
-           ~values:
-             (Json_schema.integer_exn
-                ~format:`Int32
-                ~minimum:0
-                ~maximum:Schema_scalar.int32_max
-                ()))
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~description:"Pet quantities keyed by lifecycle status"
-      ()
+      (Json_schema.dictionary
+         ~values:
+           (Json_schema.integer_exn
+              ~format:`Int32
+              ~minimum:0
+              ~maximum:Schema_scalar.int32_max
+              ()))
   ;;
 
   let of_domain inventory =
@@ -345,12 +338,11 @@ module Order = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~schema_name:"Order"
       ~description:"A store order for a pet"
-      ()
+      t_jsonschema
   ;;
 
   let positive field = function
@@ -417,12 +409,11 @@ module User_create = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~schema_name:"UserCreate"
       ~description:"Required user account creation fields"
-      ()
+      t_jsonschema
   ;;
 
   let to_domain (user : t) =
@@ -459,12 +450,11 @@ module User_update = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~schema_name:"UserUpdate"
       ~description:"Complete profile replacement; username is supplied by the path"
-      ()
+      t_jsonschema
   ;;
 
   let to_domain ~username (user : t) =
@@ -501,12 +491,11 @@ module User = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~schema_name:"User"
       ~description:"Public user account"
-      ()
+      t_jsonschema
   ;;
 
   let of_domain ({ username; attributes } : Domain.User.t) =
@@ -528,12 +517,11 @@ module Login_request = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~schema_name:"LoginRequest"
       ~description:"Required login credentials"
-      ()
+      t_jsonschema
   ;;
 end
 
@@ -551,8 +539,8 @@ module User_create_list = struct
 
   let t_jsonschema = Json_schema.list_exn ~min_items:1 ~items:User_create.t_jsonschema ()
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~description:"Users to create atomically" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~description:"Users to create atomically" t_jsonschema
   ;;
 
   let to_domain users = List.map users ~f:User_create.to_domain |> Result.all
@@ -561,8 +549,8 @@ end
 module User_list = struct
   type t = User.t list [@@deriving to_yojson, jsonschema]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~description:"Created users in request order" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~description:"Created users in request order" t_jsonschema
   ;;
 
   let of_domain users = List.map users ~f:User.of_domain
@@ -571,8 +559,8 @@ end
 module Login_token = struct
   type t = string [@@deriving to_yojson, jsonschema]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~description:"Authenticated session token" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~description:"Authenticated session token" t_jsonschema
   ;;
 end
 
@@ -584,12 +572,11 @@ module Api_response = struct
     }
   [@@deriving yojson, jsonschema]
 
-  let metadata =
-    Metadata.v
-      ~schema:t_jsonschema
+  let t_jsonschema =
+    Json_schema.with_openapi
       ~schema_name:"ApiResponse"
       ~description:"API response"
-      ()
+      t_jsonschema
   ;;
 
   let forbidden () =

@@ -1,19 +1,5 @@
 open! Base
 module Json_schema = Json_schema
-
-module Metadata = struct
-  type 'a t =
-    { schema : 'a Json_schema.t
-    ; schema_name : string option
-    ; description : string
-    ; tags : string list
-    }
-
-  let v ~schema ?schema_name ?(tags = []) ~description () =
-    { schema; schema_name; description; tags }
-  ;;
-end
-
 module Operation_metadata = Contract.Operation_metadata
 module Documentation = Contract.Documentation
 module Security = Contract.Security
@@ -45,19 +31,16 @@ module Route_info = struct
     }
 end
 
-let schema_of_metadata (type a) (metadata : a Metadata.t) : Contract.Schema.t =
-  Contract.Schema.v ?name:metadata.schema_name metadata.schema
+let contract_schema schema : Contract.Schema.t =
+  Contract.Schema.v ?name:(Json_schema.schema_name schema) schema
 ;;
 
-let documentation_of_metadata (type a) (metadata : a Metadata.t) : Documentation.t =
-  Documentation.v ~description:metadata.description ~tags:metadata.tags ()
+let documentation_of_schema schema : Documentation.t =
+  Documentation.v
+    ~description:(Json_schema.description schema)
+    ~tags:(Json_schema.tags schema)
+    ()
 ;;
-
-module type Metadatable = sig
-  type t
-
-  val metadata : t Metadata.t
-end
 
 module Method = struct
   type t =
@@ -355,8 +338,7 @@ module Parameter = struct
     type t
 
     val of_string : string -> (t, string) Result.t
-
-    include Metadatable with type t := t
+    val t_jsonschema : t Json_schema.t
   end
 
   let v
@@ -364,7 +346,7 @@ module Parameter = struct
         ~(schema : a Json_schema.t)
         ?schema_name
         ?tags
-        ~description
+        ?description
         ~(of_string : string -> (a, string) Result.t)
         ()
     : (module S with type t = a)
@@ -373,26 +355,26 @@ module Parameter = struct
       type t = a
 
       let of_string = of_string
-      let metadata : t Metadata.t = Metadata.v ~schema ?schema_name ?tags ~description ()
+      let t_jsonschema = Json_schema.with_openapi ?schema_name ?tags ?description schema
     end)
   ;;
 
-  let string ?schema_name ?tags ~description () =
+  let string ?schema_name ?tags ?description () =
     v
       ~schema:(Json_schema.string_exn ())
       ?schema_name
       ?tags
-      ~description
+      ?description
       ~of_string:(fun value -> Ok value)
       ()
   ;;
 
-  let int ?schema_name ?tags ~description () =
+  let int ?schema_name ?tags ?description () =
     v
       ~schema:(Json_schema.integer_exn ())
       ?schema_name
       ?tags
-      ~description
+      ?description
       ~of_string:(fun value ->
         match
           if Wire_number.integer value then
@@ -405,12 +387,12 @@ module Parameter = struct
       ()
   ;;
 
-  let int64 ?schema_name ?tags ~description () =
+  let int64 ?schema_name ?tags ?description () =
     v
       ~schema:(Json_schema.int64_exn ~format:`Int64 ())
       ?schema_name
       ?tags
-      ~description
+      ?description
       ~of_string:(fun value ->
         try
           if Wire_number.integer value then
@@ -422,12 +404,12 @@ module Parameter = struct
       ()
   ;;
 
-  let float ?schema_name ?tags ~description () =
+  let float ?schema_name ?tags ?description () =
     v
       ~schema:(Json_schema.number_exn ~format:`Double ())
       ?schema_name
       ?tags
-      ~description
+      ?description
       ~of_string:(fun value ->
         try
           let value =
@@ -445,12 +427,12 @@ module Parameter = struct
       ()
   ;;
 
-  let bool ?schema_name ?tags ~description () =
+  let bool ?schema_name ?tags ?description () =
     v
       ~schema:(Json_schema.boolean ())
       ?schema_name
       ?tags
-      ~description
+      ?description
       ~of_string:(function
         | "true" -> Ok true
         | "false" -> Ok false
@@ -464,37 +446,34 @@ module Query = struct
 
   type 'a t =
     { encoding : encoding
-    ; metadata : 'a Metadata.t
+    ; schema : 'a Json_schema.t
     ; of_values : string list -> ('a, string) Result.t
     }
 
-  let v ~encoding ~metadata ~of_values () = { encoding; metadata; of_values }
+  let v ~encoding ~schema ~of_values () = { encoding; schema; of_values }
 
   let collection
         (type a)
         encoding
         ?schema_name
-        ~description
+        ?description
         (module Item : Parameter.S with type t = a)
     =
-    let metadata =
-      Metadata.v
-        ?schema_name
-        ~description
-        ~schema:(Json_schema.list_exn ~items:Item.metadata.schema ())
-        ()
+    let schema =
+      Json_schema.list_exn ~items:Item.t_jsonschema ()
+      |> Json_schema.with_openapi ?schema_name ?description
     in
     v
       ~encoding
-      ~metadata
+      ~schema
       ~of_values:(fun values -> List.map values ~f:Item.of_string |> Result.all)
       ()
   ;;
 
-  let csv ?schema_name ~description item = collection `Csv ?schema_name ~description item
+  let csv ?schema_name ?description item = collection `Csv ?schema_name ?description item
 
-  let repeated ?schema_name ~description item =
-    collection `Repeated ?schema_name ~description item
+  let repeated ?schema_name ?description item =
+    collection `Repeated ?schema_name ?description item
   ;;
 end
 
@@ -504,8 +483,7 @@ module Header = struct
 
     val of_string : string -> (t, string) Result.t
     val to_string : t -> string
-
-    include Metadatable with type t := t
+    val t_jsonschema : t Json_schema.t
   end
 
   let v
@@ -513,7 +491,7 @@ module Header = struct
         ~(schema : a Json_schema.t)
         ?schema_name
         ?tags
-        ~description
+        ?description
         ~(of_string : string -> (a, string) Result.t)
         ~(to_string : a -> string)
         ()
@@ -524,27 +502,27 @@ module Header = struct
 
       let of_string = of_string
       let to_string = to_string
-      let metadata : t Metadata.t = Metadata.v ~schema ?schema_name ?tags ~description ()
+      let t_jsonschema = Json_schema.with_openapi ?schema_name ?tags ?description schema
     end)
   ;;
 
-  let string ?schema_name ?tags ~description () =
+  let string ?schema_name ?tags ?description () =
     v
       ~schema:(Json_schema.string_exn ())
       ?schema_name
       ?tags
-      ~description
+      ?description
       ~of_string:(fun value -> Ok value)
       ~to_string:Fn.id
       ()
   ;;
 
-  let int ?schema_name ?tags ~description () =
+  let int ?schema_name ?tags ?description () =
     v
       ~schema:(Json_schema.integer_exn ())
       ?schema_name
       ?tags
-      ~description
+      ?description
       ~of_string:(fun value ->
         match
           if Wire_number.integer value then
@@ -558,12 +536,12 @@ module Header = struct
       ()
   ;;
 
-  let int64 ?schema_name ?tags ~description () =
+  let int64 ?schema_name ?tags ?description () =
     v
       ~schema:(Json_schema.int64_exn ~format:`Int64 ())
       ?schema_name
       ?tags
-      ~description
+      ?description
       ~of_string:(fun value ->
         try
           if Wire_number.integer value then
@@ -576,12 +554,12 @@ module Header = struct
       ()
   ;;
 
-  let bool ?schema_name ?tags ~description () =
+  let bool ?schema_name ?tags ?description () =
     v
       ~schema:(Json_schema.boolean ())
       ?schema_name
       ?tags
-      ~description
+      ?description
       ~of_string:(function
         | "true" -> Ok true
         | "false" -> Ok false
@@ -606,8 +584,7 @@ module Request_payload = struct
   module type S = sig
     type t
 
-    include Metadatable with type t := t
-
+    val t_jsonschema : t Json_schema.t
     val of_yojson : Yojson.Safe.t -> (t, string) Result.t
   end
 end
@@ -616,8 +593,7 @@ module Response_payload = struct
   module type S = sig
     type t
 
-    include Metadatable with type t := t
-
+    val t_jsonschema : t Json_schema.t
     val to_yojson : t -> Yojson.Safe.t
   end
 end
@@ -626,8 +602,7 @@ module Json_payload = struct
   module type S = sig
     type t
 
-    include Metadatable with type t := t
-
+    val t_jsonschema : t Json_schema.t
     val of_yojson : Yojson.Safe.t -> (t, string) Result.t
     val to_yojson : t -> Yojson.Safe.t
   end
@@ -681,12 +656,11 @@ module Default_decode_error_payload = struct
           ])
   ;;
 
-  let metadata : t Metadata.t =
-    Metadata.v
-      ~schema
+  let t_jsonschema : t Json_schema.t =
+    Json_schema.with_openapi
       ~schema_name:"TypedEndpointDecodeError"
       ~description:"A request rejected before the endpoint handler runs"
-      ()
+      schema
   ;;
 
   let source = function
@@ -747,7 +721,7 @@ module Make (B : Backend.S) = struct
       : type a. ?description:string -> (module Response_payload.S with type t = a) -> a t
       =
       fun ?description (module P : Response_payload.S with type t = a) ->
-      let metadata = documentation_of_metadata P.metadata in
+      let metadata = documentation_of_schema P.t_jsonschema in
       let metadata =
         { metadata with
           description = Option.value description ~default:metadata.description
@@ -1042,9 +1016,9 @@ module Make (B : Backend.S) = struct
     | Scalar_query of (module Parameter.S with type t = 'a)
     | Array_query of 'a Query.t
 
-  let query_metadata : type a. a query_codec -> a Metadata.t = function
-    | Scalar_query (module P) -> P.metadata
-    | Array_query query -> query.metadata
+  let query_schema : type a. a query_codec -> a Json_schema.t = function
+    | Scalar_query (module P) -> P.t_jsonschema
+    | Array_query query -> query.schema
   ;;
 
   let query_encoding = function
@@ -1428,8 +1402,8 @@ module Make (B : Backend.S) = struct
         Binary_body { metadata; max_body_bytes }
       | Request.JSON { payload = (module Rq); max_body_bytes; media_types } ->
         Json_body
-          { schema = schema_of_metadata Rq.metadata
-          ; metadata = documentation_of_metadata Rq.metadata
+          { schema = contract_schema Rq.t_jsonschema
+          ; metadata = documentation_of_schema Rq.t_jsonschema
           ; max_body_bytes
           ; media_types
           }
@@ -1446,13 +1420,13 @@ module Make (B : Backend.S) = struct
           | Header.Required (name, (module H)) ->
             ( name
             , true
-            , schema_of_metadata H.metadata
-            , documentation_of_metadata H.metadata )
+            , contract_schema H.t_jsonschema
+            , documentation_of_schema H.t_jsonschema )
           | Header.Optional (name, (module H)) ->
             ( name
             , false
-            , schema_of_metadata H.metadata
-            , documentation_of_metadata H.metadata )
+            , contract_schema H.t_jsonschema
+            , documentation_of_schema H.t_jsonschema )
         in
         let payload = response_payload_spec_of_response response in
         { payload with
@@ -1464,7 +1438,7 @@ module Make (B : Backend.S) = struct
          | Response.PlainText -> { metadata; content = [ Text ]; headers = [] }
          | Response.Json (module P) ->
            { metadata
-           ; content = [ Json [ schema_of_metadata P.metadata ] ]
+           ; content = [ Json [ contract_schema P.t_jsonschema ] ]
            ; headers = []
            })
     ;;
@@ -1501,28 +1475,28 @@ module Make (B : Backend.S) = struct
         ; kind = `Path
         ; query_encoding = None
         ; required = true
-        ; schema = schema_of_metadata P.metadata
-        ; metadata = documentation_of_metadata P.metadata
+        ; schema = contract_schema P.t_jsonschema
+        ; metadata = documentation_of_schema P.t_jsonschema
         }
         :: path_params rest
       | Query (name, codec, rest) ->
-        let metadata = query_metadata codec in
+        let schema = query_schema codec in
         { Contract.name
         ; kind = `Query
         ; required = false
-        ; schema = schema_of_metadata metadata
+        ; schema = contract_schema schema
         ; query_encoding = query_encoding codec
-        ; metadata = documentation_of_metadata metadata
+        ; metadata = documentation_of_schema schema
         }
         :: path_params rest
       | QueryReq (name, codec, rest) ->
-        let metadata = query_metadata codec in
+        let schema = query_schema codec in
         { Contract.name
         ; kind = `Query
         ; required = true
-        ; schema = schema_of_metadata metadata
+        ; schema = contract_schema schema
         ; query_encoding = query_encoding codec
-        ; metadata = documentation_of_metadata metadata
+        ; metadata = documentation_of_schema schema
         }
         :: path_params rest
       | Request_header (header, rest) ->
@@ -1531,13 +1505,13 @@ module Make (B : Backend.S) = struct
           | Header.Required (name, (module H)) ->
             ( name
             , true
-            , schema_of_metadata H.metadata
-            , documentation_of_metadata H.metadata )
+            , contract_schema H.t_jsonschema
+            , documentation_of_schema H.t_jsonschema )
           | Header.Optional (name, (module H)) ->
             ( name
             , false
-            , schema_of_metadata H.metadata
-            , documentation_of_metadata H.metadata )
+            , contract_schema H.t_jsonschema
+            , documentation_of_schema H.t_jsonschema )
         in
         { Contract.name
         ; kind = `Header

@@ -1,0 +1,16 @@
+(test
+ (name adapter_test)
+ (package typed-endpoint-cohttp-lwt)
+ (libraries
+  base
+  cohttp
+  cohttp-lwt
+  cohttp-lwt-unix
+  lwt.unix
+  typed-endpoint
+  typed-endpoint-cohttp-lwt
+  typed-endpoint-testing
+  uri
+  yojson)
+ (preprocess
+  (pps ppx_let)))

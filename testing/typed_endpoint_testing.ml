@@ -336,11 +336,10 @@ module Backend_conformance = struct
       let of_yojson value = Ok value
       let to_yojson value = value
 
-      let metadata =
-        Typed_endpoint.Metadata.v
-          ~schema:Typed_endpoint.Json_schema.any
+      let t_jsonschema =
+        Typed_endpoint.Json_schema.with_openapi
           ~description:"JSON"
-          ()
+          Typed_endpoint.Json_schema.any
       ;;
     end
 

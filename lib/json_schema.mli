@@ -1,9 +1,33 @@
 open! Base
 
 (** An abstract JSON Schema fragment indexed by the OCaml type it describes.
-    Values are independent of OpenAPI component names and can be used inline by
-    parameters, headers, bodies, and responses. *)
+    Values can be used directly by parameters, headers, bodies, and responses.
+    OpenAPI documentation may be attached without changing the wire shape. *)
 type 'a t
+
+(** Adds or replaces optional OpenAPI documentation while preserving the OCaml
+    type index and JSON Schema value. Omitted fields retain their previous values;
+    empty descriptions and tag lists explicitly replace them. [schema_name]
+    registers a reusable OpenAPI component; compilation validates its name and
+    rejects conflicting schemas. OpenAPI documentation is stored separately from
+    JSON Schema keywords and is not emitted by {!to_yojson}. It does not add
+    runtime validation. *)
+val with_openapi
+  :  ?schema_name:string
+  -> ?description:string
+  -> ?tags:string list
+  -> 'a t
+  -> 'a t
+
+(** Optional OpenAPI component identity. *)
+val schema_name : _ t -> string option
+
+(** OpenAPI description: an explicit override, otherwise the root JSON Schema
+    [description] annotation, otherwise the empty string. *)
+val description : _ t -> string
+
+(** OpenAPI classification tags; empty by default. *)
+val tags : _ t -> string list
 
 (** A schema whose OCaml type index is intentionally hidden. *)
 type packed
@@ -56,8 +80,8 @@ val any : Yojson.Safe.t t
 (** A schema accepting only JSON [null]. *)
 val null : unit t
 
-(** Structural equality that ignores object-member order and preserves array
-    order. *)
+(** Structural equality of JSON Schema values that ignores object-member order
+    and preserves array order. OpenAPI documentation is ignored. *)
 val equal : 'a t -> 'b t -> bool
 
 (** Structural equality for schemas after their type indices have been erased. *)
@@ -182,6 +206,18 @@ val dictionary : values:'a t -> (string * 'a) list t
 (** Allows JSON [null] in addition to [schema]. Applying [nullable] more than
     once has no further effect. *)
 val nullable : 'a t -> 'a option t
+
+(** Adds an opaque JSON annotation without changing the schema's type index or
+    validation semantics. [name] must start with [x-], have a non-empty suffix,
+    and contain no whitespace. [value] must contain only JSON values, with
+    finite floats and valid integer literals. An existing annotation with the
+    same name is replaced. OpenAPI rendering preserves the value verbatim,
+    including any references it contains. *)
+val with_extension : name:string -> value:Yojson.Safe.t -> 'a t -> ('a t, string) Result.t
+
+(** Throwing form of {!with_extension}; invalid arguments raise
+    [Invalid_argument]. *)
+val with_extension_exn : name:string -> value:Yojson.Safe.t -> 'a t -> 'a t
 
 (** Typed schema-building API used by generated code and public so derived
     schemas can be compiled by downstream applications. *)

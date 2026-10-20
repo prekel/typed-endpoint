@@ -10,8 +10,8 @@ let print json = Stdlib.print_endline (Yojson.Safe.to_string json)
 module Pet = struct
   type t = { name : string } [@@deriving to_yojson, jsonschema]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Pet" ~description:"Pet found" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~schema_name:"Pet" ~description:"Pet found" t_jsonschema
   ;;
 end
 
@@ -108,16 +108,16 @@ let%expect_test "summary and description keep only useful differences" =
 module Count = struct
   type t = int [@@deriving to_yojson, jsonschema]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Count" ~description:"Count" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~schema_name:"Count" ~description:"Count" t_jsonschema
   ;;
 end
 
 module Pets = struct
   type t = Pet.t list [@@deriving to_yojson, jsonschema]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Pets" ~description:"Pets" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~schema_name:"Pets" ~description:"Pets" t_jsonschema
   ;;
 end
 
@@ -128,7 +128,7 @@ module Holder = struct
     }
   [@@deriving to_yojson, jsonschema]
 
-  let metadata = Metadata.v ~schema:t_jsonschema ~description:"Holder" ()
+  let t_jsonschema = Json_schema.with_openapi ~description:"Holder" t_jsonschema
 end
 
 let json_route (type a) name (module P : Response_payload.S with type t = a) value =

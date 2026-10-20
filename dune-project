@@ -2,7 +2,7 @@
 
 (name typed-endpoint)
 
-(version 0.3.3)
+(version 0.3.4)
 
 (generate_opam_files true)
 
@@ -64,6 +64,26 @@
   (ppx_let (>= v0.16.0)))
  (tags
   (http routing openapi opium)))
+
+(package
+ (name typed-endpoint-cohttp-lwt)
+ (synopsis "Native Cohttp/Lwt integration for typed-endpoint")
+ (description
+  "A transport-independent Cohttp/Lwt backend with routing for typed-endpoint declarations.")
+ (depends
+  (ocaml (>= 4.14.1))
+  (typed-endpoint (= :version))
+  (typed-endpoint-testing (and (= :version) :with-test))
+  base
+  cohttp
+  (cohttp-lwt (>= 6.3.0))
+  (cohttp-lwt-unix :with-test)
+  lwt
+  uri
+  yojson
+  (ppx_let (>= v0.16.0)))
+ (tags
+  (http routing openapi cohttp lwt)))
 
 (package
  (name typed-endpoint-testing)

@@ -1,0 +1,25 @@
+open! Base
+open Typed_endpoint
+module Endpoint = Make (Typed_endpoint_cohttp_lwt)
+open Endpoint
+
+let route =
+  get / "health"
+  |> documented ~operation_id:"health"
+  |> accepts Request.empty
+  |> returns (case `OK (Response.text ~description:"Health status" ()))
+  ==> fun ok () () -> respond ok "ok"
+;;
+
+let routes =
+  compile_exn
+    [ Group.make_with_context
+        ~context:(Context.return ())
+        ~description:"Release smoke"
+        [ route ]
+    ]
+  |> Compiled.app
+;;
+
+let callback = Typed_endpoint_cohttp_lwt.callback routes
+let () = ignore callback

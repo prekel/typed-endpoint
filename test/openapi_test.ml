@@ -56,22 +56,22 @@ module Item = struct
   type t = { name : string }
   [@@deriving to_yojson, jsonschema] [@@jsonschema.disallow_extra_fields]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Item" ~description:"An item" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~schema_name:"Item" ~description:"An item" t_jsonschema
   ;;
 end
 
 module Items = struct
   type t = Item.t list [@@deriving to_yojson, jsonschema]
 
-  let metadata = Metadata.v ~schema:t_jsonschema ~description:"Items" ()
+  let t_jsonschema = Json_schema.with_openapi ~description:"Items" t_jsonschema
 end
 
 module Holder = struct
   type t = { item : Item.t } [@@deriving to_yojson, jsonschema]
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Holder" ~description:"Holder" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~schema_name:"Holder" ~description:"Holder" t_jsonschema
   ;;
 end
 
@@ -118,8 +118,8 @@ let%test_unit "canonical output is independent of route declaration order" =
 module Alias = struct
   include Item
 
-  let metadata =
-    Metadata.v ~schema:t_jsonschema ~schema_name:"Alias" ~description:"An alias" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~schema_name:"Alias" ~description:"An alias" t_jsonschema
   ;;
 end
 
@@ -127,7 +127,7 @@ module Annotated = struct
   type t = { name : string [@jsonschema.description "A distinct annotation"] }
   [@@deriving to_yojson, jsonschema] [@@jsonschema.disallow_extra_fields]
 
-  let metadata = Metadata.v ~schema:t_jsonschema ~description:"Annotated" ()
+  let t_jsonschema = Json_schema.with_openapi ~description:"Annotated" t_jsonschema
 end
 
 let%expect_test "explicit names survive while unnamed copies choose a stable alias" =
@@ -193,7 +193,9 @@ let%expect_test "inline responses preserve their individual descriptions" =
 module Text_json = struct
   type t = string [@@deriving to_yojson, jsonschema]
 
-  let metadata = Metadata.v ~schema:t_jsonschema ~description:"Shared description" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~description:"Shared description" t_jsonschema
+  ;;
 end
 
 let%test_unit "inline responses retain content and header differences" =
@@ -242,7 +244,7 @@ module Literal = struct
           ])
   ;;
 
-  let metadata = Metadata.v ~schema ~description:"Literal annotations" ()
+  let t_jsonschema = Json_schema.with_openapi ~description:"Literal annotations" schema
 end
 
 let%expect_test "empty required is omitted while literal annotations are preserved" =
@@ -271,7 +273,9 @@ module Resource = struct
           ])
   ;;
 
-  let metadata = Metadata.v ~schema ~schema_name:"Resource" ~description:"A resource" ()
+  let t_jsonschema =
+    Json_schema.with_openapi ~schema_name:"Resource" ~description:"A resource" schema
+  ;;
 end
 
 let%test_unit "resource identifiers and local references are not rewritten" =
@@ -294,6 +298,74 @@ let%test_unit "resource identifiers and local references are not rewritten" =
 
 let strings = Parameter.string ~description:"An element" ()
 let integers = Parameter.int ~description:"An integer" ()
+
+let filter_domain =
+  `Assoc
+    [ ( "fields"
+      , `Assoc [ "name", `Assoc [ "type", `String "string"; "required", `List [] ] ] )
+    ; "operators", `List [ `String "eq"; `String "and" ]
+    ; "$ref", `String "#/filter-language/Pet"
+    ]
+;;
+
+let filter_schema =
+  Json_schema.string_exn ~min_length:1 ()
+  |> Json_schema.with_extension_exn ~name:"x-domain" ~value:filter_domain
+;;
+
+let filter_route ?schema_name path =
+  let parameter =
+    Parameter.v
+      ~schema:filter_schema
+      ?schema_name
+      ~description:"Pet filter expression"
+      ~of_string:Result.return
+      ()
+  in
+  get / path /! arg "filter" parameter
+  |> documented
+  |> accepts Request.empty
+  |> returns (case `OK (Response.text ~description:"Filter expression" ()))
+  ==> fun filter ok () () -> respond ok filter
+;;
+
+let filter_query_schema doc path =
+  operation doc path
+  |> member "parameters"
+  |> Yojson.Safe.Util.to_list
+  |> List.hd_exn
+  |> member "schema"
+;;
+
+let%expect_test
+    "inline query extensions preserve opaque language metadata and string values"
+  =
+  let compiled = compile_exn [ group [ filter_route "filter" ] ] in
+  let doc = Compiled.openapi compiled in
+  filter_query_schema doc "filter" |> print;
+  [%expect
+    {| {"x-domain":{"fields":{"name":{"type":"string","required":[]}},"operators":["eq","and"],"$ref":"#/filter-language/Pet"},"type":"string","minLength":1} |}];
+  let response =
+    Typed_endpoint_testing.Client.call
+      (Compiled.app compiled)
+      `GET
+      "/filter?filter=name%20eq%20%22cat%22%20and%20name%20eq%20%22dog%22"
+  in
+  assert (Typed_endpoint_testing.Response.status response = 200);
+  assert (
+    String.equal
+      (Typed_endpoint_testing.Response.body response)
+      {|name eq "cat" and name eq "dog"|})
+;;
+
+let%expect_test "named query schemas keep extensions in their OpenAPI component" =
+  let doc = document [ filter_route ~schema_name:"PetFilter" "named-filter" ] in
+  filter_query_schema doc "named-filter" |> print;
+  [%expect {| {"$ref":"#/components/schemas/PetFilter"} |}];
+  doc |> member "components" |> member "schemas" |> member "PetFilter" |> print;
+  [%expect
+    {| {"x-domain":{"fields":{"name":{"type":"string","required":[]}},"operators":["eq","and"],"$ref":"#/filter-language/Pet"},"type":"string","minLength":1} |}]
+;;
 
 let collection_route path codec =
   get / path /! query_arg "tags" codec

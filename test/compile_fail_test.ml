@@ -8,16 +8,9 @@ let read_file filename =
   contents
 ;;
 
-let run_compiler ~root fixture =
+let run_compiler ~include_directories fixture =
   let output = Stdlib.Filename.temp_file "typed-endpoint-compile-fail" ".log" in
-  let include_directories =
-    [ root ^ "/lib/.typed_endpoint.objs/byte"
-    ; root ^ "/testing/.typed_endpoint_testing.objs/byte"
-    ]
-  in
-  let package =
-    "base,cohttp,uri,yojson,ppx_deriving_yojson.runtime,ppx_here.runtime-lib"
-  in
+  let package = "base,uri,yojson,ppx_deriving_yojson.runtime,ppx_here.runtime-lib" in
   let arguments =
     [ "ocamlfind"; "ocamlc"; "-stop-after"; "typing"; "-package"; package ]
     @ List.concat_map include_directories ~f:(fun directory -> [ "-I"; directory ])
@@ -40,8 +33,8 @@ let require condition message =
     Stdlib.failwith message
 ;;
 
-let require_failure ~root ~fixture ~expected =
-  let status, diagnostics = run_compiler ~root fixture in
+let require_failure ~include_directories ~fixture ~expected =
+  let status, diagnostics = run_compiler ~include_directories fixture in
   require (not (Int.equal status 0)) ("expected type checking to fail: " ^ fixture);
   require
     (String.is_substring diagnostics ~substring:"Error:")
@@ -54,7 +47,8 @@ let require_failure ~root ~fixture ~expected =
 let () =
   match Stdlib.Array.to_list Stdlib.Sys.argv with
   | [ _
-    ; root
+    ; core_interface
+    ; testing_interface
     ; valid
     ; wrong_payload
     ; wrong_status
@@ -64,23 +58,35 @@ let () =
     ; wrong_collection_handler
     ; wrong_collection_path
     ] ->
-    let status, diagnostics = run_compiler ~root valid in
+    let include_directories =
+      List.map [ core_interface; testing_interface ] ~f:Stdlib.Filename.dirname
+    in
+    let status, diagnostics = run_compiler ~include_directories valid in
     require
       (Int.equal status 0)
       ("expected type checking to succeed from "
-       ^ root
+       ^ String.concat ~sep:", " include_directories
        ^ " while running in "
        ^ Stdlib.Sys.getcwd ()
        ^ ": "
        ^ valid
        ^ "\n"
        ^ diagnostics);
-    require_failure ~root ~fixture:wrong_payload ~expected:"expected of type";
-    require_failure ~root ~fixture:wrong_status ~expected:"Response.case";
-    require_failure ~root ~fixture:wrong_handler ~expected:"Response.case";
-    require_failure ~root ~fixture:wrong_stage ~expected:"This expression has type";
-    require_failure ~root ~fixture:wrong_collection_phase ~expected:"Query";
-    require_failure ~root ~fixture:wrong_collection_handler ~expected:"int list";
-    require_failure ~root ~fixture:wrong_collection_path ~expected:"Scalar"
-  | _ -> Stdlib.failwith "expected workspace root and eight compile-fail fixtures"
+    require_failure
+      ~include_directories
+      ~fixture:wrong_payload
+      ~expected:"expected of type";
+    require_failure ~include_directories ~fixture:wrong_status ~expected:"Response.case";
+    require_failure ~include_directories ~fixture:wrong_handler ~expected:"Response.case";
+    require_failure
+      ~include_directories
+      ~fixture:wrong_stage
+      ~expected:"This expression has type";
+    require_failure ~include_directories ~fixture:wrong_collection_phase ~expected:"Query";
+    require_failure
+      ~include_directories
+      ~fixture:wrong_collection_handler
+      ~expected:"int list";
+    require_failure ~include_directories ~fixture:wrong_collection_path ~expected:"Scalar"
+  | _ -> Stdlib.failwith "expected two library interfaces and eight compile-fail fixtures"
 ;;

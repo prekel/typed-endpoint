@@ -128,7 +128,7 @@ let%test_unit "floating parameters accept finite decimal mantissas and exponents
 module Payload = struct
   type t = string [@@deriving yojson, jsonschema]
 
-  let metadata = Metadata.v ~schema:t_jsonschema ~description:"String" ()
+  let t_jsonschema = Json_schema.with_openapi ~description:"String" t_jsonschema
 end
 
 let json_route ?media_types () =
