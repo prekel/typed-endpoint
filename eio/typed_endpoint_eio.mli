@@ -1,3 +1,7 @@
+(** Direct-style cohttp-eio adapter with an internal ordered router. The
+    application supplies the Eio switch and network resources; endpoints retain
+    the same typed contract as asynchronous backends. *)
+
 open! Base
 
 (** Request value for the native direct-style cohttp-eio 6.3 backend. Its body
@@ -25,6 +29,8 @@ type app_builder
     possible before route matching. *)
 type middleware = request:Http.Request.t -> next:(Http.Request.t -> resp) -> resp
 
+(** Backend capabilities with direct-style sequencing and dispatch-scoped
+    request values. Response constructors buffer the complete body. *)
 include
   Typed_endpoint.Backend.S
   with type req := req

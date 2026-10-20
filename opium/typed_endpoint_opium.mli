@@ -10,8 +10,12 @@
     exceeded, so callers must not install middleware which consumes the same
     stream first unless that middleware replaces it. Header lookup follows
     Cohttp's case-insensitive HTTP semantics. *)
+
+(** Immutable collection of routes awaiting registration with {!mount}. *)
 type app_builder
 
+(** Backend capabilities specialized to Opium's native request, response, and
+    Lwt effect. Route registration is deferred until {!mount}. *)
 include
   Typed_endpoint.Backend.S
   with type req = Opium.Std.Request.t

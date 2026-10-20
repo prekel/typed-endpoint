@@ -1,3 +1,7 @@
+(** Pet HTTP routes and wire conversions. The controller selects status codes
+    and security groups while delegating persistence and transactions to the
+    statically supplied application services. *)
+
 open! Base
 open Typed_endpoint
 

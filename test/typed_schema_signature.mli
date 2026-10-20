@@ -1,3 +1,6 @@
+(** Signature fixture for polymorphic schema derivation. The generated schema
+    constructor must keep its argument tied to the DTO's OCaml type parameter. *)
+
 open! Base
 open Typed_endpoint
 

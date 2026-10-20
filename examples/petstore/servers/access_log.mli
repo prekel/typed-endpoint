@@ -1,10 +1,10 @@
-open! Base
-
 (** Access-log event builder for the Petstore server entrypoints.
 
     Events are emitted as one flat JSON object per line. Request targets are
     reduced to their path before logging, so query parameters, bodies, and
     request headers are never included in the event. *)
+
+open! Base
 
 (** Logger configuration and dependencies shared by access-log events. *)
 type t

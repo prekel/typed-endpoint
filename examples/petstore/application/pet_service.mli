@@ -1,3 +1,6 @@
+(** Pet use cases and their transaction boundaries. Backend and repository
+    effects must agree; runtime database resources are explicit call arguments. *)
+
 open! Base
 
 (** Stateless application service for the pet aggregate. It owns transaction

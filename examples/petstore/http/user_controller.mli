@@ -1,3 +1,7 @@
+(** User-management and login HTTP routes. The controller maps authentication
+    results and domain authorization failures to declared HTTP responses;
+    application services manage sessions and transactions. *)
+
 open! Base
 open Typed_endpoint
 

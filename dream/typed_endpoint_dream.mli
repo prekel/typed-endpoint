@@ -1,3 +1,7 @@
+(** Dream adapter exposing compiled endpoint declarations as a native handler.
+    The application composes middleware and starts the server; handler effects
+    remain [Lwt.t]. *)
+
 open! Base
 
 (** Dream 1.0.0~alpha8 backend for {!Typed_endpoint}.
@@ -8,6 +12,8 @@ open! Base
     connection lifecycle, or middleware stack. *)
 type app_builder
 
+(** Backend capabilities over Dream requests and responses. Bodies use Dream's
+    incoming stream, and computations keep the native Lwt effect. *)
 include
   Typed_endpoint.Backend.S
   with type req = Dream.request

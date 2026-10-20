@@ -1,3 +1,7 @@
+(** Backend-independent composition of Petstore services and controllers.
+    Functor arguments select implementations, while compilation receives the
+    concrete database resource and development authentication configuration. *)
+
 open! Base
 open Typed_endpoint
 
@@ -17,7 +21,7 @@ val openapi_config : Openapi.Config.t
 (** Statically assembles the complete application and HTTP graph. Repository
     implementations are selected by functor application, while concrete
     runtime resources—such as an in-memory state or a Caqti pool—remain explicit
-    arguments to {!compile}. The constraints prevent mixing effects from
+    arguments to {!Make.compile}. The constraints prevent mixing effects from
     different backends. *)
 module Make
     (B : Backend.S)

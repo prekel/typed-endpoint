@@ -1,3 +1,7 @@
+(** Request contexts shared by Petstore controllers. Guards authenticate before
+    the database dependency reaches a handler, and their security and error
+    declarations are included in each protected route's OpenAPI contract. *)
+
 open! Base
 
 (** Principal type shared with authorization guards and route contexts. *)

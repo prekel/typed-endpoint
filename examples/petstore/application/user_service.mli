@@ -1,3 +1,6 @@
+(** Account use cases over domain identities. Ownership checks precede writes;
+    password changes and deletion revoke sessions in the same transaction. *)
+
 open! Base
 
 (** Stateless application service for user accounts. It works with domain

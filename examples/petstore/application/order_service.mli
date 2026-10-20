@@ -1,3 +1,6 @@
+(** Order use cases over domain values. The service coordinates pet lookup and
+    order persistence within a database scope supplied at each call. *)
+
 open! Base
 
 (** Stateless application service for store orders. It defines the transaction

@@ -1,3 +1,7 @@
+(** Internal, effect-free representation of endpoint contracts. Compilation
+    validates and normalizes declarations before runtime assembly and OpenAPI
+    rendering consume them. This module is private to the core library. *)
+
 open! Base
 
 (** Human-readable documentation attached to a parameter, body, or response.
@@ -250,7 +254,8 @@ type response_header =
   }
 
 (** Documentation and all media representations for one response status. An
-    empty [content] denotes a response without a body, as required for 204. *)
+    empty [content] denotes a response without a body, as required for 204,
+    205, and 304. *)
 type response_payload =
   { metadata : Documentation.t
   ; content : response_content list
@@ -343,12 +348,14 @@ module Compile_error : sig
         ; name : string
         }
     (** One endpoint declares the same parameter name more than once in the
-        same path or query location. *)
+        same location. Header names are compared case-insensitively. *)
     | Array_query_requires_codec of
         { meth : string
         ; path : string
         ; name : string
         }
+    (** An array-valued query parameter lacks an explicit CSV or repeated
+        collection codec and therefore has no declared wire serialization. *)
     | Duplicate_response_status of
         { meth : string
         ; path : string
@@ -370,17 +377,21 @@ module Compile_error : sig
         { meth : string
         ; path : string
         ; max_body_bytes : int
-        } (** A JSON or text request-body limit is zero or negative. *)
+        } (** A JSON, text, or binary request-body limit is zero or negative. *)
     | Invalid_json_media_types of
         { meth : string
         ; path : string
         ; media_types : string list
         }
+    (** A JSON body has no allowed media types, or an entry is not a concrete
+        application/json or application/subtype+json token without parameters. *)
     | Reserved_request_header of
         { meth : string
         ; path : string
         ; name : string
         }
+    (** Accept, Content-Type, and Authorization must be represented through body
+        or security contracts rather than ordinary request-header parameters. *)
     | Invalid_header_name of
         { meth : string
         ; path : string

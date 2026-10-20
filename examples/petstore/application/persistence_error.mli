@@ -1,3 +1,7 @@
+(** Infrastructure failures shared across database and repository ports.
+    Application code retains internal diagnostics and exposes sanitized text
+    through {!public_message}. *)
+
 open! Base
 
 (** Infrastructure failure shared by repository ports. Details of unexpected

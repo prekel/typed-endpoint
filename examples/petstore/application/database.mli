@@ -1,3 +1,7 @@
+(** Database resource port used by application services to own connection and
+    transaction scopes. Repository implementations share its effect and
+    connection type without selecting a concrete driver here. *)
+
 open! Base
 
 (** Process-owned database resource and its scoped connections. This port

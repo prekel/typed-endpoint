@@ -1,3 +1,7 @@
+(** Petstore wire DTOs, JSON codecs, and domain conversions. Codecs and schemas
+    describe the same JSON shape; conversions validate directly constructed
+    DTOs before application services receive domain values. *)
+
 open! Base
 open Typed_endpoint
 
@@ -165,6 +169,8 @@ end
 
 (** Required credentials and optional profile fields for user creation. *)
 module User_create : sig
+  (** Creation body with required non-empty username and password. Optional
+      profile fields default to [None]; wire names follow Petstore camelCase. *)
   type t =
     { id : int option
     ; username : string
@@ -176,6 +182,7 @@ module User_create : sig
     ; user_status : int option
     }
 
+  (** JSON codec and schema requiring both credential fields. *)
   include Json_payload.S with type t := t
 
   (** Validates directly constructed DTOs as well as decoded values. *)
@@ -185,6 +192,8 @@ end
 (** Full PUT replacement. Missing optional fields reset the stored values;
     username comes exclusively from the path and password is required. *)
 module User_update : sig
+  (** Complete replacement body. An absent optional field becomes [None] rather
+      than retaining the old value, and the password must be non-empty. *)
   type t =
     { id : int option
     ; first_name : string option
@@ -195,8 +204,11 @@ module User_update : sig
     ; user_status : int option
     }
 
+  (** JSON codec and schema for the replacement, with no username field. *)
   include Json_payload.S with type t := t
 
+  (** Uses the path's [username] as the domain identity and validates it together
+      with the password, including when the record was constructed directly. *)
   val to_domain : username:string -> t -> (Domain.User.t, string) Result.t
 end
 
@@ -223,31 +235,48 @@ end
 
 (** Required credentials carried only in the login request body. *)
 module Login_request : sig
+  (** Credentials supplied in JSON, never as URL query parameters. Decoding
+      requires both strings to be non-empty and preserves their bytes. *)
   type t =
     { username : string
     ; password : string
     }
 
+  (** Requires both fields and returns a codec diagnostic for invalid input. *)
   val of_yojson : Yojson.Safe.t -> (t, string) Result.t
+
+  (** Encodes both credentials; the result contains the clear-text password and
+      must not be used as a public profile response or access-log payload. *)
   val to_yojson : t -> Yojson.Safe.t
+
+  (** Schema for the required non-empty credential strings and named
+      [LoginRequest] OpenAPI component. *)
   val t_jsonschema : t Json_schema.t
 end
 
 (** Non-empty request batch, decoded before any database mutation. *)
 module User_create_list : sig
+  (** Ordered creation requests. The decoder requires at least one element;
+      the list type itself also permits directly constructed empty values. *)
   type t = User_create.t list
 
+  (** JSON-array codec and schema with a minimum length of one. *)
   include Json_payload.S with type t := t
 
+  (** Converts each entry in request order, returning the first conversion error.
+      This operation performs no writes and does not check username uniqueness. *)
   val to_domain : t -> (Domain.User.t list, string) Result.t
 end
 
 (** Public batch result in request order, without credentials. *)
 module User_list : sig
+  (** Ordered public profiles returned by batch creation. *)
   type t = User.t list
 
+  (** JSON-array encoder and schema; user passwords are excluded. *)
   include Response_payload.S with type t := t
 
+  (** Converts profiles in input order without exposing their credentials. *)
   val of_domain : Domain.User.t list -> t
 end
 

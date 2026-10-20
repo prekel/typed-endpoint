@@ -1,9 +1,9 @@
-open! Base
-
 (** Business types used by the Petstore application.
 
     This module deliberately contains no JSON or HTTP concerns. Transport
     adapters convert DTOs at the route boundary. *)
+
+open! Base
 
 (** Lifecycle states shared by pet commands, filters, and inventory. *)
 module Status : sig
@@ -155,6 +155,9 @@ end
 
 (** A login session owned by the application database. *)
 module Session : sig
+  (** Revocable login identity. [token] is an opaque credential, [username]
+      identifies its owner, and [expires_at] is a Unix-epoch timestamp in seconds.
+      Expiry is enforced by the session service rather than by this record. *)
   type t =
     { token : string
     ; username : string

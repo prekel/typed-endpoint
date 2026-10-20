@@ -1,3 +1,7 @@
+(** Framework-free synchronous backend for application tests. Requests and
+    responses are buffered values; {!Client} drives compiled routes and
+    {!Backend_conformance} supplies reusable adapter checks. *)
+
 open! Base
 
 (** Immutable request captured by the deterministic in-memory backend. It owns

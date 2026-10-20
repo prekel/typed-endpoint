@@ -1,3 +1,7 @@
+(** Internal normalization of generated OpenAPI documents. Traversal is limited
+    to recognized schema positions so opaque annotations and reference scopes
+    retain their meaning. *)
+
 open! Base
 
 (** Normalizes renderer output for human-readable OpenAPI without changing source

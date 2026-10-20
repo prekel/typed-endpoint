@@ -1,3 +1,7 @@
+(** JSON Schema fragments indexed by their OCaml wire types. Use the checked
+    constructors for handwritten schemas and [typed-endpoint-ppx] for DTOs.
+    Constraints describe codecs; they do not add runtime validation. *)
+
 open! Base
 
 (** An abstract JSON Schema fragment indexed by the OCaml type it describes.
@@ -11,7 +15,12 @@ type 'a t
     registers a reusable OpenAPI component; compilation validates its name and
     rejects conflicting schemas. OpenAPI documentation is stored separately from
     JSON Schema keywords and is not emitted by {!to_yojson}. It does not add
-    runtime validation. *)
+    runtime validation.
+
+    Settings belong to this schema root. Embedding a decorated schema as a
+    collection item or DTO field does not register its OpenAPI component by
+    itself. Constructors for a new wire type, such as {!list} or {!nullable},
+    start with empty OpenAPI metadata; decorate their result when needed. *)
 val with_openapi
   :  ?schema_name:string
   -> ?description:string
@@ -138,7 +147,9 @@ val integer_exn
   -> unit
   -> int t
 
-(** Builds an integer schema whose values use the full OCaml [int64] range. *)
+(** Builds an integer schema whose bounds and default use the full OCaml
+    [int64] range. Bounds must be ordered and contain [default]; a custom format
+    must be non-empty. Invalid arguments return [Error]. *)
 val int64
   :  ?format:integer_format
   -> ?minimum:int64
@@ -203,8 +214,10 @@ val list_exn : ?min_items:int -> ?max_items:int -> items:'a t -> unit -> 'a list
 (** An object whose arbitrary property values conform to [values]. *)
 val dictionary : values:'a t -> (string * 'a) list t
 
-(** Allows JSON [null] in addition to [schema]. Applying [nullable] more than
-    once has no further effect. *)
+(** Allows JSON [null] in addition to the supplied schema. Repeated application
+    does not add redundant nullable branches to the JSON Schema value. The new
+    option type starts with empty OpenAPI metadata; use {!with_openapi} on the
+    result to give the nullable schema its own component name or description. *)
 val nullable : 'a t -> 'a option t
 
 (** Adds an opaque JSON annotation without changing the schema's type index or
@@ -219,8 +232,10 @@ val with_extension : name:string -> value:Yojson.Safe.t -> 'a t -> ('a t, string
     [Invalid_argument]. *)
 val with_extension_exn : name:string -> value:Yojson.Safe.t -> 'a t -> 'a t
 
-(** Typed schema-building API used by generated code and public so derived
-    schemas can be compiled by downstream applications. *)
+(** Schema-building support for generated code, exported so downstream derived
+    schemas can compile. Several constructors have polymorphic result indices:
+    generated code must tie these to the source OCaml type. Handwritten schemas
+    should prefer the checked constructors above. *)
 module Deriver : sig
   (** Primitive JSON Schema types used by the generated schema builders. *)
   type schema_type =

@@ -1,3 +1,7 @@
+(** Backend-independent endpoint DSL re-exported by [Typed_endpoint]. Typed
+    declarations carry codecs, documentation, and handler capabilities through
+    compilation into one runtime and OpenAPI contract. *)
+
 open! Base
 
 (** Typed JSON Schema constructors shared by endpoint codecs and OpenAPI. *)
@@ -150,7 +154,9 @@ end
 (** HTTP methods accepted by typed and runtime-only routes. [`Other] preserves
     extension methods without coupling the core to a backend library. *)
 module Method : sig
-  (** Supported methods, including extension methods. *)
+  (** Supported methods, including extension methods. Compilation rejects typed
+      routes whose method OpenAPI 3.1 cannot represent; backend-specific methods
+      can instead be registered as runtime-only unsafe routes. *)
   type t =
     [ `GET
     | `POST
@@ -169,86 +175,88 @@ end
 module Status : sig
   (** Statuses suitable for authentication, authorization, and other guards. *)
   type client_error =
-    [ `Bad_request
-    | `Unauthorized
-    | `Payment_required
-    | `Forbidden
-    | `Not_found
-    | `Method_not_allowed
-    | `Not_acceptable
-    | `Proxy_authentication_required
-    | `Request_timeout
-    | `Conflict
-    | `Gone
-    | `Length_required
-    | `Precondition_failed
-    | `Request_entity_too_large
-    | `Request_uri_too_long
-    | `Unsupported_media_type
-    | `Requested_range_not_satisfiable
-    | `Expectation_failed
-    | `I_m_a_teapot
-    | `Enhance_your_calm
-    | `Unprocessable_entity
-    | `Locked
-    | `Failed_dependency
-    | `Upgrade_required
-    | `Precondition_required
-    | `Too_many_requests
-    | `Request_header_fields_too_large
-    | `No_response
-    | `Retry_with
-    | `Blocked_by_windows_parental_controls
-    | `Wrong_exchange_server
-    | `Client_closed_request
+    [ `Bad_request (** 400 *)
+    | `Unauthorized (** 401 *)
+    | `Payment_required (** 402 *)
+    | `Forbidden (** 403 *)
+    | `Not_found (** 404 *)
+    | `Method_not_allowed (** 405 *)
+    | `Not_acceptable (** 406 *)
+    | `Proxy_authentication_required (** 407 *)
+    | `Request_timeout (** 408 *)
+    | `Conflict (** 409 *)
+    | `Gone (** 410 *)
+    | `Length_required (** 411 *)
+    | `Precondition_failed (** 412 *)
+    | `Request_entity_too_large (** 413 *)
+    | `Request_uri_too_long (** 414 *)
+    | `Unsupported_media_type (** 415 *)
+    | `Requested_range_not_satisfiable (** 416 *)
+    | `Expectation_failed (** 417 *)
+    | `I_m_a_teapot (** 418 *)
+    | `Enhance_your_calm (** 420 *)
+    | `Unprocessable_entity (** 422 *)
+    | `Locked (** 423 *)
+    | `Failed_dependency (** 424 *)
+    | `Upgrade_required (** 426 *)
+    | `Precondition_required (** 428 *)
+    | `Too_many_requests (** 429 *)
+    | `Request_header_fields_too_large (** 431 *)
+    | `No_response (** 444 *)
+    | `Retry_with (** 449 *)
+    | `Blocked_by_windows_parental_controls (** 450 *)
+    | `Wrong_exchange_server (** 451 *)
+    | `Client_closed_request (** 499 *)
     ]
 
   (** Every named status supported by the library, plus arbitrary numeric
       extension statuses. Compilation rejects response declarations outside
-      the HTTP range 100 through 599. *)
+      the final HTTP range 200 through 599; informational statuses cannot be
+      declared as an endpoint's final response. *)
   type t =
-    [ `Code of int
-    | `Continue
-    | `Switching_protocols
-    | `Processing
-    | `Checkpoint
-    | `OK
-    | `Created
-    | `Accepted
-    | `Non_authoritative_information
-    | `No_content
-    | `Reset_content
-    | `Partial_content
-    | `Multi_status
-    | `Already_reported
-    | `Im_used
-    | `Multiple_choices
-    | `Moved_permanently
-    | `Found
-    | `See_other
-    | `Not_modified
-    | `Use_proxy
-    | `Switch_proxy
-    | `Temporary_redirect
-    | `Permanent_redirect
-    | client_error
-    | `Internal_server_error
-    | `Not_implemented
-    | `Bad_gateway
-    | `Service_unavailable
-    | `Gateway_timeout
-    | `Http_version_not_supported
-    | `Variant_also_negotiates
-    | `Insufficient_storage
-    | `Loop_detected
-    | `Bandwidth_limit_exceeded
-    | `Not_extended
-    | `Network_authentication_required
-    | `Network_read_timeout_error
-    | `Network_connect_timeout_error
+    [ `Code of int (** Caller-supplied numeric status. *)
+    | `Continue (** 100 *)
+    | `Switching_protocols (** 101 *)
+    | `Processing (** 102 *)
+    | `Checkpoint (** 103 *)
+    | `OK (** 200 *)
+    | `Created (** 201 *)
+    | `Accepted (** 202 *)
+    | `Non_authoritative_information (** 203 *)
+    | `No_content (** 204 *)
+    | `Reset_content (** 205 *)
+    | `Partial_content (** 206 *)
+    | `Multi_status (** 207 *)
+    | `Already_reported (** 208 *)
+    | `Im_used (** 226 *)
+    | `Multiple_choices (** 300 *)
+    | `Moved_permanently (** 301 *)
+    | `Found (** 302 *)
+    | `See_other (** 303 *)
+    | `Not_modified (** 304 *)
+    | `Use_proxy (** 305 *)
+    | `Switch_proxy (** 306 *)
+    | `Temporary_redirect (** 307 *)
+    | `Permanent_redirect (** 308 *)
+    | client_error (* 4xx; see client_error above. *)
+    | `Internal_server_error (** 500 *)
+    | `Not_implemented (** 501 *)
+    | `Bad_gateway (** 502 *)
+    | `Service_unavailable (** 503 *)
+    | `Gateway_timeout (** 504 *)
+    | `Http_version_not_supported (** 505 *)
+    | `Variant_also_negotiates (** 506 *)
+    | `Insufficient_storage (** 507 *)
+    | `Loop_detected (** 508 *)
+    | `Bandwidth_limit_exceeded (** 509 *)
+    | `Not_extended (** 510 *)
+    | `Network_authentication_required (** 511 *)
+    | `Network_read_timeout_error (** 598 *)
+    | `Network_connect_timeout_error (** 599 *)
     ]
 
-  (** Converts a supported status token to its numeric HTTP code. *)
+  (** Converts a supported status token to its numeric HTTP code. [`Code n]
+      returns [n] unchanged; declaration validation happens during compilation. *)
   val code : [< t ] -> int
 end
 
@@ -290,8 +298,10 @@ module Backend : sig
     (** Header lookup is case-insensitive in HTTP backends. *)
     val header : req -> string -> string option
 
-    (** Reads at most [max_bytes]. Backends must stop buffering once the limit
-        is exceeded and return [`Too_large]. *)
+    (** Buffers at most [max_bytes] and returns [`Too_large] on overflow.
+        A transport chunk may cross the boundary; the backend must reject it
+        without accumulating it or first buffering the complete request body.
+        Connection draining and transport limits remain the host's concern. *)
     val body_to_string : max_bytes:int -> req -> (string, [ `Too_large ]) Result.t io
 
     (** Creates one buffered response. The caller supplies the complete header
@@ -339,16 +349,22 @@ module Runtime_error : sig
         ; status : int
         ; declared : int list
         }
+    (** A returned capability belongs to another declaration, even if its status
+        also occurs in [declared]. The list contains numeric statuses only. *)
     | Invalid_response_header of
         { name : string
         ; reason : string
         }
+    (** A header codec emitted CR, LF, or a forbidden control byte. [reason]
+        describes the failure without retaining the rejected header value. *)
 
   (** Produces a stable diagnostic without including a rejected header value. *)
   val to_string : t -> string
 end
 
-(** Raised when a handler returns a case token absent from its response declaration. *)
+(** Raised when a handler returns an undeclared response capability or a typed
+    response header codec emits an invalid value. These are handler-contract
+    failures, separate from expected request decode errors. *)
 exception Runtime_error of Runtime_error.t
 
 (** Codecs shared by path and query parameters. A codec is the single source
@@ -359,8 +375,9 @@ module Parameter : sig
     (** OCaml value parsed from one request parameter. *)
     type t
 
-    (** Parses one percent-decoded path or query value. [Error message] becomes
-        part of the configured decode-error response. *)
+    (** Parses one percent-decoded path or query value. [Error message] is
+        available to a custom decode-error policy; the default response hides
+        codec diagnostics and the rejected raw value. *)
     val of_string : string -> (t, string) Result.t
 
     (** Schema and description used to document the decoded value. *)
@@ -377,8 +394,9 @@ module Parameter : sig
     -> unit
     -> (module S with type t = 'a)
 
-  (** Built-in codecs with matching primitive JSON schemas. Boolean values are
-      deliberately restricted to lowercase [true] and [false]. *)
+  (** Identity decoder for a string, including the empty string, with a matching
+      primitive schema. Constraints added to a schema are documentation and do
+      not add checks to this decoder. *)
   val string
     :  ?schema_name:string
     -> ?tags:string list
@@ -540,7 +558,8 @@ module Request_payload : sig
     type t
 
     (** Describes the wire shape of [t]. The value generated by [jsonschema] is
-        sufficient; {!Json_schema.with_openapi} adds optional documentation. *)
+        sufficient; {!Typed_endpoint.Json_schema.with_openapi} adds optional
+        documentation. *)
     val t_jsonschema : t Json_schema.t
 
     (** Decodes one already-parsed JSON value into the request DTO. *)
@@ -557,7 +576,8 @@ module Response_payload : sig
     type t
 
     (** Describes the wire shape of [t]. The value generated by [jsonschema] is
-        sufficient; {!Json_schema.with_openapi} adds optional documentation. *)
+        sufficient; {!Typed_endpoint.Json_schema.with_openapi} adds optional
+        documentation. *)
     val t_jsonschema : t Json_schema.t
 
     (** Encodes the response DTO as its declared JSON wire shape. *)
@@ -574,7 +594,8 @@ module Json_payload : sig
     type t
 
     (** Describes the wire shape of [t]. The value generated by [jsonschema] is
-        sufficient; {!Json_schema.with_openapi} adds optional documentation. *)
+        sufficient; {!Typed_endpoint.Json_schema.with_openapi} adds optional
+        documentation. *)
     val t_jsonschema : t Json_schema.t
 
     (** Decodes one JSON value into the DTO. *)
@@ -597,21 +618,30 @@ module Decode_error : sig
         ; value : string
         ; error : string
         }
+    (** A supplied parameter failed its codec; maps to HTTP 400. Raw values and
+        diagnostics are retained for custom policies, not exposed by default. *)
     | Missing_parameter of
         { source : [ `Path | `Query | `Header ]
         ; name : string
-        }
+        } (** A required parameter was absent; maps to HTTP 400. *)
     | Duplicate_parameter of
         { source : [ `Query ]
         ; name : string
         }
+    (** A scalar or CSV query parameter occurred more than once; HTTP 400.
+        Repeated collection codecs deliberately allow multiple occurrences. *)
     | Invalid_json of { error : string }
+    (** The bounded request body is not syntactically valid JSON; HTTP 400. *)
     | Invalid_body of { error : string }
+    (** JSON syntax was valid but the payload decoder rejected it; HTTP 400. *)
     | Unsupported_media_type of
         { expected : string list
         ; actual : string option
         }
+    (** Content-Type is absent or incompatible with the declaration; HTTP 415.
+        Rejection happens before reading the body. *)
     | Body_too_large of { max_bytes : int }
+    (** The body exceeded its configured byte limit; HTTP 413. *)
 end
 
 (** Specializes the endpoint DSL to a backend while preserving its native
@@ -646,7 +676,10 @@ module Make (B : Backend.S) : sig
     val to_decode_error : error -> Decode_error.t
   end
 
-  (** Request-body declarations and runtime decoding. *)
+  (** Request-body declarations and runtime decoding. JSON, text, and binary
+      bodies default to a 1,048,576-byte limit; explicit limits must be positive.
+      Declaring a body is lazy: the handler must call {!Request_body.read} to
+      perform media-type, size, and payload validation. *)
   module Request : sig
     (** Runtime request decoding paired with its OpenAPI request-body
             contract. *)
@@ -655,7 +688,7 @@ module Make (B : Backend.S) : sig
     (** A request without a body. The handler receives [()]. *)
     val empty : unit t
 
-    (** On [Request_body.read], requires a JSON media type, reads no more than
+    (** On [Request_body.read], requires a JSON media type, buffers within
             [max_body_bytes], and invokes the DTO decoder. [media_types] defaults to
             [["application/json"]]; explicit vendor JSON types are shared with
             OpenAPI. Invalid declarations are rejected by [compile]. *)
@@ -758,12 +791,23 @@ module Make (B : Backend.S) : sig
     (** Syntax support for [let%map] and simultaneous [and] bindings from
             [ppx_let]. Bindings retain left-to-right resolution order. *)
     module Let_syntax : sig
-      (** Operators recognized by the outer let-map syntax. *)
+      (** Injects a value without reading the request or declaring a rejection. *)
       val return : 'a -> 'a t
 
+      (** Maps a successful context value without changing its declared failures
+          or security requirements. *)
       val ( >>| ) : 'a t -> ('a -> 'b) -> 'b t
+
+      (** Resolves the function context before its argument. The first rejection
+          stops runtime resolution; both contracts remain documented. *)
       val ( <*> ) : ('a -> 'b) t -> 'a t -> 'b t
+
+      (** Resolves a unit context before the value context and keeps the latter
+          value. Rejection short-circuits from left to right. *)
       val ( *> ) : unit t -> 'a t -> 'a t
+
+      (** Resolves a value context before a unit context and keeps the former
+          value. Rejection short-circuits from left to right. *)
       val ( <* ) : 'a t -> unit t -> 'a t
 
       (** Nested syntax required by ppx_let for applicative contexts. *)
@@ -1026,6 +1070,8 @@ module Make (B : Backend.S) : sig
           { meth : string
           ; path : string
           }
+      (** Two routes have the same method and fully prefixed path, including
+          runtime-only routes. *)
       | Ambiguous_route of
           { meth : string
           ; path : string
@@ -1050,6 +1096,7 @@ module Make (B : Backend.S) : sig
           ; captures : string list
           } (** The rendered capture names differ from the typed parameters. *)
       | Duplicate_operation_id of string
+      (** An explicit OpenAPI operation ID is shared by multiple endpoints. *)
       | Duplicate_parameter of
           { meth : string
           ; path : string
@@ -1065,7 +1112,7 @@ module Make (B : Backend.S) : sig
           { meth : string
           ; path : string
           ; status : int
-          }
+          } (** One endpoint explicitly declares the same status more than once. *)
       | Invalid_response_status of
           { meth : string
           ; path : string
@@ -1076,11 +1123,13 @@ module Make (B : Backend.S) : sig
           ; path : string
           ; status : int
           }
+      (** A declared 204, 205, or 304 response carries a text or JSON payload
+          instead of an empty representation. *)
       | Invalid_body_limit of
           { meth : string
           ; path : string
           ; max_body_bytes : int
-          }
+          } (** A JSON, text, or binary request-body limit is zero or negative. *)
       | Invalid_json_media_types of
           { meth : string
           ; path : string
@@ -1098,44 +1147,55 @@ module Make (B : Backend.S) : sig
           { meth : string
           ; path : string
           ; name : string
-          }
+          } (** A request or response header name is not a valid HTTP field-name token. *)
       | Reserved_response_header of
           { meth : string
           ; path : string
           ; status : int
           ; name : string
           }
+      (** A response header declaration attempts to control a representation
+          or transport header owned by the payload or backend. *)
       | Duplicate_response_header of
           { meth : string
           ; path : string
           ; status : int
           ; name : string
-          }
+          } (** One response declares the same case-insensitive header name twice. *)
       | Conflicting_response_header of
           { meth : string
           ; path : string
           ; status : int
           ; name : string
           }
+      (** Responses merged under one status disagree about a shared header's
+          schema, requiredness, or documentation. *)
       | Invalid_schema_name of string
+      (** A component name is empty or contains characters other than ASCII
+          letters, digits, dots, underscores, and hyphens. *)
       | Conflicting_schema of string
+      (** The same explicit component name denotes structurally different schemas. *)
       | Invalid_security_scheme_name of string
+      (** A security component name fails the same syntax checks as a schema name. *)
       | Conflicting_security_scheme of string
+      (** The same security component name denotes different scheme definitions. *)
       | Invalid_security_scope of
           { scheme : string
           ; scope : string
           }
+      (** A requirement uses an undeclared OAuth scope or supplies a scope to a
+          scheme that does not support scopes. *)
       | Invalid_security_scheme_parameter of
           { scheme : string
           ; parameter : string
-          }
+          } (** An API-key scheme configured for a header uses an invalid field name. *)
       | Invalid_security_authorization_url of string
       (** The scheme declares an invalid absolute HTTP(S) authorization URI,
           including a malformed host literal, percent escape, or fragment. *)
       | Duplicate_oauth_scope of
           { scheme : string
           ; scope : string
-          }
+          } (** An OAuth scheme repeats a scope name in its declaration. *)
 
     (** Stable human-readable diagnostic suitable for startup logs. *)
     val to_string : t -> string

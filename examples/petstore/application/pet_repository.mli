@@ -1,3 +1,7 @@
+(** Stateless persistence port for pets, selections, and image attachments.
+    Connections come from the calling service's database scope; results contain
+    domain values rather than transport DTOs. *)
+
 open! Base
 
 (** Persistence port required by the pet application service. Implementations

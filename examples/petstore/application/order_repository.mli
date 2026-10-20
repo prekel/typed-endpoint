@@ -1,3 +1,7 @@
+(** Stateless persistence port for store orders. Every operation receives the
+    connection selected by the calling service; implementations do not start
+    their own application transaction. *)
+
 open! Base
 
 (** Persistence port required by the order application service. *)

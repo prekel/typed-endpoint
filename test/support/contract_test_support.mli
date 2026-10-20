@@ -1,3 +1,7 @@
+(** Test-only inspection and validation of generated OpenAPI contracts.
+    Assertion-style helpers raise on mismatches, while schema validation
+    returns diagnostics for intentionally invalid fixtures. *)
+
 open! Base
 
 (** Test-only helpers for the subset emitted by typed-endpoint. Schema validation
@@ -14,6 +18,8 @@ val validate
     including empty strings. Never use this to resolve JSON Schema references. *)
 val resolve_response_exn : Yojson.Safe.t -> Yojson.Safe.t -> Yojson.Safe.t
 
+(** Lowercase OpenAPI operation key for a method. Extension methods are
+    lowercased verbatim; this helper does not validate OpenAPI support. *)
 val method_name : Typed_endpoint.Method.t -> string
 
 (** Finds an emitted path template for a concrete target, preferring static

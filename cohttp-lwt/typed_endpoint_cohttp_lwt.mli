@@ -1,3 +1,7 @@
+(** Transport-independent Cohttp/Lwt backend. Compile routes with
+    [Typed_endpoint.Make], then pass {!callback} to the application's server.
+    Network resources, middleware, and connection lifetime belong to the caller. *)
+
 open! Base
 
 (** Request value for the Cohttp/Lwt backend. Path captures belong to the
@@ -8,12 +12,15 @@ type req
     pair allows application middleware to inspect and update HTTP metadata. *)
 type resp = Cohttp.Response.t * Cohttp_lwt.Body.t
 
+(** Native Lwt effect, shared with asynchronous contexts and service ports. *)
 type 'a io = 'a Lwt.t
 
 (** Immutable route collection. Routing is internal to this package and
     preserves the order supplied by typed-endpoint. *)
 type app_builder
 
+(** Backend operations over the dispatch-scoped request and native Cohttp
+    response pair. Route collections are immutable and preserve their order. *)
 include
   Typed_endpoint.Backend.S
   with type req := req

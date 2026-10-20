@@ -1,9 +1,11 @@
+(** Scalar HTTP codecs shared by Petstore routes. Parsing rules and schemas
+    express transport constraints; controllers pass the resulting typed values
+    to domain-oriented application services. *)
+
 open! Base
 open Typed_endpoint
 
-(** Validated HTTP parameter codecs shared by controllers. They remain outside
-    the domain because their error text and OpenAPI metadata are transport
-    concerns. *)
+(** Positive pet identifier within the OCaml integer range. *)
 module Pet_id : Parameter.S with type t = int
 
 (** Positive order identifier. *)

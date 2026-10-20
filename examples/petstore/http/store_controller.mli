@@ -1,3 +1,6 @@
+(** Inventory and order HTTP routes. Domain results are translated into DTOs
+    and declared statuses; application services retain transaction ownership. *)
+
 open! Base
 open Typed_endpoint
 

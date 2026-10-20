@@ -1,3 +1,6 @@
+(** Internal OpenAPI 3.1 renderer for validated contracts. Rendering is pure
+    and deterministic and does not inspect handlers or backend route values. *)
+
 open! Base
 
 (** [render ~config contract] produces an OpenAPI 3.1 JSON document from a

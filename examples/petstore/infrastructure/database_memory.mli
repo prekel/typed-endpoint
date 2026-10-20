@@ -1,3 +1,7 @@
+(** In-memory implementation of the Petstore database and repository ports.
+    A database value owns its isolated state; transaction-scoped snapshots allow
+    atomic writes without storing service dependencies in a global registry. *)
+
 open! Base
 
 (** Copy-on-write in-memory database used by examples and tests. Transactions

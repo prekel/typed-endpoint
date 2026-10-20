@@ -1,3 +1,7 @@
+(** Stateless persistence port for accounts keyed by username. Authorization
+    and session revocation belong to the application service; storage operations
+    share the connection passed by that service. *)
+
 open! Base
 
 (** Persistence port required by the user application service. *)

@@ -1,3 +1,7 @@
+(** Development authentication configuration and Bearer-header parsing.
+    Login sessions are resolved separately through the application service;
+    this module does not perform credential verification or database access. *)
+
 open! Base
 
 (** Independent development credentials accepted alongside login sessions. *)

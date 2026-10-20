@@ -1,3 +1,6 @@
+(** Internal runtime checks for response capabilities. Case membership uses
+    the token created by a declaration, independently of its numeric status. *)
+
 open! Base
 
 (** Details of a handler response whose case token is absent from the
