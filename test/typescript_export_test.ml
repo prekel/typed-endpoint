@@ -12,8 +12,10 @@ module Tuple = struct
 end
 
 module Result_payload = struct
-  type t = (int, string) Result.t [@@deriving jsonschema]
-  type qualified = (int, string) Stdlib.result [@@deriving jsonschema]
+  type t = (int, string) Result.t [@@deriving jsonschema { no_yojson = true }]
+
+  type qualified = (int, string) Stdlib.result
+  [@@deriving jsonschema { no_yojson = true }]
 end
 
 let%expect_test "result schemas retain success and error payload types" =

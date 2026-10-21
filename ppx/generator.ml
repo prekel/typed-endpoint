@@ -399,7 +399,7 @@ let apply_defs ~loc = function
       Typed_endpoint.Json_schema.Deriver.with_definitions ![%e edv] ppx_result]
 ;;
 
-let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
+let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict no_yojson =
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
   let config =
     Attrs.configure
@@ -408,6 +408,7 @@ let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
       removed_tuple_flag
       flag_ocaml_doc
       strict
+      no_yojson
       (Code_path.fully_qualified_path (Expansion_context.Deriver.code_path ctxt))
   in
   let rec_flag, type_decls = ast in
@@ -496,7 +497,7 @@ let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
   | _, _ -> [%str [%ocaml.error "typed-endpoint-ppx: unsupported type"]]
 ;;
 
-let sig_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
+let sig_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict no_yojson =
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
   let _config =
     Attrs.configure
@@ -505,6 +506,7 @@ let sig_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
       removed_tuple_flag
       flag_ocaml_doc
       strict
+      no_yojson
       (Code_path.fully_qualified_path (Expansion_context.Deriver.code_path ctxt))
   in
   match snd ast with

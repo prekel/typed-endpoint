@@ -14,11 +14,18 @@ let read filename =
     ~finally:(fun () -> Stdlib.close_in channel)
 ;;
 
-let run ?(kind = "--impl") driver source output =
+let run ?(kind = "--impl") ?(dump_ast = false) driver source output =
   let command =
     String.concat
       ~sep:" "
-      (List.map [ driver; kind; source; "-o"; output ] ~f:Stdlib.Filename.quote)
+      (List.map
+         ([ driver; kind; source; "-o"; output ]
+          @
+          if dump_ast then
+            [ "-dump-ast" ]
+          else
+            [])
+         ~f:Stdlib.Filename.quote)
   in
   Stdlib.Sys.command (command ^ " 2> " ^ Stdlib.Filename.quote (output ^ ".log"))
 ;;
@@ -60,12 +67,12 @@ let () =
         {|
 open! Base
 module A = struct
-  type 'a node = { value : 'a; next : 'a node option } [@@deriving jsonschema]
-  type _ phantom = { count : int } [@@deriving jsonschema]
+  type 'a node = { value : 'a; next : 'a node option } [@@deriving jsonschema { no_yojson = true }]
+  type _ phantom = { count : int } [@@deriving jsonschema { no_yojson = true }]
 end
 module B = struct
-  type 'a node = { value : 'a; next : 'a node option } [@@deriving jsonschema]
-  type _ phantom = { count : int } [@@deriving jsonschema]
+  type 'a node = { value : 'a; next : 'a node option } [@@deriving jsonschema { no_yojson = true }]
+  type _ phantom = { count : int } [@@deriving jsonschema { no_yojson = true }]
 end
 |}
       in
@@ -93,77 +100,145 @@ end
         if not (String.is_substring actual ~substring:diagnostic) then
           Stdlib.failwith ("unexpected PPX diagnostic for " ^ fixture ^ "\n" ^ actual)
       in
+      let accept ~kind fixture =
+        let extension =
+          if String.equal kind "--intf" then
+            ".mli"
+          else
+            ".ml"
+        in
+        let source = first ^ "/accepted" ^ extension in
+        let output = first ^ "/accepted_output" ^ extension in
+        write source ("open! Base\n" ^ fixture);
+        if run ~kind ~dump_ast:true driver source output <> 0 then
+          Stdlib.failwith ("unexpected expansion failure: " ^ read (output ^ ".log"));
+        if typecheck ~include_directory output (output ^ ".log") <> 0 then
+          Stdlib.failwith ("unexpected type failure: " ^ read (output ^ ".log"))
+      in
+      List.iter [ "--impl"; "--intf" ] ~f:(fun kind ->
+        List.iter [ "yojson"; "to_yojson"; "of_yojson" ] ~f:(fun codec ->
+          List.iter
+            [ "jsonschema"
+            ; "jsonschema { no_yojson = false }"
+            ; "jsonschema { no_yojson = true }"
+            ]
+            ~f:(fun schema ->
+              List.iter
+                [ codec ^ ", " ^ schema; schema ^ ", " ^ codec ]
+                ~f:(fun deriving ->
+                  accept ~kind ("type t = { value : int } [@@deriving " ^ deriving ^ "]")));
+          List.iter
+            [ codec ^ ", jsonschema"; "jsonschema, " ^ codec ]
+            ~f:(fun deriving ->
+              accept
+                ~kind
+                ("type a = { next : b option } and b = { previous : a option } [@@deriving "
+               ^ deriving ^ "]")));
+        accept
+          ~kind
+          {|type t = { value : int } [@@deriving jsonschema { no_yojson = true }]|};
+        List.iter
+          [ {|type t = int [@@deriving jsonschema]|}
+          ; {|type t = int [@@deriving jsonschema { no_yojson = false }]|}
+          ; {|type codec = int [@@deriving yojson]
+              type t = int [@@deriving jsonschema]|}
+          ; {|type a = A and b = B [@@deriving jsonschema]|}
+          ]
+          ~f:(fun fixture ->
+            reject
+              ~kind
+              fixture
+              "jsonschema requires yojson, to_yojson or of_yojson in the same type declaration group; add a codec deriver or use jsonschema { no_yojson = true }");
+        reject ~kind {|type t = int [@@deriving jsonschema { no_yojson = 1 }]|} "Error";
+        reject
+          ~kind
+          {|type t = { value : int } [@@deriving yojson, jsonschema { no_yojson = true; strict = false }]|}
+          "jsonschema strict = false conflicts with Yojson strict = true";
+        reject
+          ~kind
+          {|type t = { value : int } [@@deriving jsonschema { no_yojson = true }, of_yojson { strict = false }] [@@jsonschema.disallow_extra_fields]|}
+          "additionalProperties conflicts with Yojson strict = false");
+      reject
+        {|type t = int [@@deriving jsonschema]
+          let to_yojson value = `Int value
+          let of_yojson _ = Ok 0|}
+        "jsonschema requires yojson, to_yojson or of_yojson";
       List.iter
-        [ ( {|type t = { value : int [@jsonschema.key "wire"] } [@@deriving jsonschema]|}
+        [ ( {|type t = { value : int [@jsonschema.key "wire"] } [@@deriving jsonschema { no_yojson = true }]|}
           , "[@jsonschema.key] has been removed; use [@key ...]" )
-        ; ( {|type t = Value [@jsonschema.name "value"] [@@deriving jsonschema]|}
+        ; ( {|type t = Value [@jsonschema.name "value"] [@@deriving jsonschema { no_yojson = true }]|}
           , "[@jsonschema.name] has been removed; use [@name ...]" )
-        ; ( {|type t = [ `Value [@jsonschema.name "value"] ] [@@deriving jsonschema]|}
+        ; ( {|type t = [ `Value [@jsonschema.name "value"] ] [@@deriving jsonschema { no_yojson = true }]|}
           , "[@jsonschema.name] has been removed; use [@name ...]" )
-        ; ( {|type t = { value : int [@jsonschema.default 0] } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : int [@jsonschema.default 0] } [@@deriving jsonschema { no_yojson = true }]|}
           , "[@jsonschema.default] has been removed; use [@default ...]" )
-        ; ( {|type t = { value : int option [@jsonschema.option] } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : int option [@jsonschema.option] } [@@deriving jsonschema { no_yojson = true }]|}
           , "[@jsonschema.option] has been removed; use [@default None]" )
-        ; ( {|type t = { value : int option [@jsonschema.option] [@default None] } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : int option [@jsonschema.option] [@default None] } [@@deriving jsonschema { no_yojson = true }]|}
           , "[@jsonschema.option] has been removed; use [@default None]" )
-        ; ( {|type t = { value : int [@key "a"] [@key "b"] } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : int [@key "a"] [@key "b"] } [@@deriving jsonschema { no_yojson = true }]|}
           , "Duplicated attribute" )
-        ; ( {|type t = [ `Value [@yojson.name "a"] [@yojson.name "b"] ] [@@deriving jsonschema]|}
+        ; ( {|type t = [ `Value [@yojson.name "a"] [@yojson.name "b"] ] [@@deriving jsonschema { no_yojson = true }]|}
           , "Duplicated attribute" )
-        ; ( {|type t = { value : (int [@default 1] [@default 2]) } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : (int [@default 1] [@default 2]) } [@@deriving jsonschema { no_yojson = true }]|}
           , "Duplicated attribute" )
-        ; ( {|type t = (int64 [@encoding `string] [@encoding `number]) [@@deriving jsonschema]|}
+        ; ( {|type t = (int64 [@encoding `string] [@encoding `number]) [@@deriving jsonschema { no_yojson = true }]|}
           , "Duplicated attribute" )
-        ; {|type t = { value : int [@key 1] } [@@deriving jsonschema]|}, "Error"
-        ; {|type t = Value [@name true] [@@deriving jsonschema]|}, "Error"
-        ; {|type t = { value : int [@default] } [@@deriving jsonschema]|}, "Error"
-        ; {|type t = (int64 [@encoding `invalid]) [@@deriving jsonschema]|}, "Error"
-        ; {|type t = (int64 [@encoding "string"]) [@@deriving jsonschema]|}, "Error"
-        ; ( {|type t = (int64 [@encoding `string] [@jsonschema.minimum 0]) [@@deriving jsonschema]|}
+        ; ( {|type t = { value : int [@key 1] } [@@deriving jsonschema { no_yojson = true }]|}
+          , "Error" )
+        ; ( {|type t = Value [@name true] [@@deriving jsonschema { no_yojson = true }]|}
+          , "Error" )
+        ; ( {|type t = { value : int [@default] } [@@deriving jsonschema { no_yojson = true }]|}
+          , "Error" )
+        ; ( {|type t = (int64 [@encoding `invalid]) [@@deriving jsonschema { no_yojson = true }]|}
+          , "Error" )
+        ; ( {|type t = (int64 [@encoding "string"]) [@@deriving jsonschema { no_yojson = true }]|}
+          , "Error" )
+        ; ( {|type t = (int64 [@encoding `string] [@jsonschema.minimum 0]) [@@deriving jsonschema { no_yojson = true }]|}
           , "numeric bounds cannot be applied to a string-encoded integer" )
-        ; ( {|type t = { value : nativeint [@encoding `string] [@jsonschema.maximum 10] } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : nativeint [@encoding `string] [@jsonschema.maximum 10] } [@@deriving jsonschema { no_yojson = true }]|}
           , "numeric bounds cannot be applied to a string-encoded integer" )
-        ; ( {|type t = { value : int64 [@encoding `string] [@jsonschema.attrs { minimum = 0 }] } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : int64 [@encoding `string] [@jsonschema.attrs { minimum = 0 }] } [@@deriving jsonschema { no_yojson = true }]|}
           , "numeric bounds cannot be applied to a string-encoded integer" )
-        ; ( {|type t = string [@@jsonschema.format "date-time"] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@jsonschema.format "date-time"] [@@deriving jsonschema { no_yojson = true }]|}
           , "format expects a variant literal" )
-        ; ( {|type t = { value : string [@jsonschema.attrs { format = "uuid" }] } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : string [@jsonschema.attrs { format = "uuid" }] } [@@deriving jsonschema { no_yojson = true }]|}
           , "format expects a variant literal" )
-        ; ( {|type t = string [@@jsonschema.format (`Custom " ")] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@jsonschema.format (`Custom " ")] [@@deriving jsonschema { no_yojson = true }]|}
           , "Custom format must not be empty" )
-        ; ( {|type t = int [@@jsonschema.attrs { format = `Custom "" }] [@@deriving jsonschema]|}
+        ; ( {|type t = int [@@jsonschema.attrs { format = `Custom "" }] [@@deriving jsonschema { no_yojson = true }]|}
           , "Custom format must not be empty" )
-        ; ( {|type t = string [@@jsonschema.format (`Custom name)] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@jsonschema.format (`Custom name)] [@@deriving jsonschema { no_yojson = true }]|}
           , "with a string literal" )
-        ; ( {|type t = string [@@jsonschema.format `Custom] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@jsonschema.format `Custom] [@@deriving jsonschema { no_yojson = true }]|}
           , "with a string literal" )
-        ; ( {|type t = string [@@jsonschema.format format] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@jsonschema.format format] [@@deriving jsonschema { no_yojson = true }]|}
           , "format expects a variant literal" )
-        ; ( {|type t = bool [@@jsonschema.format `Uuid] [@@deriving jsonschema]|}
+        ; ( {|type t = bool [@@jsonschema.format `Uuid] [@@deriving jsonschema { no_yojson = true }]|}
           , "format requires a primitive" )
-        ; ( {|type scalar = string type t = scalar [@@jsonschema.format `Uuid] [@@deriving jsonschema]|}
+        ; ( {|type scalar = string type t = scalar [@@jsonschema.format `Uuid] [@@deriving jsonschema { no_yojson = true }]|}
           , "for custom types define <type>_jsonschema" )
-        ; ( {|type t = { value : string [@jsonschema.title "x"] [@jsonschema.attrs { title = "x" }] } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : string [@jsonschema.title "x"] [@jsonschema.attrs { title = "x" }] } [@@deriving jsonschema { no_yojson = true }]|}
           , "duplicate JSON Schema annotation 'title'" )
-        ; ( {|type t = string [@@format (`Custom " ")] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@format (`Custom " ")] [@@deriving jsonschema { no_yojson = true }]|}
           , "Custom format must not be empty" )
-        ; ( {|type t = string [@@attrs { title = "x" }] [@@jsonschema.title "x"] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@attrs { title = "x" }] [@@jsonschema.title "x"] [@@deriving jsonschema { no_yojson = true }]|}
           , "duplicate JSON Schema annotation 'title'" )
-        ; ( {|type t = string [@@format "uuid"] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@format "uuid"] [@@deriving jsonschema { no_yojson = true }]|}
           , "format expects a variant literal" )
-        ; ( {|type t = string [@@jsonschema.attrs { format = `Uuid }] [@@jsonschema.format `Uuid] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@jsonschema.attrs { format = `Uuid }] [@@jsonschema.format `Uuid] [@@deriving jsonschema { no_yojson = true }]|}
           , "duplicate JSON Schema annotation 'format'" )
-        ; ( {|type t = int [@@jsonschema.attrs { minimum = 0; minimum = 1 }] [@@deriving jsonschema]|}
+        ; ( {|type t = int [@@jsonschema.attrs { minimum = 0; minimum = 1 }] [@@deriving jsonschema { no_yojson = true }]|}
           , "duplicate JSON Schema annotation 'minimum'" )
-        ; ( {|type t = string [@@jsonschema.description "x"] [@@jsonschema.description "x"] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@jsonschema.description "x"] [@@jsonschema.description "x"] [@@deriving jsonschema { no_yojson = true }]|}
           , "duplicate JSON Schema annotation 'description'" )
-        ; ( {|type t = string [@@jsonschema.attrs { title = "a" }] [@@jsonschema.attrs { description = "b" }] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@jsonschema.attrs { title = "a" }] [@@jsonschema.attrs { description = "b" }] [@@deriving jsonschema { no_yojson = true }]|}
           , "duplicate JSON Schema annotation 'attrs'" )
-        ; ( {|type t = { value : string [@jsonschema.ref "External"] } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : string [@jsonschema.ref "External"] } [@@deriving jsonschema { no_yojson = true }]|}
           , "[@jsonschema.ref] has been removed" )
-        ; ( {|type t = Empty [@@jsonschema.compact_variants] [@@deriving jsonschema]|}
+        ; ( {|type t = Empty [@@jsonschema.compact_variants] [@@deriving jsonschema { no_yojson = true }]|}
           , "variants always use Yojson arrays" )
-        ; ( {|type t = [ `Value of int * string ] [@@deriving jsonschema { polymorphic_variant_tuple }]|}
+        ; ( {|type t = [ `Value of int * string ] [@@deriving jsonschema { polymorphic_variant_tuple; no_yojson = true }]|}
           , "polymorphic_variant_tuple has been removed" )
         ; ( {|type t = { value : int } [@@deriving yojson, jsonschema { strict = false }]|}
           , "jsonschema strict = false conflicts with Yojson strict = true" )
@@ -177,18 +252,18 @@ end
           , "additionalProperties conflicts with Yojson strict = false" )
         ; ( {|type t = Value of { value : int } [@jsonschema.allow_extra_fields] [@@deriving yojson, jsonschema]|}
           , "additionalProperties conflicts with Yojson strict = true" )
-        ; ( {|type t = { value : int } [@@jsonschema.allow_extra_fields] [@@jsonschema.disallow_extra_fields] [@@deriving jsonschema]|}
+        ; ( {|type t = { value : int } [@@jsonschema.allow_extra_fields] [@@jsonschema.disallow_extra_fields] [@@deriving jsonschema { no_yojson = true }]|}
           , "are mutually exclusive" )
         ]
         ~f:(fun (fixture, diagnostic) -> reject fixture diagnostic);
       List.iter
-        [ ( {|type t = string [@@jsonschema.format "uuid"] [@@deriving jsonschema]|}
+        [ ( {|type t = string [@@jsonschema.format "uuid"] [@@deriving jsonschema { no_yojson = true }]|}
           , "variant literal" )
-        ; ( {|type t = { value : int [@jsonschema.ref "X"] } [@@deriving jsonschema]|}
+        ; ( {|type t = { value : int [@jsonschema.ref "X"] } [@@deriving jsonschema { no_yojson = true }]|}
           , "has been removed" )
         ; ( {|type t = { value : int } [@@deriving yojson, jsonschema { strict = false }]|}
           , "conflicts with Yojson" )
-        ; ( {|type t = string [@@jsonschema.title "x"] [@@jsonschema.attrs { title = "x" }] [@@deriving jsonschema]|}
+        ; ( {|type t = string [@@jsonschema.title "x"] [@@jsonschema.attrs { title = "x" }] [@@deriving jsonschema { no_yojson = true }]|}
           , "duplicate JSON Schema annotation" )
         ]
         ~f:(fun (fixture, diagnostic) -> reject ~kind:"--intf" fixture diagnostic);
@@ -203,15 +278,15 @@ end
                      integer : int [@jsonschema.attrs { format = `Int32 }];
                      number : float [@jsonschema.format `Double];
                      custom : string option [@jsonschema.format (`Custom "my-format")] }
-          [@@deriving jsonschema]|}
+          [@@deriving jsonschema { no_yojson = true }]|}
       in
       if compile good_formats <> 0 then
         Stdlib.failwith ("valid formats failed typing: " ^ read (bad_output ^ ".log"));
       List.iter
-        [ {|type _ t = { value : int } [@@deriving jsonschema]
+        [ {|type _ t = { value : int } [@@deriving jsonschema { no_yojson = true }]
             type other = { value : int }
             let _ : other Typed_endpoint.Json_schema.t = t_jsonschema|}
-        ; {|type (_, 'a, _) t = { value : 'a } [@@deriving jsonschema]
+        ; {|type (_, 'a, _) t = { value : 'a } [@@deriving jsonschema { no_yojson = true }]
             let _ : int Typed_endpoint.Json_schema.t = t_jsonschema|}
         ]
         ~f:(fun fixture ->
@@ -220,11 +295,11 @@ end
           let actual = read (bad_output ^ ".log") in
           assert (String.is_substring actual ~substring:"not compatible"));
       List.iter
-        [ {|type t = string [@@jsonschema.format `Date_tiem] [@@deriving jsonschema]|}
-        ; {|type t = string [@@jsonschema.format `Int64] [@@deriving jsonschema]|}
-        ; {|type t = int [@@jsonschema.attrs { format = `Uuid }] [@@deriving jsonschema]|}
-        ; {|type t = float option [@@jsonschema.format `Int32] [@@deriving jsonschema]|}
-        ; {|type t = (int64 [@encoding `string]) [@@jsonschema.format `Int64] [@@deriving jsonschema]|}
+        [ {|type t = string [@@jsonschema.format `Date_tiem] [@@deriving jsonschema { no_yojson = true }]|}
+        ; {|type t = string [@@jsonschema.format `Int64] [@@deriving jsonschema { no_yojson = true }]|}
+        ; {|type t = int [@@jsonschema.attrs { format = `Uuid }] [@@deriving jsonschema { no_yojson = true }]|}
+        ; {|type t = float option [@@jsonschema.format `Int32] [@@deriving jsonschema { no_yojson = true }]|}
+        ; {|type t = (int64 [@encoding `string]) [@@jsonschema.format `Int64] [@@deriving jsonschema { no_yojson = true }]|}
         ]
         ~f:(fun fixture ->
           if compile fixture = 0 then
@@ -234,7 +309,7 @@ end
           assert (String.is_substring actual ~substring:"does not allow tag"));
       List.iter
         [ {|module Payload = struct
-              type t = int [@@deriving jsonschema]
+              type t = int [@@deriving jsonschema { no_yojson = true }]
               let of_yojson _ = Ok 0
               let t_jsonschema =
                 Typed_endpoint.Json_schema.with_openapi ~schema_name:"Wrong"
@@ -243,7 +318,7 @@ end
             let _ : (module Typed_endpoint.Request_payload.S with type t = int) =
               (module Payload)|}
         ; {|module Payload = struct
-              type t = int [@@deriving jsonschema]
+              type t = int [@@deriving jsonschema { no_yojson = true }]
               let to_yojson value = `Int value
               let t_jsonschema =
                 Typed_endpoint.Json_schema.with_openapi ~description:"Wrong"
@@ -260,7 +335,7 @@ end
           assert (String.is_substring actual ~substring:"not included"));
       write
         bad_source
-        {|type t = { value : int [@jsonschema.key "wire"] } [@@deriving jsonschema]|};
+        {|type t = { value : int [@jsonschema.key "wire"] } [@@deriving jsonschema { no_yojson = true }]|};
       assert (run ~kind:"--intf" driver bad_source bad_output <> 0);
       assert (
         String.is_substring
@@ -270,8 +345,8 @@ end
         bad_source
         {|
 open! Base
-type maybe_string = string option [@@deriving jsonschema]
-type t = { value : maybe_string [@default None] } [@@deriving jsonschema]
+type maybe_string = string option [@@deriving jsonschema { no_yojson = true }]
+type t = { value : maybe_string [@default None] } [@@deriving jsonschema { no_yojson = true }]
 |};
       assert (run driver bad_source bad_output = 0))
     ~finally:(fun () ->

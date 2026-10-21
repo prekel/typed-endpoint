@@ -2,35 +2,39 @@ open! Base
 open Typed_endpoint
 
 module Ppx_string = struct
-  type t = string [@@deriving jsonschema]
+  type t = string [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_integer = struct
-  type t = int [@@deriving jsonschema]
+  type t = int [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_number = struct
-  type t = float [@@deriving jsonschema]
+  type t = float [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_boolean = struct
-  type t = bool [@@deriving jsonschema]
+  type t = bool [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_array = struct
-  type t = string list [@@deriving jsonschema]
+  type t = string list [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_nullable = struct
-  type t = string option [@@deriving jsonschema]
+  type t = string option [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_bounded_integer = struct
-  type t = int [@@jsonschema.minimum 1] [@@jsonschema.maximum 100] [@@deriving jsonschema]
+  type t = int
+  [@@jsonschema.minimum 1]
+  [@@jsonschema.maximum 100]
+  [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_formatted_string = struct
-  type t = string [@@jsonschema.format `Date_time] [@@deriving jsonschema]
+  type t = string
+  [@@jsonschema.format `Date_time] [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_formats = struct
@@ -55,7 +59,8 @@ module Ppx_annotated_group = struct
   [@@jsonschema.format `Int32] [@@jsonschema.attrs { minimum = 0; maximum = 100 }]
 
   and measure = float
-  [@@jsonschema.attrs { format = `Float; title = "Measure" }] [@@deriving jsonschema]
+  [@@jsonschema.attrs { format = `Float; title = "Measure" }]
+  [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_annotated_recursive_group = struct
@@ -65,12 +70,12 @@ module Ppx_annotated_recursive_group = struct
     { count : count
     ; next : node option
     }
-  [@@jsonschema.title "Node"] [@@deriving jsonschema]
+  [@@jsonschema.title "Node"] [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_outer_annotations = struct
   type t = { value : (string[@jsonschema.title "Inner"]) [@jsonschema.title "Outer"] }
-  [@@deriving jsonschema]
+  [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_doc_annotations = struct
@@ -82,7 +87,7 @@ module Ppx_doc_annotations = struct
     ; attrs : string [@jsonschema.attrs { description = "Attrs description" }]
       (** Ignored attrs documentation. *)
     }
-  [@@deriving jsonschema { ocaml_doc }]
+  [@@deriving jsonschema { ocaml_doc; no_yojson = true }]
 end
 
 module Ppx_wire_annotations = struct
@@ -115,11 +120,11 @@ module Ppx_record_order = struct
     ; next : node option
     ; alpha : bool
     }
-  [@@deriving jsonschema]
+  [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_generic_collections = struct
-  type 'a t = { items : 'a list } [@@deriving jsonschema]
+  type 'a t = { items : 'a list } [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_generic_holder = struct
@@ -136,11 +141,12 @@ module Ppx_phantom_recursive_group = struct
     ; next : unit link option
     }
 
-  and _ link = { previous : unit node option } [@@deriving jsonschema]
+  and _ link = { previous : unit node option }
+  [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_phantom_holder = struct
-  type t = { item : string Ppx_phantom.t } [@@deriving jsonschema]
+  type t = { item : string Ppx_phantom.t } [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_yojson_permissive = struct
@@ -153,27 +159,29 @@ module Ppx_yojson_default_strict = struct
 end
 
 module Ppx_default_record = struct
-  type t = { value : int } [@@deriving jsonschema]
+  type t = { value : int } [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_disallow_extra_fields = struct
-  type t = { value : int } [@@deriving jsonschema] [@@jsonschema.disallow_extra_fields]
+  type t = { value : int }
+  [@@deriving jsonschema { no_yojson = true }] [@@jsonschema.disallow_extra_fields]
 end
 
 module Ppx_allow_extra_fields = struct
   type t = { value : int }
-  [@@deriving jsonschema { strict = true }] [@@jsonschema.allow_extra_fields]
+  [@@deriving jsonschema { strict = true; no_yojson = true }]
+  [@@jsonschema.allow_extra_fields]
 end
 
 module Ppx_strict_option = struct
-  type t = { value : int } [@@deriving jsonschema { strict = true }]
+  type t = { value : int } [@@deriving jsonschema { strict = true; no_yojson = true }]
 end
 
 module Ppx_inline_record_extra_fields = struct
   type t =
     | Strict of { value : int } [@jsonschema.disallow_extra_fields]
     | Permissive of { value : int }
-  [@@deriving jsonschema]
+  [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_named_variant = struct
@@ -195,7 +203,7 @@ end
 
 module Ppx_title_attribute = struct
   type t = { name : string [@jsonschema.title "Display name"] }
-  [@@deriving jsonschema] [@@jsonschema.title "Pet"]
+  [@@deriving jsonschema { no_yojson = true }] [@@jsonschema.title "Pet"]
 end
 
 module Ppx_title_attrs = struct
@@ -203,7 +211,7 @@ module Ppx_title_attrs = struct
     { name : string
           [@jsonschema.attrs { title = "Display name"; description = "Name in the API" }]
     }
-  [@@deriving jsonschema]
+  [@@deriving jsonschema { no_yojson = true }]
 end
 
 module Ppx_option_alias = struct
@@ -215,7 +223,7 @@ module Ppx_option_alias = struct
 end
 
 module Ppx_cross_module_dependency = struct
-  type t = { node : Schema_dependency.node } [@@deriving jsonschema]
+  type t = { node : Schema_dependency.node } [@@deriving jsonschema { no_yojson = true }]
 end
 
 let print_schema schema =

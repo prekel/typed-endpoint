@@ -183,7 +183,7 @@ module Standalone_inline = struct
   type t =
     | Open of { value : int } [@jsonschema.allow_extra_fields]
     | Closed of { value : int }
-  [@@deriving jsonschema { strict = true }]
+  [@@deriving jsonschema { strict = true; no_yojson = true }]
 end
 
 let%test_unit "explicit matching policies agree with Yojson decoders" =

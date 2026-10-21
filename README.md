@@ -17,9 +17,26 @@ OpenAPI 3.1.
 Deriver `typed-endpoint-ppx` перенесён и адаптирован на основе
 [ahrefs/ppx_deriving_jsonschema](https://github.com/ahrefs/ppx_deriving_jsonschema).
 
+`jsonschema` требует в той же группе объявления типов хотя бы один дерайвер
+`ppx_deriving_yojson`: `yojson`, `to_yojson` или `of_yojson`. Порядок дерайверов
+не важен. Для самостоятельной схемы или собственного codec явно укажите
+`no_yojson = true`:
+
+```ocaml
+type t = { value : int } [@@deriving yojson, jsonschema]
+type schema_only = string [@@deriving jsonschema { no_yojson = true }]
+```
+
+При миграции добавьте codec-дерайвер либо замените одиночный `jsonschema` на
+`jsonschema { no_yojson = true }`. Написанные вручную функции `to_yojson` и
+`of_yojson` не заменяют дерайвер для этой проверки. `no_yojson` по умолчанию
+равен `false`; значение `true` отключает только требование наличия дерайвера,
+сохраняя проверки согласованности с присутствующим Yojson-декодером.
+Правило одинаково для `.ml` и `.mli`.
+
 `jsonschema` всегда генерирует значение `<type>_jsonschema`, в том числе для
 типов с анонимными (`_`) и именованными (`'a`) параметрами. Например,
-`type 'a t = { value : 'a } [@@deriving jsonschema]` даёт
+`type 'a t = { value : 'a } [@@deriving yojson, jsonschema]` даёт
 `t_jsonschema : 'a t Json_schema.t` без аргументов схемы. Поле `value`
 описывается как произвольный JSON (`true`); `'a list` сохраняет структуру
 массива с произвольными элементами. Подстановка `int t` не уточняет схему
@@ -389,7 +406,7 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 ## Установка из GitHub
 
 Пакеты находятся в одном репозитории и требуют одинаковую версию.
-Скрипт ниже устанавливает текущий релиз `v0.3.9`, а если пакеты уже установлены —
+Скрипт ниже устанавливает текущий релиз `v0.4.0`, а если пакеты уже установлены —
 обновляет их до этой версии, предварительно заменяя существующие pin.
 Для установки всех пакетов нужен switch OCaml 5.1.1 или новее:
 
@@ -404,7 +421,7 @@ typed_endpoint_packages=(
   typed-endpoint-eio
 )
 for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.9'
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.4.0'
 done
 opam install "${typed_endpoint_packages[@]}"
 ```

@@ -9,4 +9,4 @@ type node =
   { value : int
   ; next : node option
   }
-[@@deriving jsonschema]
+[@@deriving jsonschema { no_yojson = true }]

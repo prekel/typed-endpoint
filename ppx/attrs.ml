@@ -187,7 +187,30 @@ let validate_annotations type_declarations =
   List.iter visitor#type_declaration type_declarations
 ;;
 
-let yojson_strict type_declarations =
+let deriving_generators type_declarations =
+  let generators expr =
+    match expr.pexp_desc with
+    | Pexp_tuple expressions -> expressions
+    | _ -> [ expr ]
+  in
+  let from_attribute attr =
+    match attr.attr_name.txt, attr.attr_payload with
+    | ( ("deriving" | "deriving_inline" | "ppxlib.deriving" | "ppxlib.deriving_inline")
+      , PStr [ { pstr_desc = Pstr_eval (expr, _); _ } ] ) -> generators expr
+    | _ -> []
+  in
+  List.concat_map
+    (fun td -> List.concat_map from_attribute td.ptype_attributes)
+    type_declarations
+  |> List.filter_map (fun expr ->
+    match expr.pexp_desc with
+    | Pexp_ident { txt = Lident name; _ } -> Some (name, [])
+    | Pexp_apply ({ pexp_desc = Pexp_ident { txt = Lident name; _ }; _ }, args) ->
+      Some (name, args)
+    | _ -> None)
+;;
+
+let yojson_strict generators =
   let bool_value expr =
     match expr.pexp_desc with
     | Pexp_construct ({ txt = Lident "true"; _ }, None) -> Some true
@@ -211,42 +234,13 @@ let yojson_strict type_declarations =
             | _ -> None))
       args
   in
-  let yojson_generator expr =
-    let name_and_args =
-      match expr.pexp_desc with
-      | Pexp_ident { txt = Lident name; _ } -> Some (name, [])
-      | Pexp_apply ({ pexp_desc = Pexp_ident { txt = Lident name; _ }; _ }, args) ->
-        Some (name, args)
-      | _ -> None
-    in
-    match name_and_args with
-    | Some ("yojson", args) | Some ("of_yojson", args) ->
-      Some (Option.value (strict_argument args) ~default:true)
-    | _ -> None
-  in
-  let generators expr =
-    match expr.pexp_desc with
-    | Pexp_tuple expressions -> expressions
-    | _ -> [ expr ]
-  in
-  let strict_from_attribute attr =
-    match attr.attr_payload with
-    | PStr [ { pstr_desc = Pstr_eval (expr, _); _ } ] ->
-      List.find_map yojson_generator (generators expr)
-    | _ -> None
-  in
   List.find_map
-    (fun type_declaration ->
-       List.find_map
-         (fun attr ->
-            match attr.attr_name.txt with
-            | "deriving"
-            | "deriving_inline"
-            | "ppxlib.deriving"
-            | "ppxlib.deriving_inline" -> strict_from_attribute attr
-            | _ -> None)
-         type_declaration.ptype_attributes)
-    type_declarations
+    (fun (name, args) ->
+       match name with
+       | "yojson" | "of_yojson" ->
+         Some (Option.value (strict_argument args) ~default:true)
+       | _ -> None)
+    generators
 ;;
 
 let string_attr name ctx =
@@ -488,13 +482,31 @@ let resolve_additional_properties ~loc ~strict ~decoder_strict ~allow ~disallow 
   Option.value explicit ~default:(not strict)
 ;;
 
-let configure ~loc type_declarations removed_tuple_flag ocaml_doc strict schema_namespace =
+let configure
+      ~loc
+      type_declarations
+      removed_tuple_flag
+      ocaml_doc
+      strict
+      no_yojson
+      schema_namespace
+  =
   validate_annotations type_declarations;
   if removed_tuple_flag then
     Location.raise_errorf
       ~loc
       "typed-endpoint-ppx: polymorphic_variant_tuple has been removed; tuple arguments always follow Yojson's flattened encoding";
-  let decoder_strict = yojson_strict type_declarations in
+  let generators = deriving_generators type_declarations in
+  let has_yojson =
+    List.exists
+      (fun (name, _) -> List.mem name [ "yojson"; "to_yojson"; "of_yojson" ])
+      generators
+  in
+  if not (has_yojson || Option.value no_yojson ~default:false) then
+    Location.raise_errorf
+      ~loc
+      "typed-endpoint-ppx: jsonschema requires yojson, to_yojson or of_yojson in the same type declaration group; add a codec deriver or use jsonschema { no_yojson = true }";
+  let decoder_strict = yojson_strict generators in
   (match strict, decoder_strict with
    | Some schema_strict, Some decoder_strict
      when not (Bool.equal schema_strict decoder_strict) ->
@@ -539,5 +551,6 @@ let args () =
     empty
     +> flag "polymorphic_variant_tuple"
     +> flag "ocaml_doc"
-    +> arg "strict" (ebool __))
+    +> arg "strict" (ebool __)
+    +> arg "no_yojson" (ebool __))
 ;;
