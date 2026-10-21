@@ -139,6 +139,30 @@ let json_route (type a) name (module P : Response_payload.S with type t = a) val
   ==> fun ok () () -> respond ok value
 ;;
 
+let%expect_test "OpenAPI preserves DTO field declaration order" =
+  let schema =
+    compiled [ json_route "holder" (module Holder) Holder.{ count = 1; pets = [] } ]
+    |> Compiled.openapi
+    |> member "paths"
+    |> member "/holder"
+    |> member "get"
+    |> member "responses"
+    |> member "200"
+    |> member "content"
+    |> member "application/json"
+    |> member "schema"
+  in
+  schema
+  |> member "properties"
+  |> Yojson.Safe.Util.to_assoc
+  |> List.map ~f:(fun (name, _) -> `String name)
+  |> (fun names -> `List names)
+  |> print;
+  [%expect {| ["count","pets"] |}];
+  schema |> member "required" |> print;
+  [%expect {| ["count","pets"] |}]
+;;
+
 let%expect_test
     "anonymous primitives and collections stay inline despite named equivalents"
   =

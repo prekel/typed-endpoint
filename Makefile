@@ -5,7 +5,7 @@ PACKAGES = ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-opiu
 	./typed-endpoint-dream.opam ./typed-endpoint-eio.opam \
 	./typed-endpoint-testing.opam
 
-RELEASE_VERSION = 0.3.7
+RELEASE_VERSION = 0.3.8
 RELEASE_DIR = _release
 
 .PHONY: create_switch

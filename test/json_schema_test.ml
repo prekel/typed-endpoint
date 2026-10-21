@@ -94,6 +94,30 @@ module Ppx_generic = struct
   type 'a t = { value : 'a } [@@deriving yojson, jsonschema]
 end
 
+module Ppx_record_order = struct
+  type t =
+    { zebra : int
+    ; optional : string option [@default None]
+    ; alpha : bool [@key "wireAlpha"]
+    }
+  [@@deriving yojson, jsonschema]
+
+  type variant =
+    | Row of
+        { zebra : int
+        ; optional : string option [@default None]
+        ; alpha : bool [@key "wireAlpha"]
+        }
+  [@@deriving yojson, jsonschema]
+
+  type node =
+    { zebra : int
+    ; next : node option
+    ; alpha : bool
+    }
+  [@@deriving jsonschema]
+end
+
 module Ppx_generic_collections = struct
   type 'a t = { items : 'a list } [@@deriving jsonschema]
 end
@@ -206,6 +230,59 @@ let print_if_equal smart ppx =
        ^ "\n<->\n"
        ^ Yojson.Safe.pretty_to_string (Json_schema.to_yojson ppx));
   print_schema smart
+;;
+
+let print_property_names schema =
+  schema
+  |> Yojson.Safe.Util.member "properties"
+  |> Yojson.Safe.Util.to_assoc
+  |> List.map ~f:(fun (name, _) -> `String name)
+  |> (fun names -> `List names)
+  |> Yojson.Safe.to_string
+  |> Stdlib.print_endline
+;;
+
+let%expect_test "record properties and required fields retain declaration order" =
+  let schema = Json_schema.to_yojson Ppx_record_order.t_jsonschema in
+  print_property_names schema;
+  [%expect {| ["zebra","optional","wireAlpha"] |}];
+  schema
+  |> Yojson.Safe.Util.member "required"
+  |> Yojson.Safe.to_string
+  |> Stdlib.print_endline;
+  [%expect {| ["zebra","wireAlpha"] |}]
+;;
+
+let%expect_test "inline record properties and required fields retain declaration order" =
+  let schema =
+    Json_schema.to_yojson Ppx_record_order.variant_jsonschema
+    |> Yojson.Safe.Util.member "anyOf"
+    |> Yojson.Safe.Util.index 0
+    |> Yojson.Safe.Util.member "prefixItems"
+    |> Yojson.Safe.Util.index 1
+  in
+  print_property_names schema;
+  [%expect {| ["zebra","optional","wireAlpha"] |}];
+  schema
+  |> Yojson.Safe.Util.member "required"
+  |> Yojson.Safe.to_string
+  |> Stdlib.print_endline;
+  [%expect {| ["zebra","wireAlpha"] |}]
+;;
+
+let%expect_test "recursive record fields retain declaration order in definitions" =
+  let schema =
+    Json_schema.to_yojson Ppx_record_order.node_jsonschema
+    |> Yojson.Safe.Util.member "$defs"
+    |> Yojson.Safe.Util.member "node"
+  in
+  print_property_names schema;
+  [%expect {| ["zebra","next","alpha"] |}];
+  schema
+  |> Yojson.Safe.Util.member "required"
+  |> Yojson.Safe.to_string
+  |> Stdlib.print_endline;
+  [%expect {| ["zebra","next","alpha"] |}]
 ;;
 
 let%expect_test "primitive smart constructors agree with PPX schemas" =

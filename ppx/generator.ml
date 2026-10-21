@@ -266,7 +266,8 @@ let schema_of_record
       ([], [], false)
       fields
   in
-  let required = List.map (fun { txt = name; _ } -> name) required in
+  let fields = List.rev fields in
+  let required = List.rev_map (fun { txt = name; _ } -> name) required in
   Schema.record ~loc ~properties:fields ~required ~allow_extra_fields, is_rec
 ;;
 
