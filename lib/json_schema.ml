@@ -107,6 +107,7 @@ let any : Yojson.Safe.t t = create (`Bool true)
 let never : Yojson.Safe.t t = create (`Bool false)
 let null : unit t = create (`Assoc [ "type", `String "null" ])
 let to_yojson schema = schema.value
+let to_yojson_for_typescript schema = Json_schema_typescript_export.schema schema.value
 let pack schema = Pack schema
 let to_yojson_packed (Pack schema) = to_yojson schema
 

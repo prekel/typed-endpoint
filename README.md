@@ -173,6 +173,40 @@ OCaml-представления; для разных типов использ�
 не регистрируются. Существующее массивное представление Yojson variants
 этой аннотацией не меняется.
 
+## Экспорт DTO для TypeScript
+
+Для `json-schema-to-typescript@16.0.0` используйте отдельный экспорт:
+
+```ocaml
+match Json_schema.to_yojson_for_typescript Payload.t_jsonschema with
+| Ok schema -> Stdlib.print_endline (Yojson.Safe.pretty_to_string schema)
+| Error message -> Stdlib.failwith message
+```
+
+Полученный JSON можно передать `json2ts`. Экспорт переводит кортежи в
+`items: [...]`, объединяет локальные определения с учётом `$id` и сохраняет
+рекурсию. Поэтому ADT `A | B` превращается в TypeScript `['A'] | ['B']`,
+а варианты с payload сохраняют его тип. Обычные `to_yojson` и OpenAPI
+продолжают использовать JSON Schema 2020-12.
+
+Это профиль входа конкретного генератора, а не универсальный конвертер
+диалектов или обработчик полного OpenAPI. Неизвестные генератору ограничения
+могут не отражаться в TypeScript; runtime-проверки остаются задачей codec.
+Неограниченный JSON, параметры `'a` и разрешённые дополнительные поля остаются
+`unknown`, а не `any`. Неразрешимые ссылки, относительные `$id`, динамические
+и anchor-ссылки, а также неоднозначные `unevaluatedItems` возвращают `Error`.
+Внешние документы не загружаются.
+
+Отдельные проверки реального генератора и TypeScript-компилятора:
+
+```sh
+npm ci --prefix test/typescript
+make test-typescript
+```
+
+Версии npm-зависимостей закреплены lockfile. Эти зависимости нужны только
+для `test-typescript`; обычный `make test` их не использует.
+
 ## Основные гарантии
 
 - типы path/query/header становятся аргументами handler, а body передаётся
@@ -355,7 +389,7 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 ## Установка из GitHub
 
 Пакеты находятся в одном репозитории и требуют одинаковую версию.
-Скрипт ниже устанавливает текущий релиз `v0.3.8`, а если пакеты уже установлены —
+Скрипт ниже устанавливает текущий релиз `v0.3.9`, а если пакеты уже установлены —
 обновляет их до этой версии, предварительно заменяя существующие pin.
 Для установки всех пакетов нужен switch OCaml 5.1.1 или новее:
 
@@ -370,7 +404,7 @@ typed_endpoint_packages=(
   typed-endpoint-eio
 )
 for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.8'
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.9'
 done
 opam install "${typed_endpoint_packages[@]}"
 ```

@@ -5,6 +5,7 @@
   builder
   contract
   json_schema
+  json_schema_typescript_export
   openapi
   openapi_normalize
   runtime)

@@ -1,0 +1,13 @@
+{
+  "name": "typed-endpoint-typescript-conformance",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node conformance.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.17.1",
+    "json-schema-to-typescript": "16.0.0",
+    "typescript": "5.9.3"
+  }
+}

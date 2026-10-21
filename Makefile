@@ -5,7 +5,7 @@ PACKAGES = ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-opiu
 	./typed-endpoint-dream.opam ./typed-endpoint-eio.opam \
 	./typed-endpoint-testing.opam
 
-RELEASE_VERSION = 0.3.8
+RELEASE_VERSION = 0.3.9
 RELEASE_DIR = _release
 
 .PHONY: create_switch
@@ -31,6 +31,10 @@ test:
 .PHONY: test-js
 test-js:
 	opam exec -- dune build --root . @test/conformance/client-conformance
+
+.PHONY: test-typescript
+test-typescript:
+	npm --prefix test/typescript test
 
 .PHONY: fmt
 fmt:

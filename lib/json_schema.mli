@@ -132,6 +132,18 @@ val pack : 'a t -> packed
 (** Returns the JSON representation used by OpenAPI rendering. *)
 val to_yojson : 'a t -> Yojson.Safe.t
 
+(** Exports a DTO schema for json-schema-to-typescript 16.0.0. Tuples use legacy
+    [items] arrays, local resources are bundled into [definitions], and boolean
+    roots or definitions use [tsType] hints. This is generator input, not a
+    general dialect conversion. The ordinary JSON Schema and OpenAPI output
+    are unchanged. Only schema positions are rewritten; defaults and literals
+    are preserved. Type parameters and unrestricted JSON remain [unknown].
+
+    Returns an error for unresolved references, relative resource identifiers,
+    dynamic or anchored scopes, and tuple closures that cannot be lowered
+    safely. External references are never fetched. *)
+val to_yojson_for_typescript : 'a t -> (Yojson.Safe.t, string) Result.t
+
 (** Returns the JSON representation of an existentially packed schema. *)
 val to_yojson_packed : packed -> Yojson.Safe.t
 

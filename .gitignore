@@ -20,3 +20,7 @@ _opam/
 # Editor state
 .merlin
 .vscode/
+
+# TypeScript conformance dependencies and generated declarations
+test/typescript/node_modules/
+test/typescript/.generated/

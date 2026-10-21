@@ -11,7 +11,8 @@
   schema_payload_test
   yojson_annotations
   schema_dependency
-  typed_schema_signature)
+  typed_schema_signature
+  typescript_export_test)
  (libraries
   base
   jsonschema

@@ -89,7 +89,9 @@ let rec schema_of_core_type ~(config : Attrs.config) ?(recursive_types = []) cor
       ( Schema.type_def ~loc "string" |> Schema.string_lengths ~loc ~minimum:1 ~maximum:1
       , false )
     | [%type: unit] -> Schema.type_def ~loc "null", false
-    | [%type: ([%t? error] * [%t? ok]) result] ->
+    | [%type: ([%t? ok], [%t? error]) result]
+    | [%type: ([%t? ok], [%t? error]) Result.t]
+    | [%type: ([%t? ok], [%t? error]) Stdlib.result] ->
       let error_schema, error_rec = schema_of_core_type ~config ~recursive_types error in
       let ok_schema, ok_rec = schema_of_core_type ~config ~recursive_types ok in
       Schema.result ~loc error_schema ok_schema, error_rec || ok_rec
