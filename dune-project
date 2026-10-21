@@ -2,7 +2,7 @@
 
 (name typed-endpoint)
 
-(version 0.3.5)
+(version 0.3.6)
 
 (generate_opam_files true)
 

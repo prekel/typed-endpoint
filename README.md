@@ -63,6 +63,105 @@ type t =
 Мосты `ppx_schema`, `to_ppx` и `Unsafe.of_ppx` удалены; внешние JSON-схемы
 импортируются через `Json_schema.Unsafe.of_yojson`.
 
+## Ручные JSON Schema
+
+Для параметров, коллекций, словарей и JSON без подходящего DTO-типа используйте
+`Json_schema`. Конструкторы возвращают схему напрямую, без суффикса `_exn`;
+ошибочная декларация поднимает `Json_schema.Invalid_schema` с причиной ошибки.
+Принтер исключения регистрируется при инициализации модуля: `Printexc` и
+`Base.Exn` выводят публичное имя исключения и диагностическое сообщение.
+Исключения из пользовательского encoder распространяются без обёртки.
+Ручной DSL поддерживает больше ограничений, чем PPX-аннотации;
+список аннотаций выше этим расширением не меняется.
+
+У строк доступны `pattern`, `min_length`, `max_length`, `content_encoding`,
+формат, enum и default. Паттерн задаётся в синтаксисе ECMA-262 и сохраняется
+без добавления `^`/`$` или проверки через OCaml regex-движок. `content_encoding`
+только описывает представление, например `"base64"`, и не кодирует строку.
+У `integer`, `int64` и `number` есть `exclusive_minimum`, `exclusive_maximum`
+и положительный `multiple_of`; границы `int64` сохраняются без преобразования
+в float. Значение default проверяется по границам, но не по кратности.
+
+Если абстрактный `User_id.t` кодируется строкой через `User_id.to_string`,
+связать схему с доменным типом можно так:
+
+```ocaml
+let user_id_jsonschema =
+  Json_schema.contramap
+    (Json_schema.string ~pattern:"^user-[a-z0-9]+$" ())
+    ~f:User_id.to_string
+```
+
+`contramap` сохраняет схему и OpenAPI-метаданные. Функция представления задаёт
+типовую связь и не вызывается при генерации схемы. Реальный codec должен
+использовать такое же представление; mapper не создаёт encoder или decoder.
+
+`array` и `list` поддерживают `prefix_items`, `items`, `unique_items`,
+`contains`, `min_contains` и `max_contains`. Схема `items` проверяет только
+хвост после префикса, а минимальную длину задаёт `min_items`. Для смешанных
+JSON-элементов явно приведите схемы к `Yojson.Safe.t` через `as_json`:
+
+```ocaml
+let prefixed_json =
+  Json_schema.list
+    ~prefix_items:
+      [ Json_schema.as_json (Json_schema.string ())
+      ; Json_schema.as_json (Json_schema.integer ())
+      ]
+    ~items:(Json_schema.as_json (Json_schema.boolean ()))
+    ~min_items:2
+    ()
+```
+
+`Json_schema.never` вместо `items` запрещает хвост; `Json_schema.any` разрешает
+любые JSON-значения. Границы совпадений требуют `contains`; по умолчанию
+требуется хотя бы одно совпадение. `min_contains:0` явно разрешает их отсутствие.
+
+`dictionary ~values` сохраняет общий тип значений. Дополнительные ограничения
+задаются отдельно:
+
+```ocaml
+let counters =
+  Json_schema.dictionary ~values:(Json_schema.integer ~minimum:0 ())
+  |> Json_schema.with_dictionary_constraints
+       ~property_names:(Json_schema.string ~pattern:"^[a-z]+$" ())
+       ~pattern_properties:[ "^limited", Json_schema.integer ~maximum:100 () ]
+       ~min_properties:1
+```
+
+Значения совпавших ключей проверяются и по исходной `values`, и по всем
+совпавшим patterns. Доступны также `max_properties`, `dependent_required`
+и `dependent_schemas`. Для неоднородных JSON-объектов есть `object_`
+с `properties`, `required` и политикой `additional_properties`:
+`Allow`, `Deny` или `Schema` для неперечисленных и не совпавших с patterns ключей.
+Результат такого конструктора имеет тип `Yojson.Safe.t Json_schema.t`.
+
+`all_of`, `any_of`, `one_of` объединяют непустые списки схем одного
+OCaml-представления; для разных типов используйте `as_json`. `not_` возвращает
+схему JSON, поскольку дополнение может принимать другие типы. `with_not`
+ограничивает исходную схему с сохранением её типа. У `if_then_else` обе ветви
+имеют общий тип. Локальные `$defs` без собственного `$id` поднимаются в корень
+композиции, конфликты определений поднимают `Invalid_schema`, а отдельные ресурсы с
+`$id` сохраняют область ссылок.
+
+`with_enum ~encode` и `with_const ~encode` ограничивают целое значение,
+включая массив или объект. Encoder должен совпадать с wire codec приложения.
+Исходные ограничения сохраняются; соответствие литерала всей схеме не
+проверяется. Не-JSON значения и дубликаты enum отклоняются. Порядок полей
+объекта и запись одного числа как `1` или `1.0` не различают enum-значения.
+
+Модификаторы `with_title`, `with_description`, `with_examples ~encode`,
+`with_deprecated`, `with_read_only`, `with_write_only` задают JSON Schema
+аннотации. `with_openapi` по-прежнему управляет именем компонента, HTTP-описанием
+и tags отдельно; его явное описание имеет приоритет. Новые составные схемы
+начинаются с пустых OpenAPI-метаданных, а модификаторы сохраняют исходные.
+
+`with_discriminator ~property_name ?mapping` добавляет явную OpenAPI-аннотацию
+к `allOf`, `anyOf` или `oneOf`. Объектные ветви, поле-дискриминатор и ссылки
+задаёт приложение. Mapping сохраняется буквально, компоненты автоматически
+не регистрируются. Существующее массивное представление Yojson variants
+этой аннотацией не меняется.
+
 ## Основные гарантии
 
 - типы path/query/header становятся аргументами handler, а body передаётся
@@ -154,7 +253,7 @@ OpenAPI выводит `style: form` и соответствующий `explode`
 схемой. Scalar query-codec с явной array-схемой отклоняется при компиляции.
 
 Произвольные JSON-метаданные схемы добавляются через
-`Json_schema.with_extension` или `with_extension_exn`. Например, строковый
+`Json_schema.with_extension`. Например, строковый
 query-параметр может документировать язык фильтрации конкретной сущности:
 
 ```ocaml
@@ -165,8 +264,8 @@ let pet_filter_domain =
     ]
 
 let filter_schema =
-  Json_schema.string_exn ()
-  |> Json_schema.with_extension_exn ~name:"x-domain" ~value:pet_filter_domain
+  Json_schema.string ()
+  |> Json_schema.with_extension ~name:"x-domain" ~value:pet_filter_domain
 
 let filter_parameter =
   Parameter.v
@@ -180,8 +279,8 @@ let filter_parameter =
 `schema: { "type": "string", "x-domain": ... }`. Имя расширения должно
 начинаться с `x-`, иметь непустой суффикс и не содержать пробельных символов.
 Значение — произвольный JSON с конечными числами; повторное добавление того же
-имени заменяет значение. `with_extension` возвращает `Result`, а
-`with_extension_exn` при ошибке поднимает `Invalid_argument`.
+имени заменяет значение. При ошибке `with_extension` поднимает
+`Json_schema.Invalid_schema`.
 Расширение сохраняет тип и ограничения схемы; его содержимое, включая `$ref`,
 передаётся в OpenAPI без интерпретации. Формат `x-domain` и проверку выражения
 определяет приложение. PPX-аннотации для расширений не добавляются.
@@ -245,7 +344,7 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 ## Установка из GitHub
 
 Пакеты находятся в одном репозитории и требуют одинаковую версию.
-Скрипт ниже устанавливает текущий релиз `v0.3.5`, а если пакеты уже установлены —
+Скрипт ниже устанавливает текущий релиз `v0.3.6`, а если пакеты уже установлены —
 обновляет их до этой версии, предварительно заменяя существующие pin.
 Для установки всех пакетов нужен switch OCaml 5.1.1 или новее:
 
@@ -260,7 +359,7 @@ typed_endpoint_packages=(
   typed-endpoint-eio
 )
 for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.5'
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.6'
 done
 opam install "${typed_endpoint_packages[@]}"
 ```

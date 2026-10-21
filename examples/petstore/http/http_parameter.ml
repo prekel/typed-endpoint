@@ -16,7 +16,7 @@ module Pet_id = struct
   let t_jsonschema : t Json_schema.t =
     Json_schema.with_openapi
       ~description:"ID of the pet"
-      (Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ())
+      (Json_schema.integer ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ())
   ;;
 end
 
@@ -32,7 +32,7 @@ module Order_id = struct
   let t_jsonschema : t Json_schema.t =
     Json_schema.with_openapi
       ~description:"ID of the order"
-      (Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ())
+      (Json_schema.integer ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ())
   ;;
 end
 
@@ -49,7 +49,7 @@ module Username = struct
   let t_jsonschema : t Json_schema.t =
     Json_schema.with_openapi
       ~description:"Petstore username"
-      (Json_schema.string_exn ~min_length:1 ())
+      (Json_schema.string ~min_length:1 ())
   ;;
 end
 
@@ -66,7 +66,7 @@ module Password = struct
   let t_jsonschema : t Json_schema.t =
     Json_schema.with_openapi
       ~description:"Password in clear text for this demo"
-      (Json_schema.string_exn ~min_length:1 ())
+      (Json_schema.string ~min_length:1 ())
   ;;
 end
 
@@ -83,12 +83,12 @@ module Pet_name = struct
   let t_jsonschema : t Json_schema.t =
     Json_schema.with_openapi
       ~description:"Updated pet name"
-      (Json_schema.string_exn ~min_length:1 ())
+      (Json_schema.string ~min_length:1 ())
   ;;
 end
 
 let bounded_integer_schema ~maximum ~default =
-  Json_schema.integer_exn ~minimum:1 ~maximum ~default ()
+  Json_schema.integer ~minimum:1 ~maximum ~default ()
 ;;
 
 module Page = struct

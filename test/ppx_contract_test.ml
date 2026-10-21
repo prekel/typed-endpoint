@@ -224,7 +224,7 @@ end
               let of_yojson _ = Ok 0
               let t_jsonschema =
                 Typed_endpoint.Json_schema.with_openapi ~schema_name:"Wrong"
-                  (Typed_endpoint.Json_schema.string_exn ())
+                  (Typed_endpoint.Json_schema.string ())
             end
             let _ : (module Typed_endpoint.Request_payload.S with type t = int) =
               (module Payload)|}
@@ -233,7 +233,7 @@ end
               let to_yojson value = `Int value
               let t_jsonschema =
                 Typed_endpoint.Json_schema.with_openapi ~description:"Wrong"
-                  (Typed_endpoint.Json_schema.string_exn ())
+                  (Typed_endpoint.Json_schema.string ())
             end
             let _ : (module Typed_endpoint.Response_payload.S with type t = int) =
               (module Payload)|}

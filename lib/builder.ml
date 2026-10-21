@@ -361,7 +361,7 @@ module Parameter = struct
 
   let string ?schema_name ?tags ?description () =
     v
-      ~schema:(Json_schema.string_exn ())
+      ~schema:(Json_schema.string ())
       ?schema_name
       ?tags
       ?description
@@ -371,7 +371,7 @@ module Parameter = struct
 
   let int ?schema_name ?tags ?description () =
     v
-      ~schema:(Json_schema.integer_exn ())
+      ~schema:(Json_schema.integer ())
       ?schema_name
       ?tags
       ?description
@@ -389,7 +389,7 @@ module Parameter = struct
 
   let int64 ?schema_name ?tags ?description () =
     v
-      ~schema:(Json_schema.int64_exn ~format:`Int64 ())
+      ~schema:(Json_schema.int64 ~format:`Int64 ())
       ?schema_name
       ?tags
       ?description
@@ -406,7 +406,7 @@ module Parameter = struct
 
   let float ?schema_name ?tags ?description () =
     v
-      ~schema:(Json_schema.number_exn ~format:`Double ())
+      ~schema:(Json_schema.number ~format:`Double ())
       ?schema_name
       ?tags
       ?description
@@ -460,7 +460,7 @@ module Query = struct
         (module Item : Parameter.S with type t = a)
     =
     let schema =
-      Json_schema.list_exn ~items:Item.t_jsonschema ()
+      Json_schema.list ~items:Item.t_jsonschema ()
       |> Json_schema.with_openapi ?schema_name ?description
     in
     v
@@ -508,7 +508,7 @@ module Header = struct
 
   let string ?schema_name ?tags ?description () =
     v
-      ~schema:(Json_schema.string_exn ())
+      ~schema:(Json_schema.string ())
       ?schema_name
       ?tags
       ?description
@@ -519,7 +519,7 @@ module Header = struct
 
   let int ?schema_name ?tags ?description () =
     v
-      ~schema:(Json_schema.integer_exn ())
+      ~schema:(Json_schema.integer ())
       ?schema_name
       ?tags
       ?description
@@ -538,7 +538,7 @@ module Header = struct
 
   let int64 ?schema_name ?tags ?description () =
     v
-      ~schema:(Json_schema.int64_exn ~format:`Int64 ())
+      ~schema:(Json_schema.int64 ~format:`Int64 ())
       ?schema_name
       ?tags
       ?description

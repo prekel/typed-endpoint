@@ -9,11 +9,7 @@ module Schema_scalar = struct
     type t = int [@@deriving yojson]
 
     let t_jsonschema =
-      Json_schema.integer_exn
-        ~format:`Int64
-        ~minimum:Int.min_value
-        ~maximum:Int.max_value
-        ()
+      Json_schema.integer ~format:`Int64 ~minimum:Int.min_value ~maximum:Int.max_value ()
     ;;
   end
 
@@ -31,7 +27,7 @@ module Schema_scalar = struct
     ;;
 
     let t_jsonschema =
-      Json_schema.integer_exn ~format:`Int32 ~minimum:int32_min ~maximum:int32_max ()
+      Json_schema.integer ~format:`Int32 ~minimum:int32_min ~maximum:int32_max ()
     ;;
   end
 
@@ -49,7 +45,7 @@ module Schema_scalar = struct
     ;;
 
     let t_jsonschema =
-      Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ()
+      Json_schema.integer ~format:`Int64 ~minimum:1 ~maximum:Int.max_value ()
     ;;
   end
 
@@ -66,23 +62,19 @@ module Schema_scalar = struct
           Error "expected a positive int32")
     ;;
 
-    let t_jsonschema =
-      Json_schema.integer_exn ~format:`Int32 ~minimum:1 ~maximum:int32_max ()
-    ;;
+    let t_jsonschema = Json_schema.integer ~format:`Int32 ~minimum:1 ~maximum:int32_max ()
   end
 
   module Pet_status = struct
     type t = string [@@deriving yojson]
 
-    let t_jsonschema = Json_schema.string_exn ~enum:[ "available"; "pending"; "sold" ] ()
+    let t_jsonschema = Json_schema.string ~enum:[ "available"; "pending"; "sold" ] ()
   end
 
   module Order_status = struct
     type t = string [@@deriving yojson]
 
-    let t_jsonschema =
-      Json_schema.string_exn ~enum:[ "placed"; "approved"; "delivered" ] ()
-    ;;
+    let t_jsonschema = Json_schema.string ~enum:[ "placed"; "approved"; "delivered" ] ()
   end
 end
 
@@ -103,7 +95,7 @@ module Status = struct
   ;;
 
   let schema =
-    Json_schema.string_exn ~enum:[ "available"; "pending"; "sold" ] ()
+    Json_schema.string ~enum:[ "available"; "pending"; "sold" ] ()
     |> Json_schema.to_yojson
     |> Json_schema.Unsafe.of_yojson
   ;;
@@ -216,7 +208,7 @@ module Tags = struct
   let t_jsonschema =
     Json_schema.with_openapi
       ~description:"Comma-separated tags to filter by"
-      (Json_schema.list_exn ~min_items:1 ~items:(Json_schema.string_exn ()) ())
+      (Json_schema.list ~min_items:1 ~items:(Json_schema.string ()) ())
   ;;
 
   let query =
@@ -299,7 +291,7 @@ module Inventory = struct
       ~description:"Pet quantities keyed by lifecycle status"
       (Json_schema.dictionary
          ~values:
-           (Json_schema.integer_exn
+           (Json_schema.integer
               ~format:`Int32
               ~minimum:0
               ~maximum:Schema_scalar.int32_max
@@ -387,7 +379,7 @@ end
 module Non_empty_string = struct
   type t = string
 
-  let t_jsonschema = Json_schema.string_exn ~min_length:1 ()
+  let t_jsonschema = Json_schema.string ~min_length:1 ()
   let to_yojson value = `String value
 
   let of_yojson = function
@@ -537,7 +529,7 @@ module User_create_list = struct
       Ok users
   ;;
 
-  let t_jsonschema = Json_schema.list_exn ~min_items:1 ~items:User_create.t_jsonschema ()
+  let t_jsonschema = Json_schema.list ~min_items:1 ~items:User_create.t_jsonschema ()
 
   let t_jsonschema =
     Json_schema.with_openapi ~description:"Users to create atomically" t_jsonschema

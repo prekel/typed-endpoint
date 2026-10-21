@@ -77,7 +77,7 @@ let constraints =
     QCheck2.Gen.(pair (int_range (-1000) 1000) (int_range 0 1000))
     (fun (minimum, width) ->
        let maximum = minimum + width in
-       let schema = Json_schema.integer_exn ~minimum ~maximum () |> json in
+       let schema = Json_schema.integer ~minimum ~maximum () |> json in
        Poly.equal (member "minimum" schema) (`Int minimum)
        && Poly.equal (member "maximum" schema) (`Int maximum)
        && validates schema (`Int minimum)
@@ -113,10 +113,10 @@ let collections =
     generator
     (fun (min_items, max_items, values) ->
        let schema =
-         Json_schema.list_exn
+         Json_schema.list
            ~min_items
            ~max_items
-           ~items:(Json_schema.integer_exn ~minimum:0 ~maximum:100 ())
+           ~items:(Json_schema.integer ~minimum:0 ~maximum:100 ())
            ()
          |> json
        in

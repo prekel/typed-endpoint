@@ -99,7 +99,7 @@ let%test_unit "OpenAPI documentation preserves the schema and composes immutably
     original
     |> Json_schema.with_openapi ~schema_name:"Message" ~tags:[ "messages" ]
     |> Json_schema.with_openapi ~description:"HTTP description"
-    |> Json_schema.with_extension_exn ~name:"x-domain" ~value:(`String "message")
+    |> Json_schema.with_extension ~name:"x-domain" ~value:(`String "message")
   in
   assert (Option.is_none (Json_schema.schema_name original));
   assert (List.is_empty (Json_schema.tags original));
@@ -116,8 +116,5 @@ let%test_unit "OpenAPI documentation preserves the schema and composes immutably
     Yojson.Safe.equal
       (Json_schema.to_yojson decorated)
       (Json_schema.to_yojson
-         (Json_schema.with_extension_exn
-            ~name:"x-domain"
-            ~value:(`String "message")
-            original)))
+         (Json_schema.with_extension ~name:"x-domain" ~value:(`String "message") original)))
 ;;

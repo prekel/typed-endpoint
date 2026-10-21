@@ -57,6 +57,7 @@ let () =
     ; wrong_collection_phase
     ; wrong_collection_handler
     ; wrong_collection_path
+    ; wrong_schema_mapper
     ] ->
     let include_directories =
       List.map [ core_interface; testing_interface ] ~f:Stdlib.Filename.dirname
@@ -87,6 +88,7 @@ let () =
       ~include_directories
       ~fixture:wrong_collection_handler
       ~expected:"int list";
-    require_failure ~include_directories ~fixture:wrong_collection_path ~expected:"Scalar"
-  | _ -> Stdlib.failwith "expected two library interfaces and eight compile-fail fixtures"
+    require_failure ~include_directories ~fixture:wrong_collection_path ~expected:"Scalar";
+    require_failure ~include_directories ~fixture:wrong_schema_mapper ~expected:"string"
+  | _ -> Stdlib.failwith "expected two library interfaces and nine compile-fail fixtures"
 ;;

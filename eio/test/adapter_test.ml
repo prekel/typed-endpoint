@@ -32,7 +32,7 @@ module String_param = struct
   let of_string value = Ok value
 
   let t_jsonschema : t Json_schema.t =
-    Json_schema.with_openapi ~description:"String parameter" (Json_schema.string_exn ())
+    Json_schema.with_openapi ~description:"String parameter" (Json_schema.string ())
   ;;
 end
 

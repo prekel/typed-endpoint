@@ -1,6 +1,8 @@
 (** JSON Schema fragments indexed by their OCaml wire types. Use the checked
     constructors for handwritten schemas and [typed-endpoint-ppx] for DTOs.
-    Constraints describe codecs; they do not add runtime validation. *)
+    User-facing constructors return schemas directly and raise {!Invalid_schema}
+    for invalid declarations. Constraints describe codecs; they do not add
+    runtime validation. *)
 
 open! Base
 
@@ -8,6 +10,13 @@ open! Base
     Values can be used directly by parameters, headers, bodies, and responses.
     OpenAPI documentation may be attached without changing the wire shape. *)
 type 'a t
+
+(** A declaration has invalid arguments or conflicting local definitions.
+    The payload is a diagnostic, not a rejected runtime request. A printer is
+    registered at module initialization for [Stdlib.Printexc.to_string] and
+    uncaught-exception reporting, using the public exception name. Exceptions
+    raised by user-provided encoders propagate unchanged. *)
+exception Invalid_schema of string
 
 (** Adds or replaces optional OpenAPI documentation while preserving the OCaml
     type index and JSON Schema value. Omitted fields retain their previous values;
@@ -40,6 +49,23 @@ val tags : _ t -> string list
 
 (** A schema whose OCaml type index is intentionally hidden. *)
 type packed
+
+(** Policy for properties not matched by [properties] or [patternProperties]. *)
+type additional_properties =
+  | Allow (** Accept any additional property value. *)
+  | Deny (** Reject every unmatched property. *)
+  | Schema of packed (** Check unmatched values against this schema. *)
+
+(** Describes ['b] using its representation ['a]. [f] witnesses the representation
+    used by the application's codec; it is not called or stored. The codec must
+    emit the same JSON as encoding [f value] with the original representation.
+    The JSON Schema and all OpenAPI metadata are preserved. This does not derive
+    a codec or validate values. *)
+val contramap : 'a t -> f:('b -> 'a) -> 'b t
+
+(** Uses the schema with JSON values directly. Unlike {!pack}, the result can be
+    combined with other schemas indexed by [Yojson.Safe.t]. Metadata is preserved. *)
+val as_json : 'a t -> Yojson.Safe.t t
 
 (** Standard JSON Schema and OpenAPI string formats. [`Custom name] preserves
     extensibility while making all built-in choices typo-safe. *)
@@ -86,6 +112,10 @@ type number_format =
 (** A schema accepting every JSON value. *)
 val any : Yojson.Safe.t t
 
+(** A schema accepting no JSON value, also usable as [items] to forbid an array
+    tail after [prefixItems]. *)
+val never : Yojson.Safe.t t
+
 (** A schema accepting only JSON [null]. *)
 val null : unit t
 
@@ -105,83 +135,65 @@ val to_yojson : 'a t -> Yojson.Safe.t
 (** Returns the JSON representation of an existentially packed schema. *)
 val to_yojson_packed : packed -> Yojson.Safe.t
 
-(** Builds a string schema. A [`Custom format] must be non-empty, lengths must
+(** Builds a string schema. A [`Custom format] and [content_encoding] must be non-empty, lengths must
     be non-negative and ordered, [enum] must be non-empty without duplicates,
-    and [default] must belong to [enum] when both are present. *)
+    and [default] must belong to [enum] when both are present. [pattern] is an
+    ECMA-262 regular expression, emitted literally without implicit anchoring or
+    syntax validation. [content_encoding] documents the encoding (e.g. ["base64"])
+    and does not perform it. *)
 val string
   :  ?format:string_format
   -> ?enum:string list
   -> ?min_length:int
   -> ?max_length:int
-  -> ?default:string
-  -> unit
-  -> (string t, string) Result.t
-
-(** The throwing form of {!string}. Invalid arguments raise [Invalid_argument]. *)
-val string_exn
-  :  ?format:string_format
-  -> ?enum:string list
-  -> ?min_length:int
-  -> ?max_length:int
+  -> ?pattern:string
+  -> ?content_encoding:string
   -> ?default:string
   -> unit
   -> string t
 
 (** Builds an integer schema. A [`Custom format] must be non-empty, bounds must
-    be ordered, and [default] must fall within them. *)
+    be ordered and admit a non-empty numeric interval, and [default] must fall
+    within them. [multiple_of] must be strictly positive. Inclusive and exclusive
+    bounds may be combined; the strongest bound on each side applies. Default
+    validation checks bounds, not divisibility. *)
 val integer
   :  ?format:integer_format
   -> ?minimum:int
   -> ?maximum:int
-  -> ?default:int
-  -> unit
-  -> (int t, string) Result.t
-
-(** The throwing form of {!integer}. Invalid arguments raise
-    [Invalid_argument]. *)
-val integer_exn
-  :  ?format:integer_format
-  -> ?minimum:int
-  -> ?maximum:int
+  -> ?exclusive_minimum:int
+  -> ?exclusive_maximum:int
+  -> ?multiple_of:int
   -> ?default:int
   -> unit
   -> int t
 
 (** Builds an integer schema whose bounds and default use the full OCaml
     [int64] range. Bounds must be ordered and contain [default]; a custom format
-    must be non-empty. Invalid arguments return [Error]. *)
+    must be non-empty. Strict bounds and [multiple_of] follow {!integer} without
+    converting arguments to floating point. Invalid arguments raise {!Invalid_schema}. *)
 val int64
   :  ?format:integer_format
   -> ?minimum:int64
   -> ?maximum:int64
-  -> ?default:int64
-  -> unit
-  -> (int64 t, string) Result.t
-
-(** Throwing form of {!int64}; invalid bounds raise [Invalid_argument]. *)
-val int64_exn
-  :  ?format:integer_format
-  -> ?minimum:int64
-  -> ?maximum:int64
+  -> ?exclusive_minimum:int64
+  -> ?exclusive_maximum:int64
+  -> ?multiple_of:int64
   -> ?default:int64
   -> unit
   -> int64 t
 
 (** Builds a number schema. A [`Custom format] must be non-empty. Bounds and
-    [default] must be finite and ordered, and [default] must fall within them. *)
+    [default] must be finite and ordered, and [default] must fall within them.
+    Exclusive bounds must also be finite, and [multiple_of] must be finite and
+    strictly positive. Default validation checks bounds, not divisibility. *)
 val number
   :  ?format:number_format
   -> ?minimum:float
   -> ?maximum:float
-  -> ?default:float
-  -> unit
-  -> (float t, string) Result.t
-
-(** The throwing form of {!number}. Invalid arguments raise [Invalid_argument]. *)
-val number_exn
-  :  ?format:number_format
-  -> ?minimum:float
-  -> ?maximum:float
+  -> ?exclusive_minimum:float
+  -> ?exclusive_maximum:float
+  -> ?multiple_of:float
   -> ?default:float
   -> unit
   -> float t
@@ -189,27 +201,37 @@ val number_exn
 (** Builds a boolean schema with an optional documented default. *)
 val boolean : ?default:bool -> unit -> bool t
 
-(** Builds an array schema. Item bounds must be non-negative and ordered. *)
+(** Builds an array schema. Item and occurrence bounds must be non-negative and
+    ordered. [prefix_items], if supplied, must be non-empty; each schema checks
+    its position and [items] checks only the remaining tail. The prefix does not
+    impose a minimum length. [min_contains] and [max_contains] require [contains];
+    its effective minimum is one unless explicitly overridden, including zero.
+    Prefix, tail and [contains] share the element index. Use {!as_json} for
+    heterogeneous elements. Local definition conflicts raise {!Invalid_schema}. *)
 val array
   :  ?min_items:int
   -> ?max_items:int
+  -> ?prefix_items:'a t list
+  -> ?unique_items:bool
+  -> ?contains:'a t
+  -> ?min_contains:int
+  -> ?max_contains:int
   -> items:'a t
   -> unit
-  -> ('a array t, string) Result.t
+  -> 'a array t
 
 (** Builds an array schema indexed by an OCaml list. *)
 val list
   :  ?min_items:int
   -> ?max_items:int
+  -> ?prefix_items:'a t list
+  -> ?unique_items:bool
+  -> ?contains:'a t
+  -> ?min_contains:int
+  -> ?max_contains:int
   -> items:'a t
   -> unit
-  -> ('a list t, string) Result.t
-
-(** The throwing form of {!array}. Invalid arguments raise [Invalid_argument]. *)
-val array_exn : ?min_items:int -> ?max_items:int -> items:'a t -> unit -> 'a array t
-
-(** Throwing form of {!list}; invalid item bounds raise [Invalid_argument]. *)
-val list_exn : ?min_items:int -> ?max_items:int -> items:'a t -> unit -> 'a list t
+  -> 'a list t
 
 (** An object whose arbitrary property values conform to [values]. *)
 val dictionary : values:'a t -> (string * 'a) list t
@@ -220,17 +242,119 @@ val dictionary : values:'a t -> (string * 'a) list t
     result to give the nullable schema its own component name or description. *)
 val nullable : 'a t -> 'a option t
 
+(** Intersection of a non-empty list of schemas sharing a representation.
+    Local definitions without their own [$id] are lifted to the result root;
+    conflicting definitions raise {!Invalid_schema}. Separate [$id] resources retain
+    their scopes. New compositions start without OpenAPI metadata. *)
+val all_of : 'a t list -> 'a t
+
+(** Union of a non-empty list of schemas sharing a representation. Definition
+    handling and metadata follow {!all_of}; use {!as_json} for mixed types. *)
+val any_of : 'a t list -> 'a t
+
+(** Requires exactly one matching branch. The list must be non-empty; definition
+    handling and metadata follow {!all_of}. *)
+val one_of : 'a t list -> 'a t
+
+(** Complements a schema. The result uses JSON values because a complement can
+    accept types outside the original OCaml representation. *)
+val not_ : 'a t -> Yojson.Safe.t t
+
+(** Excludes values matching [schema] from the supplied base schema, preserving
+    the base type, constraints and OpenAPI metadata. *)
+val with_not : schema:'b t -> 'a t -> 'a t
+
+(** Selects [then_] when [if_] matches, otherwise [else_]. Both branches use the
+    same representation. Definitions and metadata follow {!all_of}. *)
+val if_then_else : if_:'b t -> then_:'a t -> else_:'a t -> 'a t
+
+(** Builds a schema for JSON objects directly, without claiming an arbitrary
+    OCaml record representation. Unmatched properties are allowed by default.
+    Names in each map and [required] must be unique; property-count bounds must
+    be non-negative and ordered. [property_names] checks key strings, while
+    [pattern_properties] checks values for every matching ECMA-262 pattern.
+    Patterns are emitted literally without syntax validation. [dependent_required]
+    requires the listed keys when its triggering key is present;
+    [dependent_schemas] checks the whole object when its key is present.
+    Definition handling and metadata follow {!all_of}. *)
+val object_
+  :  ?properties:(string * packed) list
+  -> ?required:string list
+  -> ?additional_properties:additional_properties
+  -> ?property_names:string t
+  -> ?pattern_properties:(string * packed) list
+  -> ?min_properties:int
+  -> ?max_properties:int
+  -> ?dependent_required:(string * string list) list
+  -> ?dependent_schemas:(string * packed) list
+  -> unit
+  -> Yojson.Safe.t t
+
+(** Adds object constraints without weakening the dictionary's value schema.
+    Pattern-matched values must satisfy both the original value schema and every
+    matching pattern schema. Existing constraints and metadata are preserved.
+    Argument checks follow {!object_}. *)
+val with_dictionary_constraints
+  :  ?property_names:string t
+  -> ?pattern_properties:(string * 'a t) list
+  -> ?min_properties:int
+  -> ?max_properties:int
+  -> ?dependent_required:(string * string list) list
+  -> ?dependent_schemas:(string * packed) list
+  -> (string * 'a) list t
+  -> (string * 'a) list t
+
+(** Restricts the existing schema to the encoded values, including whole arrays
+    or objects. [encode] must use the application's wire representation. The
+    list must be non-empty and its encoded JSON values must be distinct (object
+    order and numeric spelling do not distinguish values). Non-finite floats,
+    invalid integer literals and duplicate object members raise {!Invalid_schema}. This
+    does not check literals against the schema or derive runtime validation.
+    Encoder exceptions propagate. Metadata and existing constraints are preserved. *)
+val with_enum : encode:('a -> Yojson.Safe.t) -> 'a list -> 'a t -> 'a t
+
+(** Restricts the schema to one encoded value. Encoding, validation and metadata
+    follow {!with_enum}. *)
+val with_const : encode:('a -> Yojson.Safe.t) -> 'a -> 'a t -> 'a t
+
+(** Adds or replaces the JSON Schema title, preserving OpenAPI metadata. *)
+val with_title : string -> 'a t -> 'a t
+
+(** Adds or replaces the JSON Schema description. An explicit description from
+    {!with_openapi} retains precedence. *)
+val with_description : string -> 'a t -> 'a t
+
+(** Adds or replaces the deprecation annotation without changing validation. *)
+val with_deprecated : bool -> 'a t -> 'a t
+
+(** Documents ownership of a value; does not change codecs or requiredness. *)
+val with_read_only : bool -> 'a t -> 'a t
+
+(** Documents a value intended for writes; does not change codecs or requiredness. *)
+val with_write_only : bool -> 'a t -> 'a t
+
+(** Adds or replaces encoded examples. JSON validation follows {!with_enum},
+    except an empty list and repeated examples are allowed. *)
+val with_examples : encode:('a -> Yojson.Safe.t) -> 'a list -> 'a t -> 'a t
+
+(** Adds or replaces an explicit OpenAPI discriminator on [allOf], [anyOf] or
+    [oneOf]. Mapping keys must be unique; targets are preserved verbatim and
+    are not registered or resolved. The caller must provide object branches
+    with the discriminator property and appropriate schema references; this
+    does not transform Yojson variants or derive a codec. Metadata is preserved. *)
+val with_discriminator
+  :  property_name:string
+  -> ?mapping:(string * string) list
+  -> 'a t
+  -> 'a t
+
 (** Adds an opaque JSON annotation without changing the schema's type index or
     validation semantics. [name] must start with [x-], have a non-empty suffix,
     and contain no whitespace. [value] must contain only JSON values, with
     finite floats and valid integer literals. An existing annotation with the
     same name is replaced. OpenAPI rendering preserves the value verbatim,
     including any references it contains. *)
-val with_extension : name:string -> value:Yojson.Safe.t -> 'a t -> ('a t, string) Result.t
-
-(** Throwing form of {!with_extension}; invalid arguments raise
-    [Invalid_argument]. *)
-val with_extension_exn : name:string -> value:Yojson.Safe.t -> 'a t -> 'a t
+val with_extension : name:string -> value:Yojson.Safe.t -> 'a t -> 'a t
 
 (** Schema-building support for generated code, exported so downstream derived
     schemas can compile. Several constructors have polymorphic result indices:
@@ -248,7 +372,7 @@ module Deriver : sig
     | String
 
   (** Policy for object properties not listed explicitly. *)
-  type additional_properties =
+  type nonrec additional_properties = additional_properties =
     | Allow (** Accept any additional property value. *)
     | Deny (** Reject every unlisted property. *)
     | Schema of packed (** Validate each unlisted property against this schema. *)

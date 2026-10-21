@@ -4,6 +4,7 @@
   invariants
   bug_regressions
   json_schema_test
+  json_schema_dsl_test
   openapi_test
   openapi_readability_test
   response_description_test
@@ -42,7 +43,8 @@
   compile_fail/wrong_stage_order.ml
   compile_fail/wrong_collection_phase.ml
   compile_fail/wrong_collection_handler.ml
-  compile_fail/wrong_collection_path.ml)
+  compile_fail/wrong_collection_path.ml
+  compile_fail/wrong_schema_mapper.ml)
  (action
   (run
    %{test}
@@ -55,7 +57,8 @@
    %{dep:compile_fail/wrong_stage_order.ml}
    %{dep:compile_fail/wrong_collection_phase.ml}
    %{dep:compile_fail/wrong_collection_handler.ml}
-   %{dep:compile_fail/wrong_collection_path.ml})))
+   %{dep:compile_fail/wrong_collection_path.ml}
+   %{dep:compile_fail/wrong_schema_mapper.ml})))
 
 (executable
  (name schema_ppx)

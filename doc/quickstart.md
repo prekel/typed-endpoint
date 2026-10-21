@@ -93,15 +93,16 @@ tuple через alias остаётся вложенным массивом. `co
 ```ocaml
 let page =
   Parameter.v
-    ~schema:(Json_schema.integer_exn ~format:`Int32 ~minimum:1 ~maximum:100 ~default:1 ())
+    ~schema:(Json_schema.integer ~format:`Int32 ~minimum:1 ~maximum:100 ~default:1 ())
     ~description:"One-based page number"
     ~of_string:parse_page
     ()
 ;;
 ```
 
-Функции без суффикса `_exn` возвращают `Result` и подходят для динамической
-конфигурации; варианты `_exn` удобны для статической декларации модуля. Для
+Конструкторы `Json_schema` возвращают схему напрямую и не имеют суффикса `_exn`.
+Некорректная декларация поднимает `Json_schema.Invalid_schema`; зарегистрированный
+принтер выводит публичное имя исключения и причину ошибки. Для
 custom scalar экспортируйте типизированную схему как `t_jsonschema`. Мосты
 `ppx_schema`, `to_ppx` и `Unsafe.of_ppx` удалены.
 Известные форматы типизированы: используйте ``~format:`Date_time``,

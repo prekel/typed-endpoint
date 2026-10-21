@@ -17,7 +17,7 @@ end
 
 let identifier =
   Parameter.v
-    ~schema:(Json_schema.integer_exn ~format:`Int64 ~minimum:1 ())
+    ~schema:(Json_schema.integer ~format:`Int64 ~minimum:1 ())
     ~description:"Pet identifier"
     ~of_string:(fun value ->
       match Int.of_string_opt value with

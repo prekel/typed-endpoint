@@ -137,7 +137,7 @@ end
 module Ppx_custom_default = struct
   type amount = int64 [@@deriving yojson]
 
-  let amount_jsonschema = Json_schema.int64_exn ()
+  let amount_jsonschema = Json_schema.int64 ()
 
   (* Yojson's default strict decoder closes record schemas. *)
   type t = { amount : amount [@default 9223372036854775807L] }
@@ -184,11 +184,11 @@ let print_if_equal smart ppx =
 ;;
 
 let%expect_test "primitive smart constructors agree with PPX schemas" =
-  print_if_equal (Json_schema.string_exn ()) Ppx_string.t_jsonschema;
+  print_if_equal (Json_schema.string ()) Ppx_string.t_jsonschema;
   [%expect {| { "type": "string" } |}];
-  print_if_equal (Json_schema.integer_exn ()) Ppx_integer.t_jsonschema;
+  print_if_equal (Json_schema.integer ()) Ppx_integer.t_jsonschema;
   [%expect {| { "type": "integer" } |}];
-  print_if_equal (Json_schema.number_exn ()) Ppx_number.t_jsonschema;
+  print_if_equal (Json_schema.number ()) Ppx_number.t_jsonschema;
   [%expect {| { "type": "number" } |}];
   print_if_equal (Json_schema.boolean ()) Ppx_boolean.t_jsonschema;
   [%expect {| { "type": "boolean" } |}]
@@ -196,19 +196,17 @@ let%expect_test "primitive smart constructors agree with PPX schemas" =
 
 let%expect_test "composed smart constructors agree with PPX schemas" =
   print_if_equal
-    (Json_schema.array_exn ~items:(Json_schema.string_exn ()) ())
+    (Json_schema.array ~items:(Json_schema.string ()) ())
     Ppx_array.t_jsonschema;
   [%expect {| { "type": "array", "items": { "type": "string" } } |}];
-  print_if_equal
-    (Json_schema.nullable (Json_schema.string_exn ()))
-    Ppx_nullable.t_jsonschema;
+  print_if_equal (Json_schema.nullable (Json_schema.string ())) Ppx_nullable.t_jsonschema;
   [%expect {| { "type": [ "string", "null" ] } |}];
   print_if_equal
-    (Json_schema.integer_exn ~minimum:1 ~maximum:100 ())
+    (Json_schema.integer ~minimum:1 ~maximum:100 ())
     Ppx_bounded_integer.t_jsonschema;
   [%expect {| { "type": "integer", "minimum": 1, "maximum": 100 } |}];
   print_if_equal
-    (Json_schema.string_exn ~format:`Date_time ())
+    (Json_schema.string ~format:`Date_time ())
     Ppx_formatted_string.t_jsonschema;
   [%expect {| { "type": "string", "format": "date-time" } |}]
 ;;
@@ -315,7 +313,7 @@ let%test_unit "Deriver format builders reject blank custom names" =
 ;;
 
 let%expect_test "smart schemas have stable JSON output" =
-  Json_schema.string_exn
+  Json_schema.string
     ~format:`Uuid
     ~enum:[ "primary"; "secondary" ]
     ~min_length:1
@@ -334,8 +332,7 @@ let%expect_test "smart schemas have stable JSON output" =
       "default": "primary"
     }
     |}];
-  Json_schema.integer_exn ~format:`Int64 ~minimum:1 ~maximum:100 ~default:1 ()
-  |> print_schema;
+  Json_schema.integer ~format:`Int64 ~minimum:1 ~maximum:100 ~default:1 () |> print_schema;
   [%expect
     {|
     {
@@ -346,7 +343,7 @@ let%expect_test "smart schemas have stable JSON output" =
       "default": 1
     }
     |}];
-  Json_schema.array_exn ~min_items:1 ~max_items:3 ~items:(Json_schema.string_exn ()) ()
+  Json_schema.array ~min_items:1 ~max_items:3 ~items:(Json_schema.string ()) ()
   |> print_schema;
   [%expect
     {|
@@ -357,8 +354,7 @@ let%expect_test "smart schemas have stable JSON output" =
       "maxItems": 3
     }
     |}];
-  Json_schema.dictionary ~values:(Json_schema.integer_exn ~format:`Int32 ())
-  |> print_schema;
+  Json_schema.dictionary ~values:(Json_schema.integer ~format:`Int32 ()) |> print_schema;
   [%expect
     {|
     {
@@ -384,7 +380,7 @@ let%expect_test "Yojson wire annotations produce matching schema" =
 ;;
 
 let%expect_test "generic schema is parameterized by its type" =
-  Ppx_generic.t_jsonschema (Json_schema.integer_exn ()) |> print_schema;
+  Ppx_generic.t_jsonschema (Json_schema.integer ()) |> print_schema;
   [%expect
     {|
     {
@@ -686,13 +682,13 @@ let%test "schema equality preserves array order" =
 ;;
 
 let%test "nullable is idempotent" =
-  let nullable = Json_schema.nullable (Json_schema.string_exn ()) in
+  let nullable = Json_schema.nullable (Json_schema.string ()) in
   Json_schema.equal nullable (Json_schema.nullable nullable)
 ;;
 
 let%test_unit "nullable preserves string enum and const constraints" =
   let enum_schema =
-    Json_schema.string_exn ~enum:[ "first"; "second" ] ()
+    Json_schema.string ~enum:[ "first"; "second" ] ()
     |> Json_schema.nullable
     |> Json_schema.to_yojson
     |> Yojson.Safe.to_basic
@@ -719,18 +715,19 @@ let%test_unit "nullable preserves string enum and const constraints" =
   assert (Result.is_error (Jsonschema.validate const_validator (`String "other")))
 ;;
 
-let print_error = function
-  | Ok _ -> Stdlib.print_endline "ok"
-  | Error error -> Stdlib.print_endline error
+let print_error f =
+  match f () with
+  | _ -> Stdlib.failwith "expected a schema error"
+  | exception Json_schema.Invalid_schema error -> Stdlib.print_endline error
 ;;
 
 let%expect_test "extensions preserve constraints and replace only matching annotations" =
-  let original = Json_schema.string_exn ~min_length:1 () in
+  let original = Json_schema.string ~min_length:1 () in
   let schema =
     original
-    |> Json_schema.with_extension_exn ~name:"x-domain" ~value:(`String "pets")
-    |> Json_schema.with_extension_exn ~name:"x-version" ~value:(`Int 1)
-    |> Json_schema.with_extension_exn ~name:"x-domain" ~value:(`String "owners")
+    |> Json_schema.with_extension ~name:"x-domain" ~value:(`String "pets")
+    |> Json_schema.with_extension ~name:"x-version" ~value:(`Int 1)
+    |> Json_schema.with_extension ~name:"x-domain" ~value:(`String "owners")
   in
   Json_schema.to_yojson schema |> Yojson.Safe.to_string |> Stdlib.print_endline;
   [%expect {| {"x-domain":"owners","x-version":1,"type":"string","minLength":1} |}];
@@ -740,7 +737,7 @@ let%expect_test "extensions preserve constraints and replace only matching annot
 
 let%expect_test "extension names cannot replace standard schema keywords" =
   let add name =
-    Json_schema.with_extension ~name ~value:`Null Json_schema.any |> print_error
+    print_error (fun () -> Json_schema.with_extension ~name ~value:`Null Json_schema.any)
   in
   add "type";
   [%expect
@@ -758,7 +755,8 @@ let%expect_test "extension names cannot replace standard schema keywords" =
 
 let%expect_test "extension values reject non-finite numbers and invalid integer literals" =
   let add value =
-    Json_schema.with_extension ~name:"x-domain" ~value Json_schema.any |> print_error
+    print_error (fun () ->
+      Json_schema.with_extension ~name:"x-domain" ~value Json_schema.any)
   in
   add (`Assoc [ "nested", `List [ `Float Float.nan ] ]);
   [%expect {| extension value must contain only finite floats |}];
@@ -789,38 +787,34 @@ let%test_unit "extensions preserve arbitrary JSON values and wide integer litera
   in
   List.iter values ~f:(fun value ->
     let schema =
-      Json_schema.string_exn ()
-      |> Json_schema.with_extension_exn ~name:"x-domain" ~value
+      Json_schema.string ()
+      |> Json_schema.with_extension ~name:"x-domain" ~value
       |> Json_schema.to_yojson
     in
     assert (Yojson.Safe.equal (Yojson.Safe.Util.member "x-domain" schema) value));
   List.iter [ ""; "-"; "+1"; "-01"; "1e2"; " 1" ] ~f:(fun literal ->
-    assert (
-      Result.is_error
-        (Json_schema.with_extension
-           ~name:"x-domain"
-           ~value:(`Intlit literal)
-           Json_schema.any)))
+    match
+      Json_schema.with_extension ~name:"x-domain" ~value:(`Intlit literal) Json_schema.any
+    with
+    | _ -> assert false
+    | exception Json_schema.Invalid_schema _ -> ())
 ;;
 
-let%test_unit "throwing extension constructor reports invalid arguments" =
-  let raises_invalid_argument f =
+let%test_unit "extension constructor reports invalid declarations" =
+  let raises_invalid_schema f =
     match f () with
     | _ -> assert false
-    | exception Invalid_argument _ -> ()
+    | exception Json_schema.Invalid_schema _ -> ()
   in
-  raises_invalid_argument (fun () ->
-    Json_schema.with_extension_exn ~name:"type" ~value:`Null Json_schema.any);
-  raises_invalid_argument (fun () ->
-    Json_schema.with_extension_exn
-      ~name:"x-domain"
-      ~value:(`Float Float.nan)
-      Json_schema.any)
+  raises_invalid_schema (fun () ->
+    Json_schema.with_extension ~name:"type" ~value:`Null Json_schema.any);
+  raises_invalid_schema (fun () ->
+    Json_schema.with_extension ~name:"x-domain" ~value:(`Float Float.nan) Json_schema.any)
 ;;
 
 let%expect_test "extensions preserve boolean schema semantics" =
   let annotated schema =
-    Json_schema.with_extension_exn ~name:"x-domain" ~value:`Null schema
+    Json_schema.with_extension ~name:"x-domain" ~value:`Null schema
   in
   let check schema expected =
     let schema = annotated schema |> Json_schema.to_yojson in
@@ -847,7 +841,7 @@ let%expect_test "extensions preserve boolean schema semantics" =
 let%test_unit "extensions preserve recursive schema definitions and references" =
   let original = Schema_dependency.node_jsonschema in
   let annotated =
-    original |> Json_schema.with_extension_exn ~name:"x-domain" ~value:(`String "nodes")
+    original |> Json_schema.with_extension ~name:"x-domain" ~value:(`String "nodes")
   in
   let member name schema = Yojson.Safe.Util.member name (Json_schema.to_yojson schema) in
   List.iter [ "$defs"; "$id"; "$ref" ] ~f:(fun name ->
@@ -855,37 +849,38 @@ let%test_unit "extensions preserve recursive schema definitions and references" 
 ;;
 
 let%expect_test "invalid smart constructor input is rejected" =
-  Json_schema.string ~format:(`Custom " ") () |> print_error;
+  print_error (fun () -> Json_schema.string ~format:(`Custom " ") ());
   [%expect {| format must not be empty |}];
-  Json_schema.string ~min_length:(-1) () |> print_error;
+  print_error (fun () -> Json_schema.string ~min_length:(-1) ());
   [%expect {| minLength must be greater than or equal to zero |}];
-  Json_schema.string ~min_length:2 ~max_length:1 () |> print_error;
+  print_error (fun () -> Json_schema.string ~min_length:2 ~max_length:1 ());
   [%expect {| minLength must be less than or equal to maxLength |}];
-  Json_schema.string ~enum:[] () |> print_error;
+  print_error (fun () -> Json_schema.string ~enum:[] ());
   [%expect {| enum must not be empty |}];
-  Json_schema.string ~enum:[ "a"; "a" ] () |> print_error;
+  print_error (fun () -> Json_schema.string ~enum:[ "a"; "a" ] ());
   [%expect {| enum contains duplicate value a |}];
-  Json_schema.string ~enum:[ "a" ] ~default:"b" () |> print_error;
+  print_error (fun () -> Json_schema.string ~enum:[ "a" ] ~default:"b" ());
   [%expect {| default must be one of the enum values |}];
-  Json_schema.integer ~minimum:2 ~maximum:1 () |> print_error;
+  print_error (fun () -> Json_schema.integer ~minimum:2 ~maximum:1 ());
   [%expect {| minimum must be less than or equal to maximum |}];
-  Json_schema.integer ~minimum:1 ~default:0 () |> print_error;
+  print_error (fun () -> Json_schema.integer ~minimum:1 ~default:0 ());
   [%expect {| default must be within the declared range |}];
-  Json_schema.number ~minimum:Float.nan () |> print_error;
+  print_error (fun () -> Json_schema.number ~minimum:Float.nan ());
   [%expect {| minimum must be finite |}];
-  Json_schema.array ~min_items:2 ~max_items:1 ~items:Json_schema.any () |> print_error;
+  print_error (fun () ->
+    Json_schema.array ~min_items:2 ~max_items:1 ~items:Json_schema.any ());
   [%expect {| minItems must be less than or equal to maxItems |}]
 ;;
 
 let%test_unit "smart and PPX schemas satisfy the Draft 2020-12 meta-schema" =
   let schemas =
-    [ Json_schema.to_yojson (Json_schema.string_exn ~format:`Date_time ())
-    ; Json_schema.to_yojson (Json_schema.integer_exn ~format:`Int64 ~minimum:1 ())
-    ; Json_schema.to_yojson (Json_schema.number_exn ~minimum:0. ~maximum:1. ())
+    [ Json_schema.to_yojson (Json_schema.string ~format:`Date_time ())
+    ; Json_schema.to_yojson (Json_schema.integer ~format:`Int64 ~minimum:1 ())
+    ; Json_schema.to_yojson (Json_schema.number ~minimum:0. ~maximum:1. ())
     ; Json_schema.to_yojson (Json_schema.boolean ~default:true ())
-    ; Json_schema.to_yojson (Json_schema.array_exn ~items:(Json_schema.string_exn ()) ())
-    ; Json_schema.to_yojson (Json_schema.dictionary ~values:(Json_schema.integer_exn ()))
-    ; Json_schema.to_yojson (Json_schema.nullable (Json_schema.string_exn ()))
+    ; Json_schema.to_yojson (Json_schema.array ~items:(Json_schema.string ()) ())
+    ; Json_schema.to_yojson (Json_schema.dictionary ~values:(Json_schema.integer ()))
+    ; Json_schema.to_yojson (Json_schema.nullable (Json_schema.string ()))
     ; Json_schema.to_yojson Ppx_bounded_integer.t_jsonschema
     ; Json_schema.to_yojson Ppx_formatted_string.t_jsonschema
     ]
@@ -933,7 +928,7 @@ let%test_unit "recursive generic and mutual schemas validate their wire values" 
     assert (Result.is_ok (Jsonschema.validate validator (Yojson.Safe.to_basic value)))
   in
   validate
-    (Generic_recursive.tree_jsonschema (Json_schema.integer_exn ()))
+    (Generic_recursive.tree_jsonschema (Json_schema.integer ()))
     (`Assoc
         [ "value", `Int 1
         ; "children", `List [ `Assoc [ "value", `Int 2; "children", `List [] ] ]

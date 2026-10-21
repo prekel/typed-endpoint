@@ -309,8 +309,8 @@ let filter_domain =
 ;;
 
 let filter_schema =
-  Json_schema.string_exn ~min_length:1 ()
-  |> Json_schema.with_extension_exn ~name:"x-domain" ~value:filter_domain
+  Json_schema.string ~min_length:1 ()
+  |> Json_schema.with_extension ~name:"x-domain" ~value:filter_domain
 ;;
 
 let filter_route ?schema_name path =
@@ -451,7 +451,7 @@ let%test_unit "array schemas cannot silently use a scalar query decoder" =
           | Compile_error.Array_query_requires_codec { name = "tags"; _ } -> true
           | _ -> false))
   in
-  let schema = Json_schema.list_exn ~items:(Json_schema.string_exn ()) () in
+  let schema = Json_schema.list ~items:(Json_schema.string ()) () in
   check schema (fun value -> Ok (String.split value ~on:','));
   check (Json_schema.nullable schema) (fun value ->
     Ok (Some (String.split value ~on:',')))

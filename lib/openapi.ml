@@ -6,8 +6,8 @@ let yo_bool value = `Bool value
 let yo_list values = `List values
 let yo_obj fields = `Assoc fields
 let schema_ref name = yo_obj [ "$ref", yo_str ("#/components/schemas/" ^ name) ]
-let text_schema = Json_schema.string_exn () |> Json_schema.to_yojson
-let binary_schema = Json_schema.string_exn ~format:`Binary () |> Json_schema.to_yojson
+let text_schema = Json_schema.string () |> Json_schema.to_yojson
+let binary_schema = Json_schema.string ~format:`Binary () |> Json_schema.to_yojson
 
 let render_schema (schema : Contract.Schema.t) =
   match schema.name with
