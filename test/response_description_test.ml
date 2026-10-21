@@ -63,6 +63,108 @@ let wire response =
   B.Response.status response, B.Response.headers response, B.Response.body response
 ;;
 
+let without_descriptions =
+  let echo path request =
+    post / path |> documented |> accepts request |> returns (case `OK (Response.text ()))
+    ==> fun ok () body ->
+    match Request_body.read body with
+    | Ok value -> respond ok value
+    | Error error -> Request_body.reject error
+  in
+  let empty =
+    get / "empty"
+    |> documented
+    |> accepts Request.empty
+    |> returns (case `No_content (Response.empty ()))
+    ==> fun no_content () () -> respond no_content ()
+  in
+  compile_exn
+    [ Group.make []
+    ; Group.make_with_context
+        ~context:(Context.return ())
+        [ echo "text" (Request.text ()); echo "binary" (Request.binary ()); empty ]
+    ]
+;;
+
+let%expect_test "text and empty responses retain the required description when omitted" =
+  let doc = Compiled.openapi without_descriptions in
+  response doc "/text" "post" "200" |> print;
+  [%expect {| {"description":"","content":{"text/plain":{"schema":{"type":"string"}}}} |}];
+  response doc "/empty" "get" "204" |> print;
+  [%expect {| {"description":""} |}];
+  doc
+  |> member "paths"
+  |> member "/text"
+  |> member "post"
+  |> member "description"
+  |> print;
+  [%expect {| null |}]
+;;
+
+let%expect_test "text and binary requests allow omitted descriptions" =
+  let doc = Compiled.openapi without_descriptions in
+  let request path =
+    doc |> member "paths" |> member path |> member "post" |> member "requestBody"
+  in
+  request "/text" |> print;
+  [%expect
+    {| {"required":true,"description":"","content":{"text/plain":{"schema":{"type":"string"}}}} |}];
+  request "/binary" |> print;
+  [%expect
+    {| {"required":true,"description":"","content":{"application/octet-stream":{"schema":{"type":"string","format":"binary"}}}} |}]
+;;
+
+let%test_unit "omitted descriptions preserve text and empty response wire behavior" =
+  let send = B.Client.call (Compiled.app without_descriptions) in
+  List.iter
+    [ "/text", "text/plain", "hello"; "/binary", "application/octet-stream", "\000\255" ]
+    ~f:(fun (path, content_type, body) ->
+      let response = send ~headers:[ "content-type", content_type ] ~body `POST path in
+      assert (B.Response.status response = 200);
+      assert (String.equal (B.Response.body response) body);
+      assert (
+        Option.equal
+          String.equal
+          (B.Response.header response "content-type")
+          (Some "text/plain; charset=utf-8")));
+  let response = send `GET "/empty" in
+  assert (B.Response.status response = 204);
+  assert (String.is_empty (B.Response.body response));
+  assert (Option.is_none (B.Response.header response "content-type"))
+;;
+
+let%expect_test "security schemes allow omitted descriptions" =
+  let schemes =
+    [ Security.Scheme.api_key ~name:"Key" ~parameter:"X-Key" ~location:`Header ()
+    ; Security.Scheme.http_bearer ~name:"Bearer" ~bearer_format:"JWT" ()
+    ; Security.Scheme.oauth2_implicit
+        ~name:"OAuth"
+        ~authorization_url:"https://example.com/authorize"
+        ~scopes:[ "read", "Read access" ]
+        ()
+    ]
+  in
+  let context =
+    Guard.v
+      ~security:(List.map schemes ~f:Security.require)
+      ~status:`Unauthorized
+      ~response:(Response.empty ())
+      ~check:(fun _ -> Ok ())
+      ()
+  in
+  let api = compile_exn [ Group.make_with_context ~context [ route "secured" ] ] in
+  let components =
+    Compiled.openapi api |> member "components" |> member "securitySchemes"
+  in
+  components |> member "Key" |> print;
+  [%expect {| {"type":"apiKey","name":"X-Key","in":"header","description":""} |}];
+  components |> member "Bearer" |> print;
+  [%expect {| {"type":"http","scheme":"bearer","bearerFormat":"JWT","description":""} |}];
+  components |> member "OAuth" |> print;
+  [%expect
+    {| {"type":"oauth2","flows":{"implicit":{"authorizationUrl":"https://example.com/authorize","scopes":{"read":"Read access"}}},"description":""} |}]
+;;
+
 let local =
   compile
     [ route "default"

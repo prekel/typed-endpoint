@@ -88,6 +88,12 @@ let%expect_test "responses stay inline while DTO schemas have readable names" =
   [%expect {| null |}]
 ;;
 
+let%expect_test "encoder-only response DTOs forbid additional properties in OpenAPI" =
+  doc |> member "components" |> member "schemas" |> member "Pet" |> print;
+  [%expect
+    {| {"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false} |}]
+;;
+
 let%expect_test "summary and description keep only useful differences" =
   path |> member "get" |> member "description" |> print;
   [%expect {| "Returns a pet" |}];

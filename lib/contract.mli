@@ -99,31 +99,34 @@ module Security : sig
       ; kind : kind
       }
 
-    (** Declares an API key read from [parameter] at [location]. *)
+    (** Declares an API key read from [parameter] at [location]. [description]
+        defaults to the empty string. *)
     val api_key
       :  name:string
       -> parameter:string
       -> location:api_key_location
-      -> description:string
+      -> ?description:string
       -> unit
       -> t
 
     (** Declares an HTTP Bearer authentication scheme. [bearer_format] is only
-        a documentation hint and does not enforce a token representation. *)
+        a documentation hint and does not enforce a token representation.
+        [description] defaults to the empty string. *)
     val http_bearer
       :  name:string
       -> ?bearer_format:string
-      -> description:string
+      -> ?description:string
       -> unit
       -> t
 
     (** Declares the implicit OAuth 2 flow and the complete set of scopes that
-        operation requirements may reference. *)
+        operation requirements may reference. [description] defaults to the
+        empty string. *)
     val oauth2_implicit
       :  name:string
       -> authorization_url:string
       -> scopes:(string * string) list
-      -> description:string
+      -> ?description:string
       -> unit
       -> t
 

@@ -137,7 +137,8 @@ Payload-модули публикуют `t_jsonschema : t Json_schema.t`, где
 - `[@jsonschema.title]` и `[@jsonschema.description]` документируют DTO, поля и
   варианты; `[@jsonschema.attrs]` принимает `title`, `description`, `format`,
   `minimum` и `maximum`;
-- строгие record schemas задаются атрибутами
+- record schemas по умолчанию запрещают дополнительные поля; это можно явно
+  зафиксировать атрибутами
   `[@@jsonschema.disallow_extra_fields]` или `[@jsonschema.disallow_extra_fields]`
   на constructor с inline record;
 - standalone параметры, headers, enum, массивы и dictionaries собираются
@@ -166,7 +167,8 @@ wire type, включая `option` и строковое кодирование 
 аннотации внешнего узла могут переопределять вложенную схему. При наличии
 Yojson-декодера явные `jsonschema.strict` и `allow/disallow_extra_fields` должны
 совпадать с его политикой. Без декодера локальные атрибуты переопределяют
-`jsonschema.strict`, по умолчанию дополнительные поля разрешены.
+`jsonschema.strict`, по умолчанию дополнительные поля запрещены, в том числе
+у DTO только с `to_yojson` и inline-записей вариантов.
 `compact_variants`, `polymorphic_variant_tuple` и строковый `jsonschema.ref`
 удалены: форма вариантов всегда соответствует массивам Yojson, а custom scalar
 получает типизированную `<type>_jsonschema`.

@@ -516,9 +516,7 @@ let configure
        schema_strict
        decoder_strict
    | _ -> ());
-  let strict =
-    Option.value decoder_strict ~default:(Option.value strict ~default:false)
-  in
+  let strict = Option.value decoder_strict ~default:(Option.value strict ~default:true) in
   let check ~loc allow disallow =
     ignore (resolve_additional_properties ~loc ~strict ~decoder_strict ~allow ~disallow)
   in

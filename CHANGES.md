@@ -2,6 +2,19 @@
 
 ## Не выпущено
 
+## 0.4.1 — 2026-10-21
+
+- `description` стал необязательным у `Response.text`, `Response.empty`,
+  `Request.text`, `Request.binary`, `Security.Scheme.*`, `Group.make` и
+  `Group.make_with_context`. По умолчанию используется пустая строка;
+  обязательное поле описания ответа в OpenAPI сохраняется.
+- PPX-схемы записей без Yojson-декодера теперь по умолчанию запрещают
+  дополнительные поля (`additionalProperties: false`), включая DTO только с
+  `to_yojson` и inline-записи вариантов. Swagger больше не добавляет к их
+  примерам `AdditionalProp1`. `yojson { strict = false }` и явные настройки
+  standalone-схем сохраняют возможность разрешить дополнительные поля;
+  runtime-кодеки не меняются.
+
 ## 0.4.0 — 2026-10-21
 
 - **Несовместимое изменение API:** `jsonschema` требует в той же группе

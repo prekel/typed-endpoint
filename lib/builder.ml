@@ -730,11 +730,11 @@ module Make (B : Backend.S) = struct
       Payload { payload = Json (module P); metadata }
     ;;
 
-    let text ~description () : string t =
+    let text ?(description = "") () : string t =
       Payload { payload = PlainText; metadata = Documentation.v ~description () }
     ;;
 
-    let empty ~description () : unit t =
+    let empty ?(description = "") () : unit t =
       Payload { payload = Empty; metadata = Documentation.v ~description () }
     ;;
 
@@ -861,13 +861,13 @@ module Make (B : Backend.S) = struct
         }
     ;;
 
-    let text ?(max_body_bytes = default_max_body_bytes) ~description ()
+    let text ?(max_body_bytes = default_max_body_bytes) ?(description = "") ()
       : string Request_body.t t
       =
       PlainText { metadata = Documentation.v ~description (); max_body_bytes }
     ;;
 
-    let binary ?(max_body_bytes = default_max_body_bytes) ~description ()
+    let binary ?(max_body_bytes = default_max_body_bytes) ?(description = "") ()
       : string Request_body.t t
       =
       Binary { metadata = Documentation.v ~description (); max_body_bytes }
@@ -1610,7 +1610,7 @@ module Make (B : Backend.S) = struct
       { prefix; metadata; routes; decode_error }
     ;;
 
-    let make ?prefix ?decode_error ?summary ?tags ?deprecated ~description routes =
+    let make ?prefix ?decode_error ?summary ?tags ?deprecated ?(description = "") routes =
       v
         ?prefix
         ?decode_error
@@ -1629,7 +1629,7 @@ module Make (B : Backend.S) = struct
           ?summary
           ?tags
           ?deprecated
-          ~description
+          ?(description = "")
           ~context
           routes
       =

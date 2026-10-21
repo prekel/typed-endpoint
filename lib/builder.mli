@@ -40,31 +40,34 @@ module Security : sig
       ; kind : kind
       }
 
-    (** Declares an API key read from [parameter] at [location]. *)
+    (** Declares an API key read from [parameter] at [location]. [description]
+        defaults to the empty string. *)
     val api_key
       :  name:string
       -> parameter:string
       -> location:api_key_location
-      -> description:string
+      -> ?description:string
       -> unit
       -> t
 
     (** Declares an HTTP Bearer authentication scheme. [bearer_format] is only
-        a documentation hint and does not enforce a token representation. *)
+        a documentation hint and does not enforce a token representation.
+        [description] defaults to the empty string. *)
     val http_bearer
       :  name:string
       -> ?bearer_format:string
-      -> description:string
+      -> ?description:string
       -> unit
       -> t
 
     (** Declares the implicit OAuth 2 flow and the complete set of scopes that
-        operation requirements may reference. *)
+        operation requirements may reference. [description] defaults to the
+        empty string. *)
     val oauth2_implicit
       :  name:string
       -> authorization_url:string
       -> scopes:(string * string) list
-      -> description:string
+      -> ?description:string
       -> unit
       -> t
   end
@@ -698,19 +701,21 @@ module Make (B : Backend.S) : sig
       -> (module Request_payload.S with type t = 'a)
       -> 'a Request_body.t t
 
-    (** A text body requiring [Content-Type: text/plain] when read. *)
+    (** A text body requiring [Content-Type: text/plain] when read.
+        [description] defaults to the empty string. *)
     val text
       :  ?max_body_bytes:int
-      -> description:string
+      -> ?description:string
       -> unit
       -> string Request_body.t t
 
     (** An opaque byte string requiring
             [Content-Type: application/octet-stream] when read. The backend
-            enforces [max_body_bytes] before returning the body. *)
+            enforces [max_body_bytes] before returning the body. [description]
+            defaults to the empty string. *)
     val binary
       :  ?max_body_bytes:int
-      -> description:string
+      -> ?description:string
       -> unit
       -> string Request_body.t t
   end
@@ -732,11 +737,14 @@ module Make (B : Backend.S) : sig
         and runtime encoder are unchanged. *)
     val json : ?description:string -> (module Response_payload.S with type t = 'a) -> 'a t
 
-    (** Declares a [text/plain] response. *)
-    val text : description:string -> unit -> string t
+    (** Declares a [text/plain] response. [description] defaults to the empty
+        string, which is retained in the required OpenAPI response field. *)
+    val text : ?description:string -> unit -> string t
 
-    (** Declares a body-less response, for example a [`No_content] case. *)
-    val empty : description:string -> unit -> unit t
+    (** Declares a body-less response, for example a [`No_content] case.
+        [description] defaults to the empty string, which is retained in the
+        required OpenAPI response field. *)
+    val empty : ?description:string -> unit -> unit t
 
     (** Adds one required or optional typed header. The resulting response
             value is [(header, body)]; multiple calls nest pairs from the
@@ -914,14 +922,15 @@ module Make (B : Backend.S) : sig
     (** Creates a group of runtime-only routes from {!Unsafe.route} with shared
         metadata. Typed endpoints use {!make_with_context}. [decode_error]
             overrides the application policy for fallible routes unless an
-            endpoint supplies its own policy. *)
+            endpoint supplies its own policy. [description] defaults to the
+            empty string. *)
     val make
       :  ?prefix:string list
       -> ?decode_error:Decode_error_response.t
       -> ?summary:string
       -> ?tags:string list
       -> ?deprecated:bool
-      -> description:string
+      -> ?description:string
       -> route list
       -> t
 
@@ -933,14 +942,15 @@ module Make (B : Backend.S) : sig
             context is resolved only for the
             matched route, and its guard responses and security requirements
             are emitted on every attached OpenAPI operation. Split routes into
-            multiple groups when they need different authorization policies. *)
+            multiple groups when they need different authorization policies.
+            [description] defaults to the empty string. *)
     val make_with_context
       :  ?prefix:string list
       -> ?decode_error:Decode_error_response.t
       -> ?summary:string
       -> ?tags:string list
       -> ?deprecated:bool
-      -> description:string
+      -> ?description:string
       -> context:'context Context.t
       -> 'context route list
       -> t

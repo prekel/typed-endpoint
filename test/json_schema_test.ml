@@ -150,8 +150,7 @@ module Ppx_phantom_holder = struct
 end
 
 module Ppx_yojson_permissive = struct
-  type t = { value : int }
-  [@@deriving yojson { strict = false }, jsonschema { strict = false }]
+  type t = { value : int } [@@deriving yojson { strict = false }, jsonschema]
 end
 
 module Ppx_yojson_default_strict = struct
@@ -160,6 +159,11 @@ end
 
 module Ppx_default_record = struct
   type t = { value : int } [@@deriving jsonschema { no_yojson = true }]
+end
+
+module Ppx_response_only = struct
+  type t = { value : int } [@@deriving to_yojson, jsonschema]
+  type inline = Value of { value : int } [@@deriving to_yojson, jsonschema]
 end
 
 module Ppx_disallow_extra_fields = struct
@@ -180,7 +184,7 @@ end
 module Ppx_inline_record_extra_fields = struct
   type t =
     | Strict of { value : int } [@jsonschema.disallow_extra_fields]
-    | Permissive of { value : int }
+    | Permissive of { value : int } [@jsonschema.allow_extra_fields]
   [@@deriving jsonschema { no_yojson = true }]
 end
 
@@ -529,7 +533,7 @@ let%expect_test "mixed schema parameters retain known record structure" =
       "type": "object",
       "properties": { "value": true },
       "required": [ "value" ],
-      "additionalProperties": true
+      "additionalProperties": false
     }
     |}]
 ;;
@@ -542,7 +546,7 @@ let%expect_test "generic collections retain array structure" =
       "type": "object",
       "properties": { "items": { "type": "array", "items": true } },
       "required": [ "items" ],
-      "additionalProperties": true
+      "additionalProperties": false
     }
     |}]
 ;;
@@ -633,7 +637,7 @@ let%test "Yojson strict false decoder ignores extra fields" =
   | _ -> false
 ;;
 
-let%expect_test "record schemas allow extra fields by default" =
+let%expect_test "standalone record schemas reject extra fields by default" =
   Ppx_default_record.t_jsonschema |> print_schema;
   [%expect
     {|
@@ -641,12 +645,44 @@ let%expect_test "record schemas allow extra fields by default" =
       "type": "object",
       "properties": { "value": { "type": "integer" } },
       "required": [ "value" ],
-      "additionalProperties": true
+      "additionalProperties": false
     }
     |}]
 ;;
 
-let%expect_test "disallow_extra_fields opts a record into strict mode" =
+let%expect_test "encoder-only record schemas reject extra fields by default" =
+  Ppx_response_only.t_jsonschema |> print_schema;
+  [%expect
+    {|
+    {
+      "type": "object",
+      "properties": { "value": { "type": "integer" } },
+      "required": [ "value" ],
+      "additionalProperties": false
+    }
+    |}];
+  let inline_record =
+    Json_schema.to_yojson Ppx_response_only.inline_jsonschema
+    |> Yojson.Safe.Util.member "anyOf"
+    |> Yojson.Safe.Util.to_list
+    |> List.hd_exn
+    |> Yojson.Safe.Util.member "prefixItems"
+    |> Yojson.Safe.Util.to_list
+    |> fun items -> List.nth_exn items 1
+  in
+  inline_record |> Yojson.Safe.pretty_to_string |> Stdlib.print_endline;
+  [%expect
+    {|
+    {
+      "type": "object",
+      "properties": { "value": { "type": "integer" } },
+      "required": [ "value" ],
+      "additionalProperties": false
+    }
+    |}]
+;;
+
+let%expect_test "disallow_extra_fields preserves closed record schemas" =
   Ppx_disallow_extra_fields.t_jsonschema |> print_schema;
   [%expect
     {|
@@ -672,7 +708,7 @@ let%expect_test "allow_extra_fields overrides standalone strict mode" =
     |}]
 ;;
 
-let%expect_test "strict option can opt all records into strict mode" =
+let%expect_test "explicit strict option preserves closed record schemas" =
   Ppx_strict_option.t_jsonschema |> print_schema;
   [%expect
     {|
@@ -775,7 +811,7 @@ let%expect_test "title works on a type and a field" =
       "type": "object",
       "properties": { "name": { "title": "Display name", "type": "string" } },
       "required": [ "name" ],
-      "additionalProperties": true
+      "additionalProperties": false
     }
     |}]
 ;;
@@ -794,7 +830,7 @@ let%expect_test "jsonschema.attrs accepts title and description" =
         }
       },
       "required": [ "name" ],
-      "additionalProperties": true
+      "additionalProperties": false
     }
     |}]
 ;;

@@ -53,7 +53,8 @@ let t_jsonschema =
 дополнительные поля запрещены, а `yojson { strict = false }` разрешает их.
 Явные `jsonschema.strict` и `allow/disallow_extra_fields` при наличии декодера
 должны совпадать с его настройками, иначе PPX выдаёт ошибку.
-Без Yojson-декодера схема записи по умолчанию допускает дополнительные поля;
+Без Yojson-декодера схема записи тоже запрещает дополнительные поля по умолчанию,
+включая DTO только с `to_yojson` и inline-записи вариантов;
 локальные `allow/disallow_extra_fields` переопределяют `jsonschema.strict`.
 Чтобы запретить их явно, укажите `[@@jsonschema.disallow_extra_fields]`;
 для inline-записи внутри варианта задайте `[@jsonschema.disallow_extra_fields]` на конструкторе.

@@ -62,15 +62,15 @@ module Security = struct
       ; kind : kind
       }
 
-    let api_key ~name ~parameter ~location ~description () =
+    let api_key ~name ~parameter ~location ?(description = "") () =
       { name; description; kind = Api_key { parameter; location } }
     ;;
 
-    let http_bearer ~name ?bearer_format ~description () =
+    let http_bearer ~name ?bearer_format ?(description = "") () =
       { name; description; kind = Http_bearer { bearer_format } }
     ;;
 
-    let oauth2_implicit ~name ~authorization_url ~scopes ~description () =
+    let oauth2_implicit ~name ~authorization_url ~scopes ?(description = "") () =
       { name; description; kind = Oauth2_implicit { authorization_url; scopes } }
     ;;
 

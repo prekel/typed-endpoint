@@ -44,13 +44,15 @@ type schema_only = string [@@deriving jsonschema { no_yojson = true }]
 с конкретными полями или задайте схему вручную. Ручные схемы параметризованных
 типов тоже должны экспортировать `<type>_jsonschema` как значение.
 
+PPX-схемы записей, включая inline records вариантов и DTO только с `to_yojson`,
+по умолчанию запрещают дополнительные поля (`additionalProperties: false`).
 Если вместе с `jsonschema` выводится Yojson-декодер (`yojson` или `of_yojson`),
 политика `additionalProperties` берётся из его `strict`, включая значение по
 умолчанию Yojson (`true`). Поэтому `yojson { strict = false }` разрешает
 дополнительные поля и в схеме. Настройка `jsonschema { strict = ... }`
-используется самостоятельно, когда Yojson-декодер не выводится. При наличии
-декодера явные настройки схемы должны совпадать с ним: противоречащие `strict`
-и `allow/disallow_extra_fields` отклоняются. Без декодера локальные
+используется самостоятельно, когда Yojson-декодер не выводится, и по умолчанию
+равна `true`. При наличии декодера явные настройки схемы должны совпадать с ним:
+противоречащие `strict` и `allow/disallow_extra_fields` отклоняются. Без декодера локальные
 `allow/disallow_extra_fields` переопределяют `jsonschema.strict`.
 
 Аннотации `key`, `name`, `default` и `encoding` общие для Yojson и схемы;
@@ -357,6 +359,10 @@ response components с хешами не создаются. Анонимные 
 совпадающий с summary, опускаются. `default`, примеры, ограничения и области
 ссылок сохраняются. У генератора один читаемый формат без режима Compact.
 
+`description` необязателен у ответов, запросов, security schemes и групп
+маршрутов. У `Response.text`, `Response.empty`, `Request.text`, `Request.binary`,
+`Security.Scheme.*` и `Group.make*` он по умолчанию равен пустой строке.
+Обязательное поле `description` в OpenAPI-ответе сохраняется даже для пустой строки.
 Описание конкретного JSON-ответа можно переопределить без изменения DTO:
 
 ```ocaml
@@ -406,7 +412,7 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 ## Установка из GitHub
 
 Пакеты находятся в одном репозитории и требуют одинаковую версию.
-Скрипт ниже устанавливает текущий релиз `v0.4.0`, а если пакеты уже установлены —
+Скрипт ниже устанавливает текущий релиз `v0.4.1`, а если пакеты уже установлены —
 обновляет их до этой версии, предварительно заменяя существующие pin.
 Для установки всех пакетов нужен switch OCaml 5.1.1 или новее:
 
@@ -421,7 +427,7 @@ typed_endpoint_packages=(
   typed-endpoint-eio
 )
 for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.4.0'
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.4.1'
 done
 opam install "${typed_endpoint_packages[@]}"
 ```
