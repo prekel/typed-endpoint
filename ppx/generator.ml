@@ -32,22 +32,40 @@ let create_value ~loc name value =
   [%stri let[@warning "-32-39"] [%p value_name_pattern ~loc name] = [%e value]]
 ;;
 
-let wrap_type_params ~loc params body =
-  List.fold_right
-    (fun param body ->
-       let pattern = ppat_var ~loc { txt = param; loc } in
-       let typ = schema_type ~loc (ptyp_var ~loc param) in
-       let pattern = ppat_constraint ~loc pattern typ in
-       [%expr fun [%p pattern] -> [%e body]])
-    params
-    body
+let schema_signature ~loc type_decl =
+  let typ = schema_type ~loc (core_type_of_type_declaration type_decl) in
+  let name = { txt = type_decl.ptype_name.txt ^ "_jsonschema"; loc } in
+  psig_value ~loc (value_description ~loc ~name ~type_:typ ~prim:[])
 ;;
 
-let create_typed_value ~loc type_decl params schema =
-  let typ = core_type_of_type_declaration type_decl in
-  let schema = pexp_constraint ~loc schema (schema_type ~loc typ) in
-  let schema = wrap_type_params ~loc params schema in
-  create_value ~loc type_decl.ptype_name.txt schema
+let create_typed_value ~loc type_decl schema =
+  let typ = schema_type ~loc (core_type_of_type_declaration type_decl) in
+  if List.length type_decl.ptype_params = 0 then
+    create_value ~loc type_decl.ptype_name.txt (pexp_constraint ~loc schema typ)
+  else (
+    let storage =
+      [%stri
+        let ppx_schema =
+          Typed_endpoint.Json_schema.Deriver.polymorphic
+            (Typed_endpoint.Json_schema.pack [%e schema])
+        ;;]
+    in
+    let value =
+      create_value
+        ~loc
+        type_decl.ptype_name.txt
+        (pexp_constraint
+           ~loc
+           [%expr ppx_schema.Typed_endpoint.Json_schema.Deriver.schema]
+           typ)
+    in
+    let module_ =
+      pmod_constraint
+        ~loc
+        (pmod_structure ~loc [ storage; value ])
+        (pmty_signature ~loc [ schema_signature ~loc type_decl ])
+    in
+    [%stri include [%m module_]])
 ;;
 
 let rec schema_of_core_type ~(config : Attrs.config) ?(recursive_types = []) core_type =
@@ -87,37 +105,18 @@ let rec schema_of_core_type ~(config : Attrs.config) ?(recursive_types = []) cor
       Schema.array ~loc t, is_rec
     | _ ->
       (match core_type.ptyp_desc with
-       | Ptyp_var name -> evar ~loc name, false
-       | Ptyp_constr (id, args) ->
+       | Ptyp_var _ -> [%expr Typed_endpoint.Json_schema.Deriver.any], false
+       | Ptyp_constr (id, _) ->
          (match id.txt with
           | Lident name when List.mem name recursive_types ->
             Schema.type_ref ~loc name, true
           | _ ->
-            let results = List.map (schema_of_core_type ~config ~recursive_types) args in
-            let args = List.map fst results in
-            let is_rec = List.exists snd results in
-            let schema = type_constr_conv ~loc id ~f:(fun s -> s ^ "_jsonschema") args in
-            (match is_rec with
-             | true ->
-               ( [%expr
-                   let ppx_dependency_schema = [%e schema] in
-                   let ppx_dependency_defs =
-                     Typed_endpoint.Json_schema.Deriver.definitions ppx_dependency_schema
-                   in
-                   ppx_eds
-                   := !ppx_eds
-                      @ Stdlib.List.filter
-                          (fun (name, _) -> not (Stdlib.List.mem_assoc name !ppx_eds))
-                          ppx_dependency_defs;
-                   Typed_endpoint.Json_schema.Deriver.without_definitions
-                     ppx_dependency_schema]
-               , is_rec )
-             | false ->
-               ( [%expr
-                   Typed_endpoint.Json_schema.Deriver.with_id
-                     [%e schema_id ~namespace:config.schema_namespace ~loc]
-                     [%e schema]]
-               , is_rec )))
+            let schema = type_constr_conv ~loc id ~f:(fun s -> s ^ "_jsonschema") [] in
+            ( [%expr
+                Typed_endpoint.Json_schema.Deriver.with_id
+                  [%e schema_id ~namespace:config.schema_namespace ~loc]
+                  [%e schema]]
+            , false ))
        | Ptyp_tuple types ->
          let results = List.map (schema_of_core_type ~config ~recursive_types) types in
          let ts = List.map fst results in
@@ -324,11 +323,10 @@ let schema_of_variants ~loc ~(config : Attrs.config) ?(recursive_types = []) var
 
 let schema_of_type_decl ~loc ~(config : Attrs.config) ~recursive_types type_decl =
   let type_name = type_decl.ptype_name.txt in
-  let params = List.map (fun tp -> (get_type_param_name tp).txt) type_decl.ptype_params in
   match type_decl.ptype_kind with
   | Ptype_variant variants ->
     let schema, is_rec = schema_of_variants ~loc ~config ~recursive_types variants in
-    type_name, schema, is_rec, params
+    type_name, schema, is_rec
   | Ptype_record label_declarations ->
     let additional_properties =
       Attrs.resolve_additional_properties
@@ -350,18 +348,18 @@ let schema_of_type_decl ~loc ~(config : Attrs.config) ~recursive_types type_decl
         label_declarations
         additional_properties
     in
-    type_name, schema, is_rec, params
+    type_name, schema, is_rec
   | Ptype_abstract ->
     (match type_decl.ptype_manifest with
      | Some core_type ->
        let schema, is_rec = schema_of_core_type ~config ~recursive_types core_type in
-       type_name, schema, is_rec, params
+       type_name, schema, is_rec
      | None ->
        let msg = "typed-endpoint-ppx: abstract type without manifest" in
-       type_name, [%expr [%ocaml.error [%e estring ~loc msg]]], false, params)
+       type_name, [%expr [%ocaml.error [%e estring ~loc msg]]], false)
   | Ptype_open ->
     let msg = "typed-endpoint-ppx: open types not supported" in
-    type_name, [%expr [%ocaml.error [%e estring ~loc msg]]], false, params
+    type_name, [%expr [%ocaml.error [%e estring ~loc msg]]], false
 ;;
 
 let apply_defs ~loc = function
@@ -409,7 +407,9 @@ let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
       strict
       (Code_path.fully_qualified_path (Expansion_context.Deriver.code_path ctxt))
   in
-  match ast with
+  let rec_flag, type_decls = ast in
+  let type_decls = List.map name_type_params_in_td type_decls in
+  match rec_flag, type_decls with
   | rec_flag, [ type_decl ] ->
     let type_name = type_decl.ptype_name.txt in
     let recursive_types =
@@ -417,7 +417,7 @@ let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
       | Recursive -> [ type_name ]
       | Nonrecursive -> []
     in
-    let _, raw_schema, is_rec, params =
+    let _, raw_schema, is_rec =
       schema_of_type_decl ~loc ~config ~recursive_types type_decl
     in
     let raw_schema =
@@ -439,7 +439,7 @@ let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
           let ppx_eds = ref [] in
           [%e apply_defs ~loc (`NonRec raw_schema)]]
     in
-    [ create_typed_value ~loc type_decl params schema ]
+    [ create_typed_value ~loc type_decl schema ]
   | rec_flag, type_decls when List.length type_decls > 1 ->
     let recursive_types =
       match rec_flag with
@@ -449,9 +449,7 @@ let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
     let raw_results =
       List.map
         (fun td ->
-           let name, raw, is_rec, params =
-             schema_of_type_decl ~loc ~config ~recursive_types td
-           in
+           let name, raw, is_rec = schema_of_type_decl ~loc ~config ~recursive_types td in
            let raw =
              Schema.Annotation.type_declaration
                ~loc:td.ptype_loc
@@ -459,17 +457,17 @@ let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
                td
                raw
            in
-           name, raw, is_rec, params)
+           name, raw, is_rec)
         type_decls
     in
-    let any_recursive = List.exists (fun (_, _, is_rec, _) -> is_rec) raw_results in
+    let any_recursive = List.exists (fun (_, _, is_rec) -> is_rec) raw_results in
     if any_recursive then
       List.map
-        (fun (name, _, _, params) ->
+        (fun (name, _, _) ->
            let td =
              List.find (fun td -> String.equal td.ptype_name.txt name) type_decls
            in
-           let defs = List.map (fun (name, raw, _, _) -> name, raw) raw_results in
+           let defs = List.map (fun (name, raw, _) -> name, raw) raw_results in
            let schema =
              [%expr
                let ppx_eds = ref [] in
@@ -477,11 +475,11 @@ let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
                  [%e schema_id ~namespace:config.schema_namespace ~loc:td.ptype_loc]
                  [%e apply_defs ~loc (`Rec (name, defs))]]
            in
-           create_typed_value ~loc td params schema)
+           create_typed_value ~loc td schema)
         raw_results
     else
       List.map
-        (fun (name, raw, _, params) ->
+        (fun (name, raw, _) ->
            let td =
              List.find (fun td -> String.equal td.ptype_name.txt name) type_decls
            in
@@ -490,7 +488,7 @@ let str_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
                let ppx_eds = ref [] in
                [%e apply_defs ~loc (`NonRec raw)]]
            in
-           create_typed_value ~loc td params schema)
+           create_typed_value ~loc td schema)
         raw_results
   | _, _ -> [%str [%ocaml.error "typed-endpoint-ppx: unsupported type"]]
 ;;
@@ -506,25 +504,10 @@ let sig_type_decl ~ctxt ast removed_tuple_flag flag_ocaml_doc strict =
       strict
       (Code_path.fully_qualified_path (Expansion_context.Deriver.code_path ctxt))
   in
-  match ast with
-  | _, [ td ] ->
-    let typ =
-      combinator_type_of_type_declaration td ~f:(fun ~loc core_type ->
-        schema_type ~loc core_type)
-    in
-    let name = { txt = td.ptype_name.txt ^ "_jsonschema"; loc } in
-    [ psig_value ~loc (value_description ~loc ~name ~type_:typ ~prim:[]) ]
-  | _, type_decls when List.length type_decls > 1 ->
-    List.map
-      (fun td ->
-         let typ =
-           combinator_type_of_type_declaration td ~f:(fun ~loc core_type ->
-             schema_type ~loc core_type)
-         in
-         let name = { txt = td.ptype_name.txt ^ "_jsonschema"; loc } in
-         psig_value ~loc (value_description ~loc ~name ~type_:typ ~prim:[]))
-      type_decls
-  | _, _ ->
+  match snd ast with
+  | _ :: _ as type_decls ->
+    List.map (fun td -> schema_signature ~loc (name_type_params_in_td td)) type_decls
+  | [] ->
     let ext = Location.error_extensionf ~loc "typed-endpoint-ppx: unsupported type" in
     [ psig_extension ~loc ext [] ]
 ;;

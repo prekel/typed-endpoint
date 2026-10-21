@@ -772,6 +772,20 @@ let nullable schema =
 ;;
 
 module Deriver = struct
+  type polymorphic = { schema : 'a. 'a t }
+
+  let polymorphic (Pack schema) =
+    { schema =
+        { value = schema.value
+        ; schema_name = schema.schema_name
+        ; description = schema.description
+        ; tags = schema.tags
+        }
+    }
+  ;;
+
+  let any = create (`Bool true)
+
   type schema_type =
     | Array
     | Boolean

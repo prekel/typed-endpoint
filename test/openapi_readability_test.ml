@@ -171,3 +171,51 @@ let%expect_test
   schema "/pets" |> print;
   [%expect {| {"$ref":"#/components/schemas/Pets"} |}]
 ;;
+
+module Generic_payload = struct
+  type 'a box = { value : 'a } [@@deriving yojson, jsonschema]
+  type t = int box [@@deriving yojson, jsonschema]
+end
+
+let%expect_test "generic schema constants preserve OpenAPI and codec behavior" =
+  let route =
+    post / "generic"
+    |> documented
+    |> accepts (Request.json (module Generic_payload))
+    |> returns (case `OK (Response.json (module Generic_payload)))
+    ==> fun ok () body ->
+    let open Io.Let_syntax in
+    let%bind result = Request_body.read body in
+    match result with
+    | Ok value -> respond ok value
+    | Error error -> Request_body.reject error
+  in
+  let api = compiled [ route ] in
+  let operation =
+    Compiled.openapi api |> member "paths" |> member "/generic" |> member "post"
+  in
+  let field_schema content =
+    content
+    |> member "content"
+    |> member "application/json"
+    |> member "schema"
+    |> member "properties"
+    |> member "value"
+  in
+  operation |> member "requestBody" |> field_schema |> print;
+  [%expect {| true |}];
+  operation |> member "responses" |> member "200" |> field_schema |> print;
+  [%expect {| true |}];
+  let call body =
+    B.Client.call
+      ~headers:[ "Content-Type", "application/json" ]
+      ~body
+      (Compiled.app api)
+      `POST
+      "/generic"
+  in
+  let response = call {|{"value":42}|} in
+  assert (B.Response.status response = 200);
+  assert (String.equal (B.Response.body response) {|{"value":42}|});
+  assert (B.Response.status (call {|{"value":"wrong"}|}) = 400)
+;;

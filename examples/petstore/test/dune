@@ -2,6 +2,7 @@
 
 (test
  (name app_test)
+ (modules app_test)
  (package typed-endpoint-testing)
  (libraries
   base
@@ -13,31 +14,37 @@
 
 (test
  (name wire_contract_test)
+ (modules wire_contract_test)
  (package typed-endpoint-testing)
  (libraries base petstore_app typed-endpoint-testing yojson))
 
 (test
  (name pet_service_test)
+ (modules pet_service_test)
  (package typed-endpoint-testing)
  (libraries base petstore_app))
 
 (test
  (name order_user_service_test)
+ (modules order_user_service_test)
  (package typed-endpoint-testing)
  (libraries base petstore_app))
 
 (test
  (name database_memory_test)
+ (modules database_memory_test)
  (package typed-endpoint-testing)
  (libraries base petstore_app))
 
 (test
  (name session_test)
+ (modules session_test)
  (package typed-endpoint-testing)
  (libraries base petstore_app typed-endpoint-testing yojson unix))
 
 (test
  (name user_access_test)
+ (modules user_access_test)
  (package typed-endpoint-testing)
  (libraries
   base

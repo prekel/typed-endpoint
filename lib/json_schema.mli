@@ -361,6 +361,20 @@ val with_extension : name:string -> value:Yojson.Safe.t -> 'a t -> 'a t
     generated code must tie these to the source OCaml type. Handwritten schemas
     should prefer the checked constructors above. *)
 module Deriver : sig
+  (** An immutable schema with a universally quantified type index. Generated
+      code projects [schema] through a stable binding to generalize schema
+      constants even when the DTO has invariant type parameters. *)
+  type polymorphic = { schema : 'a. 'a t }
+
+  (** Erases the index while preserving the schema and all metadata. This is
+      only for derived schemas whose type parameters have already been replaced
+      with unrestricted JSON schemas; the generated binding must constrain the
+      projected value to the declared DTO type. *)
+  val polymorphic : packed -> polymorphic
+
+  (** An unrestricted schema for a type parameter whose codec is unknown. *)
+  val any : 'a t
+
   (** Primitive JSON Schema types used by the generated schema builders. *)
   type schema_type =
     | Array

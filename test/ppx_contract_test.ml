@@ -61,9 +61,11 @@ let () =
 open! Base
 module A = struct
   type 'a node = { value : 'a; next : 'a node option } [@@deriving jsonschema]
+  type _ phantom = { count : int } [@@deriving jsonschema]
 end
 module B = struct
   type 'a node = { value : 'a; next : 'a node option } [@@deriving jsonschema]
+  type _ phantom = { count : int } [@@deriving jsonschema]
 end
 |}
       in
@@ -205,6 +207,18 @@ end
       in
       if compile good_formats <> 0 then
         Stdlib.failwith ("valid formats failed typing: " ^ read (bad_output ^ ".log"));
+      List.iter
+        [ {|type _ t = { value : int } [@@deriving jsonschema]
+            type other = { value : int }
+            let _ : other Typed_endpoint.Json_schema.t = t_jsonschema|}
+        ; {|type (_, 'a, _) t = { value : 'a } [@@deriving jsonschema]
+            let _ : int Typed_endpoint.Json_schema.t = t_jsonschema|}
+        ]
+        ~f:(fun fixture ->
+          if compile fixture = 0 then
+            Stdlib.failwith ("expected schema constant type rejection: " ^ fixture);
+          let actual = read (bad_output ^ ".log") in
+          assert (String.is_substring actual ~substring:"not compatible"));
       List.iter
         [ {|type t = string [@@jsonschema.format `Date_tiem] [@@deriving jsonschema]|}
         ; {|type t = string [@@jsonschema.format `Int64] [@@deriving jsonschema]|}

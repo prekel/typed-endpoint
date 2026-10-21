@@ -91,7 +91,32 @@ module Ppx_wire_annotations = struct
 end
 
 module Ppx_generic = struct
-  type 'a t = { value : 'a } [@@deriving jsonschema]
+  type 'a t = { value : 'a } [@@deriving yojson, jsonschema]
+end
+
+module Ppx_generic_collections = struct
+  type 'a t = { items : 'a list } [@@deriving jsonschema]
+end
+
+module Ppx_generic_holder = struct
+  type t = { item : int Ppx_generic.t } [@@deriving yojson, jsonschema]
+end
+
+module Ppx_phantom = struct
+  type _ t = { value : int } [@@deriving yojson, jsonschema]
+end
+
+module Ppx_phantom_recursive_group = struct
+  type _ node =
+    { value : int
+    ; next : unit link option
+    }
+
+  and _ link = { previous : unit node option } [@@deriving jsonschema]
+end
+
+module Ppx_phantom_holder = struct
+  type t = { item : string Ppx_phantom.t } [@@deriving jsonschema]
 end
 
 module Ppx_yojson_permissive = struct
@@ -379,17 +404,114 @@ let%expect_test "Yojson wire annotations produce matching schema" =
     |}]
 ;;
 
-let%expect_test "generic schema is parameterized by its type" =
-  Ppx_generic.t_jsonschema (Json_schema.integer ()) |> print_schema;
+let%expect_test "generic schema constants describe type variables as arbitrary JSON" =
+  let int_schema : int Ppx_generic.t Json_schema.t = Ppx_generic.t_jsonschema in
+  let string_schema : string Ppx_generic.t Json_schema.t = Ppx_generic.t_jsonschema in
+  assert (Json_schema.equal int_schema string_schema);
+  print_schema int_schema;
+  [%expect
+    {|
+    {
+      "type": "object",
+      "properties": { "value": true },
+      "required": [ "value" ],
+      "additionalProperties": false
+    }
+    |}]
+;;
+
+let%expect_test "anonymous schema parameters do not change record fields" =
+  let int_schema : int Ppx_phantom.t Json_schema.t = Ppx_phantom.t_jsonschema in
+  let string_schema : string Ppx_phantom.t Json_schema.t = Ppx_phantom.t_jsonschema in
+  assert (Json_schema.equal int_schema string_schema);
+  print_schema int_schema;
   [%expect
     {|
     {
       "type": "object",
       "properties": { "value": { "type": "integer" } },
       "required": [ "value" ],
+      "additionalProperties": false
+    }
+    |}]
+;;
+
+let%expect_test "mixed schema parameters retain known record structure" =
+  print_schema Typed_schema_signature.mixed_schema;
+  [%expect
+    {|
+    {
+      "type": "object",
+      "properties": { "value": true },
+      "required": [ "value" ],
       "additionalProperties": true
     }
     |}]
+;;
+
+let%expect_test "generic collections retain array structure" =
+  print_schema Ppx_generic_collections.t_jsonschema;
+  [%expect
+    {|
+    {
+      "type": "object",
+      "properties": { "items": { "type": "array", "items": true } },
+      "required": [ "items" ],
+      "additionalProperties": true
+    }
+    |}]
+;;
+
+let%expect_test "concrete type arguments do not specialize generic schema constants" =
+  print_schema Ppx_generic_holder.t_jsonschema;
+  [%expect
+    {|
+    {
+      "type": "object",
+      "properties": {
+        "item": {
+          "type": "object",
+          "properties": { "value": true },
+          "required": [ "value" ],
+          "additionalProperties": false
+        }
+      },
+      "required": [ "item" ],
+      "additionalProperties": false
+    }
+    |}]
+;;
+
+let%expect_test "anonymous schema parameters work across modules in record fields" =
+  let schema = Json_schema.to_yojson Ppx_phantom_holder.t_jsonschema in
+  Yojson.Safe.Util.(schema |> member "properties" |> member "item" |> member "properties")
+  |> Yojson.Safe.pretty_to_string
+  |> Stdlib.print_endline;
+  [%expect {| { "value": { "type": "integer" } } |}]
+;;
+
+let%test_unit "anonymous schema parameters work in declaration groups" =
+  let module S = Typed_schema_signature in
+  assert (
+    Json_schema.equal
+      (S.first_jsonschema : int S.first Json_schema.t)
+      (S.first_jsonschema : string S.first Json_schema.t));
+  assert (
+    Json_schema.equal
+      (S.second_jsonschema : int S.second Json_schema.t)
+      (S.second_jsonschema : string S.second Json_schema.t))
+;;
+
+let%test_unit "anonymous schema parameters work in recursive declaration groups" =
+  let module S = Ppx_phantom_recursive_group in
+  assert (
+    Json_schema.equal
+      (S.node_jsonschema : int S.node Json_schema.t)
+      (S.node_jsonschema : string S.node Json_schema.t));
+  assert (
+    Json_schema.equal
+      (S.link_jsonschema : int S.link Json_schema.t)
+      (S.link_jsonschema : string S.link Json_schema.t))
 ;;
 
 let%expect_test "Yojson strict false permits extra object properties in the schema" =
@@ -928,7 +1050,7 @@ let%test_unit "recursive generic and mutual schemas validate their wire values" 
     assert (Result.is_ok (Jsonschema.validate validator (Yojson.Safe.to_basic value)))
   in
   validate
-    (Generic_recursive.tree_jsonschema (Json_schema.integer ()))
+    Generic_recursive.tree_jsonschema
     (`Assoc
         [ "value", `Int 1
         ; "children", `List [ `Assoc [ "value", `Int 2; "children", `List [] ] ]

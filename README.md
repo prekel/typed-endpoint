@@ -16,6 +16,17 @@ OpenAPI 3.1.
 
 Deriver `typed-endpoint-ppx` перенесён и адаптирован на основе
 [ahrefs/ppx_deriving_jsonschema](https://github.com/ahrefs/ppx_deriving_jsonschema).
+
+`jsonschema` всегда генерирует значение `<type>_jsonschema`, в том числе для
+типов с анонимными (`_`) и именованными (`'a`) параметрами. Например,
+`type 'a t = { value : 'a } [@@deriving jsonschema]` даёт
+`t_jsonschema : 'a t Json_schema.t` без аргументов схемы. Поле `value`
+описывается как произвольный JSON (`true`); `'a list` сохраняет структуру
+массива с произвольными элементами. Подстановка `int t` не уточняет схему
+`value` до `integer`. Для точной схемы конкретного DTO используйте тип
+с конкретными полями или задайте схему вручную. Ручные схемы параметризованных
+типов тоже должны экспортировать `<type>_jsonschema` как значение.
+
 Если вместе с `jsonschema` выводится Yojson-декодер (`yojson` или `of_yojson`),
 политика `additionalProperties` берётся из его `strict`, включая значение по
 умолчанию Yojson (`true`). Поэтому `yojson { strict = false }` разрешает
@@ -344,7 +355,7 @@ Opium использует отдельный шаг mount: `Compiled.app` во�
 ## Установка из GitHub
 
 Пакеты находятся в одном репозитории и требуют одинаковую версию.
-Скрипт ниже устанавливает текущий релиз `v0.3.6`, а если пакеты уже установлены —
+Скрипт ниже устанавливает текущий релиз `v0.3.7`, а если пакеты уже установлены —
 обновляет их до этой версии, предварительно заменяя существующие pin.
 Для установки всех пакетов нужен switch OCaml 5.1.1 или новее:
 
@@ -359,7 +370,7 @@ typed_endpoint_packages=(
   typed-endpoint-eio
 )
 for package in "${typed_endpoint_packages[@]}"; do
-  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.6'
+  opam pin add -yn "$package" 'git+https://github.com/prekel/typed-endpoint.git#v0.3.7'
 done
 opam install "${typed_endpoint_packages[@]}"
 ```
