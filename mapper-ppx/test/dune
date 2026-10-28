@@ -17,3 +17,19 @@
  (libraries base unix)
  (action
   (run %{test} %{exe:driver.exe})))
+
+(library
+ (name mapper_generated_test)
+ (modules generated_test)
+ (optional)
+ (inline_tests)
+ (libraries
+  base
+  yojson
+  typed-endpoint
+  typed-endpoint-mapper
+  typed-endpoint-testing
+  generated_api
+  openapi_example)
+ (preprocess
+  (pps typed-endpoint-mapper-ppx ppx_expect)))
