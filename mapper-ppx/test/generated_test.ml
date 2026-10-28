@@ -96,3 +96,27 @@ let%expect_test "mapping failure does not call application service" =
   Stdlib.Printf.printf "%d calls=%d\n" (B.Response.status response) !calls;
   [%expect {| 400 calls=0 |}]
 ;;
+
+module Handwritten = struct
+  type t =
+    { id : int64 [@encoding `number]
+    ; name : string
+    }
+  [@@deriving yojson, jsonschema]
+end
+
+let code_first = [%mapper fun (source : Domain.t) -> ({ id; name } : Handwritten.t)]
+
+let%expect_test "code-first and contract-first outputs satisfy their schemas" =
+  let domain : Domain.t = { id = 42L; name = "cat" } in
+  let check schema json =
+    let schema = Typed_endpoint.Json_schema.to_yojson schema in
+    match Contract_test_support.validate ~document:schema ~schema json with
+    | Ok () -> Stdlib.print_endline (Yojson.Safe.to_string json)
+    | Error message -> failwith message
+  in
+  check Handwritten.t_jsonschema (Handwritten.to_yojson (code_first domain));
+  [%expect {| {"id":42,"name":"cat"} |}];
+  check Dto.Pet.t_jsonschema (Dto.Pet.to_yojson (of_domain domain));
+  [%expect {| {"id":42,"name":"cat"} |}]
+;;

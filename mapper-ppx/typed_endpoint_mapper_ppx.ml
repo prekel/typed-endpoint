@@ -4,6 +4,37 @@ open Ast_builder.Default
 
 let fail ~loc message = Location.raise_errorf ~loc "mapper: %s" message
 
+let fresh_names expression =
+  let used = ref (Set.empty (module String)) in
+  let visitor =
+    object
+      inherit Ast_traverse.iter as super
+
+      method! expression expression =
+        (match expression.pexp_desc with
+         | Pexp_ident { txt = Lident name; _ } -> used := Set.add !used name
+         | _ -> ());
+        super#expression expression
+
+      method! pattern pattern =
+        (match pattern.ppat_desc with
+         | Ppat_var name -> used := Set.add !used name.txt
+         | _ -> ());
+        super#pattern pattern
+    end
+  in
+  visitor#expression expression;
+  let rec fresh () =
+    let name = gen_symbol ~prefix:"mapper_field" () in
+    if Set.mem !used name then
+      fresh ()
+    else (
+      used := Set.add !used name;
+      name)
+  in
+  fresh
+;;
+
 let expand ~fallible ~loc:_ ~path:_ expression =
   match expression with
   | [%expr fun ([%p? argument] : [%t? source_type]) -> ([%e? body] : [%t? target])] ->
@@ -58,9 +89,9 @@ let expand ~fallible ~loc:_ ~path:_ expression =
         body
       else (
         let loc = body.pexp_loc in
+        let fresh = fresh_names expression in
         let bindings =
-          List.map fields ~f:(fun (label, value) ->
-            label, value, gen_symbol ~prefix:"mapper_field" ())
+          List.map fields ~f:(fun (label, value) -> label, value, fresh ())
         in
         let result =
           pexp_constraint

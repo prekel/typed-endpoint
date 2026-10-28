@@ -169,6 +169,7 @@
   (typed-endpoint-mapper (= :version))
   base
   (ppxlib (>= 0.30.0))
+  (ocamlfind :with-test)
   (ppx_expect :with-test)))
 
 (package

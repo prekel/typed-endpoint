@@ -16,7 +16,10 @@
  (modules compile_test)
  (libraries base unix)
  (action
-  (run %{test} %{exe:driver.exe})))
+  (run
+   %{test}
+   %{exe:driver.exe}
+   %{lib:typed-endpoint-mapper:typed_endpoint_mapper.cmi})))
 
 (library
  (name mapper_generated_test)
@@ -30,6 +33,11 @@
   typed-endpoint-mapper
   typed-endpoint-testing
   generated_api
-  openapi_example)
+  openapi_example
+  contract_test_support)
  (preprocess
-  (pps typed-endpoint-mapper-ppx ppx_expect)))
+  (pps
+   typed-endpoint-mapper-ppx
+   ppx_expect
+   typed-endpoint-ppx
+   ppx_deriving_yojson)))
