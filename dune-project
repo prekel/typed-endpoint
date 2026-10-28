@@ -162,8 +162,8 @@
 
 (package
  (name typed-endpoint-mapper-ppx)
- (synopsis "Explicit type-safe record mapping syntax")
- (description "External record mapping declarations checked by the OCaml compiler.")
+ (synopsis "Type-safe DTO mapping derivers and external declarations")
+ (description "Derives Domain/DTO conversions from record declarations and supports external mappings for generated DTOs, checked by the OCaml compiler.")
  (depends
   (ocaml (>= 4.14.1))
   (typed-endpoint-mapper (= :version))

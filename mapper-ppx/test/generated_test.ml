@@ -97,15 +97,34 @@ let%expect_test "mapping failure does not call application service" =
   [%expect {| 400 calls=0 |}]
 ;;
 
-module Handwritten = struct
+let non_empty_name name =
+  if String.is_empty name then
+    Error (M.Mapping_error.make ~code:"empty_name" ~message:"name is required")
+  else
+    Ok name
+;;
+
+module Handwritten : sig
   type t =
     { id : int64 [@encoding `number]
-    ; name : string
+    ; name : string [@mapper.into.result non_empty_name]
     }
-  [@@deriving yojson, jsonschema]
+  [@@deriving
+    yojson
+  , jsonschema
+  , mapper_from { source = [%type: Domain.t] }
+  , mapper_into { target = [%type: Domain.t]; fallible = true }]
+end = struct
+  type t =
+    { id : int64 [@encoding `number]
+    ; name : string [@mapper.into.result non_empty_name]
+    }
+  [@@deriving
+    yojson
+  , jsonschema
+  , mapper_from { source = [%type: Domain.t] }
+  , mapper_into { target = [%type: Domain.t]; fallible = true }]
 end
-
-let code_first = [%mapper fun (source : Domain.t) -> ({ id; name } : Handwritten.t)]
 
 let%expect_test "code-first and contract-first outputs satisfy their schemas" =
   let domain : Domain.t = { id = 42L; name = "cat" } in
@@ -115,8 +134,75 @@ let%expect_test "code-first and contract-first outputs satisfy their schemas" =
     | Ok () -> Stdlib.print_endline (Yojson.Safe.to_string json)
     | Error message -> failwith message
   in
-  check Handwritten.t_jsonschema (Handwritten.to_yojson (code_first domain));
+  check Handwritten.t_jsonschema (Handwritten.to_yojson (Handwritten.of_domain domain));
   [%expect {| {"id":42,"name":"cat"} |}];
   check Dto.Pet.t_jsonschema (Dto.Pet.to_yojson (of_domain domain));
   [%expect {| {"id":42,"name":"cat"} |}]
+;;
+
+let%expect_test "JSON to derived DTO to application input" =
+  let convert json =
+    match Handwritten.of_yojson (Yojson.Safe.from_string json) with
+    | Error message -> failwith message
+    | Ok dto -> Handwritten.to_domain dto
+  in
+  (match convert "{\"id\":42,\"name\":\"cat\"}" with
+   | Error error -> failwith (M.Mapping_error.to_string error)
+   | Ok (input : Domain.t) -> Stdlib.Printf.printf "%Ld %s\n" input.id input.name);
+  [%expect {| 42 cat |}];
+  (match convert "{\"id\":42,\"name\":\"\"}" with
+   | Ok _ -> assert false
+   | Error error -> Stdlib.print_endline (M.Mapping_error.to_string error));
+  [%expect {| name: empty_name: name is required |}]
+;;
+
+let%expect_test "derived mappers at the HTTP boundary" =
+  let module B = Typed_endpoint_testing in
+  let module E = Typed_endpoint.Make (B) in
+  let open E in
+  let calls = ref 0 in
+  let application (input : Domain.t) =
+    Int.incr calls;
+    input
+  in
+  let route =
+    post / "derived"
+    |> documented ~summary:"Derived mapping"
+    |> accepts (Request.json (module Handwritten))
+    |> returns
+         (case `OK (Response.json (module Handwritten))
+          <|> case `Bad_request (Response.text ()))
+    ==> fun ok bad_request () body ->
+    match Request_body.read body with
+    | Error error -> Request_body.reject error
+    | Ok dto ->
+      (match Handwritten.to_domain dto with
+       | Error error -> respond bad_request (M.Mapping_error.to_string error)
+       | Ok input -> respond ok (Handwritten.of_domain (application input)))
+  in
+  let compiled =
+    compile_exn [ Group.make_with_context ~context:(Context.return ()) [ route ] ]
+  in
+  let call body =
+    let response =
+      B.Client.call
+        (Compiled.app compiled)
+        ~headers:[ "Content-Type", "application/json" ]
+        ~body
+        `POST
+        "/derived"
+    in
+    Stdlib.Printf.printf "%d calls=%d\n" (B.Response.status response) !calls;
+    response
+  in
+  let _ = call "{\"id\":1}" in
+  [%expect {| 400 calls=0 |}];
+  let response = call "{\"id\":1,\"name\":\"\"}" in
+  [%expect {| 400 calls=0 |}];
+  Stdlib.print_endline (B.Response.body response);
+  [%expect {| name: empty_name: name is required |}];
+  let response = call "{\"id\":1,\"name\":\"cat\"}" in
+  [%expect {| 200 calls=1 |}];
+  Stdlib.print_endline (B.Response.body response);
+  [%expect {| {"id":1,"name":"cat"} |}]
 ;;

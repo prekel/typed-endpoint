@@ -1,15 +1,138 @@
 # Преобразования Domain ↔ DTO
 
-`typed-endpoint-mapper-ppx` — необязательный синтаксис для явного сопоставления
-полей записей. `typed-endpoint-mapper` предоставляет чистые конвертеры и ошибки.
+`typed-endpoint-mapper-ppx` автоматически выводит преобразования из рукописных
+DTO через `mapper_from` / `mapper_into`. Для generated DTO и отдельных
+преобразований остаются внешние `[%mapper]` / `[%mapper_result]`. `typed-endpoint-mapper` предоставляет чистые конвертеры и ошибки.
 Оба пакета независимы от HTTP, Yojson, Lwt, базы данных и ядра typed-endpoint.
 API первой версии экспериментальный.
 
-Domain и application работают с доменными типами. Отдельный HTTP mapping-модуль
-зависит от Domain и DTO; controller вызывает его между decoder и application
-service. Для проверки mapper не нужны сервер, Lwt и PostgreSQL.
+Domain и application работают с доменными типами. HTTP-слой владеет DTO и
+преобразованиями: code-first выводит функции в модуле DTO, contract-first
+использует отдельный mapping-модуль. Controller вызывает их между decoder и
+application service. Для проверки mapper не нужны сервер, Lwt и PostgreSQL.
 
-## Подключение и total mapping
+## Code-first: автоматический deriving
+
+Для DTO с codecs и схемой подключите оба независимых PPX:
+
+```lisp
+(library
+ (name entity_http)
+ (libraries base domain typed-endpoint typed-endpoint-mapper)
+ (preprocess
+  (pps ppx_deriving_yojson typed-endpoint-ppx typed-endpoint-mapper-ppx)))
+```
+
+Если поля совпадают, достаточно указать внешний тип:
+
+```ocaml
+module Entity_dto = struct
+  type t = { id : int; name : string }
+  [@@deriving yojson, jsonschema,
+    mapper_from { source = [%type: Domain.Entity.t] }]
+end
+```
+
+Генерируется `Entity_dto.of_domain : Domain.Entity.t -> Entity_dto.t`.
+Поля DTO перечисляются один раз, в объявлении типа. Дополнительные исходные
+поля Domain игнорируются; совместимость `id` и `name` проверяет компилятор.
+
+Для отличающихся представлений задаются только исключения:
+
+```ocaml
+module Entity_dto = struct
+  type t =
+    { id : string [@mapper.from.convert Entity_id.to_string]
+    ; name : string [@mapper.from.field "title"]
+    ; status : Status_dto.t [@mapper.from.convert Status_dto.of_domain]
+    ; display : string
+        [@mapper.from.compute
+          (fun (entity : Domain.Entity.t) -> String.uppercase entity.title)]
+    }
+  [@@deriving yojson, jsonschema,
+    mapper_from { source = [%type: Domain.Entity.t] }]
+end
+```
+
+Эквивалентный mapper:
+
+```ocaml
+let of_domain (source : Domain.Entity.t) : t =
+  { id = Entity_id.to_string source.id
+  ; name = source.title
+  ; status = Status_dto.of_domain source.status
+  ; display = String.uppercase source.title
+  }
+```
+
+Входящие преобразования объявляются независимо:
+
+```ocaml
+module M = Typed_endpoint_mapper
+
+module Create_entity_request = struct
+  let project_id_of_string value =
+    Result.map_error (Project_id.of_string value)
+      ~f:(fun message -> M.Mapping_error.make ~code:"invalid_id" ~message)
+  ;;
+
+  type t =
+    { project_id : string [@mapper.into.result project_id_of_string]
+    ; name : string
+    }
+  [@@deriving yojson, jsonschema,
+    mapper_into
+      { target = [%type: Domain.Create_entity.t]
+      ; fallible = true
+      }]
+end
+```
+
+Результат:
+
+```ocaml
+val to_domain :
+  t -> (Domain.Create_entity.t, Typed_endpoint_mapper.Mapping_error.t) Result.t
+```
+
+Без `fallible = true` генерируется обычная функция `t -> Domain.Create_entity.t`.
+В fallible режиме простые поля и total converters автоматически оборачиваются
+в `Ok`; `result`-конвертер должен возвращать `Mapping_error.t` в ошибке.
+Поля обрабатываются один раз, по порядку объявления; ошибка останавливает
+последующие преобразования. Путь содержит целевое OCaml-имя поля.
+`mapper_from` тоже поддерживает `fallible = true` и `[@mapper.from.result f]`.
+
+| Аннотация | `mapper_from` | `mapper_into` |
+| --- | --- | --- |
+| Нет аннотаций | Копирование одноимённого поля Domain | Копирование поля DTO в одноимённое поле цели |
+| `field "label"` | Другое имя исходного поля | Другое имя целевого поля |
+| `convert f` | Total-функция от исходного поля | Total-функция от поля DTO |
+| `result f` | Fallible-функция от исходного поля | Fallible-функция от поля DTO |
+| `compute f` | Total-функция от всего источника | Не поддерживается |
+| `skip` | Не требуется: проекция задаётся полями DTO | Не включать поле DTO в цель |
+
+Полные имена аннотаций — `mapper.from.*` и `mapper.into.*`. На одном DTO можно
+указать оба deriver и независимые настройки каждого направления. Например,
+вычисленное response-поле отмечается `[@mapper.from.compute f] [@mapper.into.skip]`.
+`compute` нельзя совмещать с `field`, `convert` или `result` того же направления;
+`skip` нельзя совмещать с другими входящими настройками. Два поля не могут
+маппиться в одно целевое поле. `result` без fallible режима отклоняется.
+
+Для `type t` функции называются `of_domain` / `to_domain`; для `type entity` —
+`entity_of_domain` / `entity_to_domain`. `.mli` может выводить те же сигнатуры
+через deriving на полном объявлении записи. Конвертеры могут оставаться
+приватными в `.ml`; их expressions в атрибутах `.mli` не выполняются.
+
+MVP поддерживает непараметризованные публичные records. PPX не раскрывает
+внешний Domain: `mapper_into` строит целевую запись из полей DTO с учётом
+rename/skip. Если цели нужны дополнительные поля, компилятор потребует их;
+для такого преобразования используйте внешний mapper либо обычную функцию
+с явными дополнительными аргументами. Для abstract цели вызывайте публичный
+constructor обычной функцией. Defaults и бизнес-правила не выводятся.
+Вложенные records, option, list и array преобразуются явными функциями,
+например `[@mapper.into.result (M.Converter.list Child.to_domain)]`.
+
+## Contract-first: внешний total mapper
 
 ```lisp
 (library
@@ -59,7 +182,7 @@ scope. Вложенные записи автоматически не пере�
 удалённое используемое поле источника и несовместимые типы обнаружит компилятор.
 Новое неиспользуемое исходное поле не ломает проекцию.
 
-## Result mapping
+## Внешний result mapper
 
 ```ocaml
 module M = Typed_endpoint_mapper
@@ -123,9 +246,9 @@ PPX локально включает warning 9 как ошибку. Новое 
 
 ## Code-first и contract-first
 
-Mapper не требует аннотаций на DTO. Для code-first DTO сохраняют обычные
-`[@@deriving yojson, jsonschema]` и wire-аннотации. Для contract-first модуль
-mapping живёт рядом с controllers и обращается к экспортированным определениям
+Для code-first deriving живёт на рукописном DTO вместе с codecs и схемой.
+Для contract-first внешний mapper не требует аннотаций на generated DTO.
+Модуль mapping живёт рядом с controllers и обращается к экспортированным определениям
 `Generated_api.Dto`:
 
 ```ocaml
@@ -166,5 +289,8 @@ codecs. Это локальное преобразование AST; типы п�
 inverse. Сложный mapper остаётся обычной функцией OCaml и использует те же
 runtime helpers без PPX.
 
-Тесты находятся в `mapper-ppx/test`: небольшие expect-сценарии, compile-positive
-и compile-negative проверки, generated DTO, schema validation и in-memory HTTP.
+Тесты находятся в `mapper-ppx/test`: небольшие expect-сценарии, `.ml/.mli`,
+compile-positive и compile-negative проверки эволюции типов, derived и generated
+DTO, schema validation и in-memory HTTP. Оба способа используют один генератор
+типизированного конструирования records и общие runtime helpers. Ядро,
+HTTP adapters и OpenAPI codegen от mapper не зависят.
