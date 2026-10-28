@@ -7,6 +7,7 @@
   json_schema
   json_schema_typescript_export
   openapi
+  openapi_export
   openapi_normalize
   runtime)
  (libraries base yojson)

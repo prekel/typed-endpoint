@@ -11,9 +11,15 @@ prefix="$work_dir/install"
 mkdir -p "$source_dir"
 
 git ls-files --cached --others --exclude-standard -z \
+  | while IFS= read -r -d '' source_path; do
+      if [[ -e "$source_path" || -L "$source_path" ]]; then
+        printf '%s\0' "$source_path"
+      fi
+    done \
   | tar --create --null --files-from - \
   | tar --extract --directory "$source_dir"
 
+export PATH="$prefix/bin:$PATH"
 export OCAMLPATH="$prefix/lib${OCAMLPATH:+:$OCAMLPATH}"
 
 run_dune() {
@@ -29,8 +35,15 @@ run_dune install --prefix "$prefix" typed-endpoint-testing
 run_dune build -p typed-endpoint-ppx @install
 run_dune install --prefix "$prefix" typed-endpoint-ppx
 
+run_dune build -p typed-endpoint-openapi @install
+run_dune install --prefix "$prefix" typed-endpoint-openapi
+run_dune build -p typed-endpoint-openapi @runtest
+
 run_dune build -p typed-endpoint-testing @install @runtest
 OCAMLPATH="$prefix/lib" opam exec --switch "$switch" -- dune build \
   --root "$source_dir/release-smoke/typed-endpoint" @all
+
+OCAMLPATH="$prefix/lib" opam exec --switch "$switch" -- dune build \
+  --root "$source_dir/release-smoke/typed-endpoint-openapi" @all
 
 printf 'typed-endpoint-testing isolated installation check passed\n'

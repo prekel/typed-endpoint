@@ -1,0 +1,764 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Generated API example",
+    "version": "1"
+  },
+  "paths": {
+    "/pets/{pet_id}": {
+      "get": {
+        "operationId": "getPet",
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "additionalProperties": false,
+                  "x-model-id": "#/components/schemas/Pet",
+                  "x-model-name": "Pet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "additionalProperties": false,
+                  "x-model-id": "#/components/schemas/ApiError",
+                  "x-model-name": "ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "pet_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/pets": {
+      "post": {
+        "operationId": "createPet",
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "additionalProperties": false,
+                  "x-model-id": "#/components/schemas/Pet",
+                  "x-model-name": "Pet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "additionalProperties": false,
+                  "x-model-id": "#/components/schemas/ApiError",
+                  "x-model-name": "ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "expected"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "additionalProperties": false,
+                "x-model-id": "#/components/schemas/Pet",
+                "x-model-name": "Pet"
+              }
+            }
+          },
+          "description": "Pet input"
+        },
+        "deprecated": true
+      }
+    },
+    "/animals": {
+      "post": {
+        "operationId": "echoAnimal",
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "cat"
+                          ]
+                        },
+                        "lives": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "lives"
+                      ],
+                      "additionalProperties": false,
+                      "x-model-id": "#/components/schemas/Cat",
+                      "x-model-name": "Support"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "error"
+                          ]
+                        },
+                        "bark": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "bark"
+                      ],
+                      "additionalProperties": false,
+                      "x-model-id": "#/components/schemas/Dog",
+                      "x-model-name": "Result"
+                    }
+                  ],
+                  "discriminator": {
+                    "propertyName": "kind",
+                    "mapping": {
+                      "cat": "#/components/schemas/Cat",
+                      "error": "#/components/schemas/Dog"
+                    }
+                  },
+                  "x-model-id": "#/components/schemas/Animal",
+                  "x-model-name": "Animal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "additionalProperties": false,
+                  "x-model-id": "#/components/schemas/ApiError",
+                  "x-model-name": "ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "expected"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "cat"
+                        ]
+                      },
+                      "lives": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "lives"
+                    ],
+                    "additionalProperties": false,
+                    "x-model-id": "#/components/schemas/Cat",
+                    "x-model-name": "Support"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "error"
+                        ]
+                      },
+                      "bark": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "bark"
+                    ],
+                    "additionalProperties": false,
+                    "x-model-id": "#/components/schemas/Dog",
+                    "x-model-name": "Result"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "cat": "#/components/schemas/Cat",
+                    "error": "#/components/schemas/Dog"
+                  }
+                },
+                "x-model-id": "#/components/schemas/Animal",
+                "x-model-name": "Animal"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/labels": {
+      "post": {
+        "operationId": "echoLabel",
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ]
+                    }
+                  ],
+                  "x-model-id": "#/components/schemas/Labelled",
+                  "x-model-name": "Labelled"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "additionalProperties": false,
+                  "x-model-id": "#/components/schemas/ApiError",
+                  "x-model-name": "ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "expected"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "label"
+                    ]
+                  }
+                ],
+                "x-model-id": "#/components/schemas/Labelled",
+                "x-model-name": "Labelled"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pets/search": {
+      "get": {
+        "operationId": "searchPets",
+        "parameters": [
+          {
+            "name": "tags",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Repeated tags"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "available",
+                "sold",
+                "ok",
+                "error"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ],
+                    "additionalProperties": false,
+                    "x-model-id": "#/components/schemas/Pet",
+                    "x-model-name": "Pet"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-Count": {
+                "required": true,
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Mode": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "additionalProperties": false,
+                  "x-model-id": "#/components/schemas/ApiError",
+                  "x-model-name": "ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "204": {
+            "description": "Healthy"
+          }
+        }
+      }
+    },
+    "/wire": {
+      "post": {
+        "operationId": "echoWire",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "foo-bar": {
+                    "type": "string"
+                  },
+                  "foo_bar": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "displayName",
+                  "foo-bar",
+                  "foo_bar"
+                ],
+                "additionalProperties": false,
+                "x-model-id": "#/components/schemas/WireCase",
+                "x-model-name": "WireCase"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Echo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "foo-bar": {
+                      "type": "string"
+                    },
+                    "foo_bar": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "displayName",
+                    "foo-bar",
+                    "foo_bar"
+                  ],
+                  "additionalProperties": false,
+                  "x-model-id": "#/components/schemas/WireCase",
+                  "x-model-name": "WireCase"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "additionalProperties": false,
+                  "x-model-id": "#/components/schemas/ApiError",
+                  "x-model-name": "ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "expected": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "expected"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

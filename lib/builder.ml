@@ -4,7 +4,12 @@ module Operation_metadata = Contract.Operation_metadata
 module Documentation = Contract.Documentation
 module Security = Contract.Security
 module Openapi_renderer = Openapi
-module Openapi = Contract.Openapi
+
+module Openapi = struct
+  include Contract.Openapi
+  module Spec_version = Openapi_export.Spec_version
+  module Export_error = Openapi_export.Export_error
+end
 
 module Principal = struct
   type 'identity t =
@@ -991,19 +996,35 @@ module Make (B : Backend.S) = struct
   end
 
   module Decode_error_response = struct
-    type t =
-      | T :
+    type case =
+      | Case :
           { response : 'a Response.t
           ; map : Decode_error.t -> 'a
-          ; description : Status.client_error -> string option
           }
-          -> t
+          -> case
 
-    let json ~payload ~map =
-      T { response = Response.json payload; map; description = (fun _ -> None) }
+    type t =
+      { select : Status.client_error -> case
+      ; description : Status.client_error -> string option
+      }
+
+    let case ~response ~map = Case { response; map }
+
+    let by_status ~bad_request ~request_entity_too_large ~unsupported_media_type =
+      let select = function
+        | `Request_entity_too_large -> request_entity_too_large
+        | `Unsupported_media_type -> unsupported_media_type
+        | _ -> bad_request
+      in
+      { select; description = (fun _ -> None) }
     ;;
 
-    let with_description description (T policy) = T { policy with description }
+    let json ~payload ~map =
+      let response_case = case ~response:(Response.json payload) ~map in
+      { select = (fun _ -> response_case); description = (fun _ -> None) }
+    ;;
+
+    let with_description description policy = { policy with description }
 
     let default =
       json
@@ -1307,9 +1328,13 @@ module Make (B : Backend.S) = struct
     | Body_too_large _ -> `Request_entity_too_large
   ;;
 
-  let render_decode_error_response (Decode_error_response.T policy) error =
-    let status = (status_of_decode_error error :> Status.t) in
-    respond_ok_with_status ~status policy.response (policy.map error)
+  let render_decode_error_response (policy : Decode_error_response.t) error =
+    let status = status_of_decode_error error in
+    let (Decode_error_response.Case selected) = policy.select status in
+    respond_ok_with_status
+      ~status:(status :> Status.t)
+      selected.response
+      (selected.map error)
   ;;
 
   type ('h, 'terminal, 'context, 'req) builder =
@@ -1444,11 +1469,12 @@ module Make (B : Backend.S) = struct
     ;;
 
     let response_specs_of_decode_error
-          (Decode_error_response.T policy)
+          (policy : Decode_error_response.t)
           ~(statuses : Status.client_error list)
       =
       List.map statuses ~f:(fun status ->
-        let payload = response_payload_spec_of_response policy.response in
+        let (Decode_error_response.Case selected) = policy.select status in
+        let payload = response_payload_spec_of_response selected.response in
         let payload =
           match policy.description status with
           | None -> payload
@@ -1721,6 +1747,10 @@ module Make (B : Backend.S) = struct
 
     let openapi ?(config = Openapi.Config.default) compiled =
       Openapi_renderer.render ~config compiled.contract
+    ;;
+
+    let export_openapi ?config ~spec_version compiled =
+      Openapi_export.document ~spec_version (openapi ?config compiled)
     ;;
   end
 

@@ -141,3 +141,21 @@
   yojson)
  (tags
   (http routing openapi eio)))
+
+(package
+ (name typed-endpoint-openapi)
+ (synopsis "OpenAPI-first OCaml DTO and server generator")
+ (description "Generates typed-endpoint DTOs and server bindings with shared types from dereferenced OpenAPI 3.0.3 or 3.2.1 JSON documents.")
+ (depends
+  (ocaml (>= 4.14.1))
+  (typed-endpoint (= :version))
+  base
+  yojson
+  (ppx_let (>= v0.16.0))
+  (typed-endpoint-ppx (and (= :version) :with-test))
+  (typed-endpoint-testing (and (= :version) :with-test))
+  (ppx_deriving_yojson :with-test)
+  (ppx_expect :with-test)
+  (ocamlformat (and (= 0.29.0) (or :with-test :with-dev-setup)))
+  (ocaml-lsp-server :with-dev-setup))
+ (tags (http openapi codegen)))

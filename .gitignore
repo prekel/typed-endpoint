@@ -24,3 +24,13 @@ _opam/
 # TypeScript conformance dependencies and generated declarations
 test/typescript/node_modules/
 test/typescript/.generated/
+
+# OpenAPI example sources promoted by Dune until the next clean
+/examples/openapi*/generated/support.ml
+/examples/openapi*/generated/support.mli
+/examples/openapi*/generated/dto.ml
+/examples/openapi*/generated/dto.mli
+/examples/openapi*/generated/operations.ml
+/examples/openapi*/generated/operations.mli
+/examples/openapi*/generated/server.ml
+/examples/openapi*/generated/server.mli

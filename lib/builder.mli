@@ -120,6 +120,24 @@ end
 
 (** OpenAPI document configuration shared by all backends. *)
 module Openapi : sig
+  (** Supported output dialects; independent of the application [info.version]. *)
+  module Spec_version : sig
+    type t =
+      | V3_0_3
+      | V3_1_0
+      | V3_2_1
+  end
+
+  module Export_error : sig
+    (** The JSON Pointer identifies the unsupported schema position. *)
+    type t =
+      { path : string
+      ; message : string
+      }
+
+    val to_string : t -> string
+  end
+
   (** A server on which the described API is available. *)
   module Server : sig
     (** [url] is emitted verbatim and may contain OpenAPI server variables. *)
@@ -876,8 +894,21 @@ module Make (B : Backend.S) : sig
 
   (** Policies for rendering failures produced during automatic request decoding. *)
   module Decode_error_response : sig
-    (** A typed rendering policy for failures that occur before the handler. *)
+    (** Rendering policy selected before invoking a handler. *)
     type t
+
+    (** A payload and its typed mapping, paired without erasing their relationship. *)
+    type case
+
+    val case : response:'a Response.t -> map:(Decode_error.t -> 'a) -> case
+
+    (** Selects the payload by the fixed decode-error status. Only reachable
+        statuses are published. Existing endpoint/group/compile precedence applies. *)
+    val by_status
+      :  bad_request:case
+      -> request_entity_too_large:case
+      -> unsupported_media_type:case
+      -> t
 
     (** Safe built-in policy used when no endpoint, group, or compile-level
             override is supplied. It returns a JSON object with a stable [code]
@@ -1221,6 +1252,14 @@ module Make (B : Backend.S) : sig
 
     (** Renders the OpenAPI document from the compiled contract. *)
     val openapi : ?config:Openapi.Config.t -> t -> Yojson.Safe.t
+
+    (** Exports without weakening schemas. Unsupported 3.0.3 constructs return
+        diagnostics; 3.1.0 is identical to {!openapi}. *)
+    val export_openapi
+      :  ?config:Openapi.Config.t
+      -> spec_version:Openapi.Spec_version.t
+      -> t
+      -> (Yojson.Safe.t, Openapi.Export_error.t list) Result.t
   end
 
   (** Validates route declarations and produces their common contract.

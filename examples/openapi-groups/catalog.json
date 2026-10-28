@@ -1,0 +1,42 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Catalog API",
+    "version": "1"
+  },
+  "paths": {
+    "/v1/catalog/pet": {
+      "get": {
+        "operationId": "catalogPet",
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "x-name": "Pet",
+                  "x-id": "urn:shared:Pet",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "note"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "note": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

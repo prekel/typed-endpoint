@@ -1,0 +1,8 @@
+(library
+ (optional)
+ (name grouped_api_test)
+ (modules integration_test)
+ (inline_tests)
+ (libraries base yojson grouped_api typed-endpoint typed-endpoint-testing)
+ (preprocess
+  (pps ppx_expect)))

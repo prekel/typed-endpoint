@@ -1,0 +1,10 @@
+{
+  "naming": {
+    "type_name": {
+      "select": "/x-name"
+    },
+    "schema_identity": {
+      "select": "/x-id"
+    }
+  }
+}

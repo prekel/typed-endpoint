@@ -1,0 +1,15 @@
+(library
+ (name typed_endpoint_openapi)
+ (public_name typed-endpoint-openapi)
+ (modules typed_endpoint_openapi model generator emitter support_source)
+ (private_modules model generator emitter support_source)
+ (libraries base yojson typed-endpoint)
+ (preprocess
+  (pps ppx_let)))
+
+(executable
+ (name main)
+ (public_name typed-endpoint-openapi)
+ (package typed-endpoint-openapi)
+ (modules main)
+ (libraries base yojson typed-endpoint-openapi))

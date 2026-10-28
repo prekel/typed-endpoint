@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries base yojson typed-endpoint typed-endpoint-openapi))

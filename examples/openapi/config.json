@@ -1,0 +1,10 @@
+{
+  "naming": {
+    "type_name": {
+      "select": "/x-model-name"
+    },
+    "schema_identity": {
+      "select": "/x-model-id"
+    }
+  }
+}

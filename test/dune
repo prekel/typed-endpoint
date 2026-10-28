@@ -6,6 +6,7 @@
   json_schema_test
   json_schema_dsl_test
   openapi_test
+  openapi_export_test
   openapi_readability_test
   response_description_test
   schema_payload_test

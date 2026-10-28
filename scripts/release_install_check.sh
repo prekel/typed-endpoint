@@ -42,6 +42,7 @@ opam exec -- dune build --root "$source_dir" @all @runtest @doc @install
 
 for package in \
   typed-endpoint \
+  typed-endpoint-openapi \
   typed-endpoint-opium \
   typed-endpoint-cohttp-lwt \
   typed-endpoint-dream \

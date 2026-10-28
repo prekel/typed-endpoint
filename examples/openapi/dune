@@ -1,0 +1,42 @@
+(library
+ (package typed-endpoint-openapi)
+ (name openapi_example)
+ (modules domain pet_service pet_mapping pet_controller)
+ (libraries base generated_api typed-endpoint))
+
+(library
+ (optional)
+ (name openapi_example_test)
+ (modules integration_test)
+ (inline_tests
+  (deps openapi.json))
+ (libraries
+  base
+  yojson
+  generated_api
+  openapi_example
+  typed-endpoint
+  typed-endpoint-testing
+  contract_test_support)
+ (preprocess
+  (pps ppx_expect)))
+
+(test
+ (name compile_test)
+ (modules compile_test)
+ (package typed-endpoint-openapi)
+ (libraries base generated_api typed-endpoint typed-endpoint-testing)
+ (deps
+  compile-fail/valid.ml
+  compile-fail/missing_handler.ml
+  compile-fail/wrong_payload.ml
+  generated/.generated_api.objs/byte/generated_api.cmi)
+ (action
+  (run
+   %{test}
+   %{lib:typed-endpoint:typed_endpoint.cmi}
+   %{lib:typed-endpoint-testing:typed_endpoint_testing.cmi}
+   %{dep:generated/.generated_api.objs/byte/generated_api.cmi}
+   %{dep:compile-fail/valid.ml}
+   %{dep:compile-fail/missing_handler.ml}
+   %{dep:compile-fail/wrong_payload.ml})))

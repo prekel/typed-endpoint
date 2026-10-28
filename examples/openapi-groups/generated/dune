@@ -1,0 +1,36 @@
+(rule
+ (mode
+  (promote (until-clean)))
+ (enabled_if %{lib-available:typed-endpoint-openapi})
+ (targets
+  support.ml
+  support.mli
+  dto.ml
+  dto.mli
+  operations.ml
+  operations.mli
+  server.ml
+  server.mli)
+ (deps ../catalog.json ../admin.json ../config.json ../../../.ocamlformat)
+ (action
+  (progn
+   (run
+    %{bin:typed-endpoint-openapi}
+    generate
+    --group-input
+    Catalog=%{dep:../catalog.json}
+    --group-input
+    Admin=%{dep:../admin.json}
+    --config
+    %{dep:../config.json}
+    --output-dir
+    .)
+   (run %{bin:ocamlformat} --inplace %{targets}))))
+
+(library
+ (package typed-endpoint-openapi)
+ (name grouped_api)
+ (modules support dto operations server)
+ (libraries base yojson typed-endpoint)
+ (preprocess
+  (pps ppx_let ppx_deriving_yojson typed-endpoint-ppx)))

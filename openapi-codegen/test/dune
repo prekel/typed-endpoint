@@ -1,0 +1,8 @@
+(library
+ (package typed-endpoint-openapi)
+ (name generator_test)
+ (modules generator_test)
+ (inline_tests)
+ (libraries base yojson typed-endpoint-openapi)
+ (preprocess
+  (pps ppx_expect)))
