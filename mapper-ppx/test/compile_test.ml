@@ -100,6 +100,10 @@ let () =
       check source (derive "name : int") (Some "string");
       check
         source
+        (derive "name : string [@mapper.from.convet Fun.id]")
+        (Some "unknown mapping attribute");
+      check
+        source
         (derive "title : string [@mapper.from.field \"missing\"]")
         (Some "missing");
       check
@@ -124,10 +128,90 @@ let () =
         source
         "type t = {name : string} [@@deriving mapper_from]"
         (Some "expected source");
+      let into fields =
+        "type t = { " ^ fields
+        ^ " } [@@deriving mapper_into {target = [%type: Target.t]}]"
+      in
+      check target (into "name : string") None;
+      check target (into "name : string; extra : int [@mapper.into.skip]") None;
+      check target (into "name : int") (Some "int");
+      check
+        "module Target = struct type t = {name : string; required : int} end\n"
+        (into "name : string")
+        (Some "required");
+      check
+        target
+        (into "name : string [@mapper.into.field \"missing\"]")
+        (Some "missing");
+      check
+        target
+        (into "name : string [@mapper.into.skip]")
+        (Some "at least one mapped field");
+      check
+        target
+        (into "name : string [@mapper.into.skip] [@mapper.into.field \"other\"]")
+        (Some "skip cannot be combined");
+      check
+        target
+        (into "name : string [@mapper.into.skip] [@mapper.into.convert Fun.id]")
+        (Some "skip cannot be combined");
+      check
+        target
+        (into "name : string [@mapper.into.result (fun x -> Ok x)]")
+        (Some "result requires fallible = true");
+      check
+        target
+        (into
+           "name : string [@mapper.into.result (fun x -> Ok x)] [@mapper.into.convert Fun.id]")
+        (Some "convert cannot be combined");
+      check
+        target
+        (into "name : string; other : string [@mapper.into.field \"name\"]")
+        (Some "duplicate target field name");
+      check
+        source
+        (derive "name : string [@mapper.from.result (fun x -> Ok x)]")
+        (Some "result requires fallible = true");
+      check
+        source
+        (derive "name : string [@mapper.from.field \"Source.name\"]")
+        (Some "unqualified OCaml record label");
+      check source (derive "name : string [@mapper.from.field 1]") (Some "string");
+      check
+        source
+        (derive
+           "name : string [@mapper.from.convert Fun.id] [@mapper.from.convert Fun.id]")
+        (Some "Duplicated attribute");
+      check
+        source
+        "type t = private {name : string} [@@deriving mapper_from {source = [%type: Source.t]}]"
+        (Some "private DTOs");
+      check
+        source
+        "type t = {name : string} [@@deriving mapper_from {source = [%type: 'a]}]"
+        (Some "monomorphic");
+      check
+        target
+        "type t = {name : string} [@@deriving mapper_into]"
+        (Some "expected target");
+      check
+        target
+        "type t = {name : string} [@@deriving mapper_into {target = [%type: Target.t]; fallible = true}]"
+        None;
+      check
+        target
+        "type t = {name : string [@mapper.into.result (fun _ -> Ok 1)]} [@@deriving mapper_into {target = [%type: Target.t]; fallible = true}]"
+        (Some "int");
+      check
+        source
+        "type t = {name : string [@mapper.from.result (fun _ -> Error \"wrong error type\")]} [@@deriving mapper_from {source = [%type: Source.t]; fallible = true}]"
+        (Some "Mapping_error.t");
       let different_ids =
         "module A : sig type t end = struct type t = string end\nmodule B : sig type t end = struct type t = string end\nmodule Source = struct type t = {name : A.t} end\nmodule Target = struct type t = {name : B.t} end\n"
       in
       check different_ids map (Some "A.t");
+      check different_ids (derive "name : B.t") (Some "A.t");
+      check different_ids (into "name : A.t") (Some "A.t");
       check
         "module Source = struct type status = Draft | Active type t = { name : status } end\nmodule Target = struct type status = Draft | Active type t = { name : status } end\n"
         map

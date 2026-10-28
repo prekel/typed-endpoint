@@ -20,3 +20,12 @@ type t =
   ; revision : int
   ; internal_note : string
   }
+
+module Input = struct
+  type t =
+    { project_id : Id.t
+    ; title : string
+    ; priority : int
+    ; statuses : Status.t list
+    }
+end
