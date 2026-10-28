@@ -91,6 +91,39 @@ let () =
         (source ^ target)
         "let map = [%mapper_result fun (source : Source.t) -> ({name = Ok 1} : Target.t)]"
         (Some "int");
+      let derive fields =
+        "type t = { " ^ fields
+        ^ " } [@@deriving mapper_from {source = [%type: Source.t]}]"
+      in
+      check source (derive "name : string") None;
+      check source (derive "name : string; added : int") (Some "added");
+      check source (derive "name : int") (Some "string");
+      check
+        source
+        (derive "title : string [@mapper.from.field \"missing\"]")
+        (Some "missing");
+      check
+        source
+        (derive
+           "name : string [@mapper.from.compute (fun _ -> \"x\")] [@mapper.from.field \"name\"]")
+        (Some "compute cannot be combined");
+      check
+        source
+        (derive
+           "name : string [@mapper.from.compute (fun _ -> \"x\")] [@mapper.from.convert Fun.id]")
+        (Some "compute cannot be combined");
+      check
+        source
+        "type t = string [@@deriving mapper_from {source = [%type: Source.t]}]"
+        (Some "expected a record");
+      check
+        source
+        "type 'a t = {name : 'a} [@@deriving mapper_from {source = [%type: Source.t]}]"
+        (Some "parameterized DTOs");
+      check
+        source
+        "type t = {name : string} [@@deriving mapper_from]"
+        (Some "expected source");
       let different_ids =
         "module A : sig type t end = struct type t = string end\nmodule B : sig type t end = struct type t = string end\nmodule Source = struct type t = {name : A.t} end\nmodule Target = struct type t = {name : B.t} end\n"
       in

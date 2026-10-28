@@ -1,6 +1,6 @@
 (library
  (name mapper_test)
- (modules mapper_test)
+ (modules mapper_test deriver_domain deriver_dto deriving_test)
  (inline_tests)
  (libraries base typed-endpoint-mapper)
  (preprocess

@@ -2,6 +2,7 @@
  (name typed_endpoint_mapper_ppx)
  (public_name typed-endpoint-mapper-ppx)
  (kind ppx_rewriter)
+ (private_modules record_mapping mapper_deriver)
  (ppx_runtime_libraries typed-endpoint-mapper)
  (libraries base ppxlib)
  (preprocess

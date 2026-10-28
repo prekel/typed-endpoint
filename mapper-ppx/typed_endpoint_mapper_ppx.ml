@@ -4,37 +4,6 @@ open Ast_builder.Default
 
 let fail ~loc message = Location.raise_errorf ~loc "mapper: %s" message
 
-let fresh_names expression =
-  let used = ref (Set.empty (module String)) in
-  let visitor =
-    object
-      inherit Ast_traverse.iter as super
-
-      method! expression expression =
-        (match expression.pexp_desc with
-         | Pexp_ident { txt = Lident name; _ } -> used := Set.add !used name
-         | _ -> ());
-        super#expression expression
-
-      method! pattern pattern =
-        (match pattern.ppat_desc with
-         | Ppat_var name -> used := Set.add !used name.txt
-         | _ -> ());
-        super#pattern pattern
-    end
-  in
-  visitor#expression expression;
-  let rec fresh () =
-    let name = gen_symbol ~prefix:"mapper_field" () in
-    if Set.mem !used name then
-      fresh ()
-    else (
-      used := Set.add !used name;
-      name)
-  in
-  fresh
-;;
-
 let expand ~fallible ~loc:_ ~path:_ expression =
   match expression with
   | [%expr fun ([%p? argument] : [%t? source_type]) -> ([%e? body] : [%t? target])] ->
@@ -78,42 +47,7 @@ let expand ~fallible ~loc:_ ~path:_ expression =
         in
         label, value)
     in
-    let body =
-      pexp_constraint
-        ~loc:body.pexp_loc
-        (pexp_record ~loc:body.pexp_loc fields None)
-        target
-    in
-    let body =
-      if not fallible then
-        body
-      else (
-        let loc = body.pexp_loc in
-        let fresh = fresh_names expression in
-        let bindings =
-          List.map fields ~f:(fun (label, value) -> label, value, fresh ())
-        in
-        let result =
-          pexp_constraint
-            ~loc
-            (pexp_record
-               ~loc
-               (List.map bindings ~f:(fun (label, _, name) -> label, evar ~loc name))
-               None)
-            target
-        in
-        List.fold_right
-          bindings
-          ~init:[%expr Base.Result.return [%e result]]
-          ~f:(fun (label, value, name) rest ->
-            let field = Longident.last_exn label.txt in
-            [%expr
-              Base.Result.bind
-                (Typed_endpoint_mapper.Mapping_error.at_field
-                   [%e estring ~loc field]
-                   [%e value])
-                ~f:(fun [%p pvar ~loc name] -> [%e rest])]))
-    in
+    let body = Record_mapping.record ~loc:body.pexp_loc ~target ~fallible fields in
     let loc = expression.pexp_loc in
     let result = [%expr fun ([%p argument] : [%t source_type]) -> [%e body]] in
     (match source with
@@ -143,3 +77,5 @@ let () =
              (expand ~fallible:true))
       ]
 ;;
+
+let () = Mapper_deriver.register ()
