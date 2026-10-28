@@ -1,0 +1,19 @@
+(library
+ (name mapper_test)
+ (modules mapper_test)
+ (inline_tests)
+ (libraries base)
+ (preprocess
+  (pps typed-endpoint-mapper-ppx ppx_expect)))
+
+(executable
+ (name driver)
+ (modules driver)
+ (libraries typed-endpoint-mapper-ppx ppxlib.runner))
+
+(test
+ (name compile_test)
+ (modules compile_test)
+ (libraries base unix)
+ (action
+  (run %{test} %{exe:driver.exe})))

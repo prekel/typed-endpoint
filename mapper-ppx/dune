@@ -1,0 +1,7 @@
+(library
+ (name typed_endpoint_mapper_ppx)
+ (public_name typed-endpoint-mapper-ppx)
+ (kind ppx_rewriter)
+ (libraries base ppxlib)
+ (preprocess
+  (pps ppxlib.metaquot)))

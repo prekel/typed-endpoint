@@ -159,3 +159,13 @@
   (ocamlformat (and (= 0.29.0) (or :with-test :with-dev-setup)))
   (ocaml-lsp-server :with-dev-setup))
  (tags (http openapi codegen)))
+
+(package
+ (name typed-endpoint-mapper-ppx)
+ (synopsis "Explicit type-safe record mapping syntax")
+ (description "External record mapping declarations checked by the OCaml compiler.")
+ (depends
+  (ocaml (>= 4.14.1))
+  base
+  (ppxlib (>= 0.30.0))
+  (ppx_expect :with-test)))
