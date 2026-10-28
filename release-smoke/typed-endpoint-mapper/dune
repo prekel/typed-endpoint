@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (libraries base typed-endpoint-mapper)
+ (preprocess
+  (pps typed-endpoint-mapper-ppx)))

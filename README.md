@@ -9,6 +9,7 @@ OpenAPI 3.1.
 - `typed-endpoint` — framework-agnostic ядро;
 - `typed-endpoint-ppx` — typed JSON Schema deriver с wire-аннотациями Yojson;
 - `typed-endpoint-openapi` — генерация DTO и сервера из OpenAPI 3.0.3/3.2.1, общие типы для нескольких контрактов;
+- `typed-endpoint-mapper` и `typed-endpoint-mapper-ppx` — необязательные [чистые преобразования Domain ↔ DTO](doc/mapping.md);
 - `typed-endpoint-testing` — прямой in-memory backend для тестов без сервера;
 - `typed-endpoint-opium` — интеграция с Opium >= 0.17.1 и < 0.19.0;
 - `typed-endpoint-cohttp-lwt` — нативная интеграция с Cohttp/Lwt без зависимости от Unix;

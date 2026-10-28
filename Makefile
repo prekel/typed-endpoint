@@ -3,7 +3,8 @@ all: build
 PACKAGES = ./typed-endpoint.opam ./typed-endpoint-ppx.opam ./typed-endpoint-opium.opam \
 	./typed-endpoint-cohttp-lwt.opam \
 	./typed-endpoint-dream.opam ./typed-endpoint-eio.opam \
-	./typed-endpoint-testing.opam ./typed-endpoint-openapi.opam
+	./typed-endpoint-testing.opam ./typed-endpoint-openapi.opam \
+	./typed-endpoint-mapper.opam ./typed-endpoint-mapper-ppx.opam
 
 RELEASE_VERSION = 0.4.1
 RELEASE_DIR = _release

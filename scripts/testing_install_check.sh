@@ -35,6 +35,11 @@ run_dune install --prefix "$prefix" typed-endpoint-testing
 run_dune build -p typed-endpoint-ppx @install
 run_dune install --prefix "$prefix" typed-endpoint-ppx
 
+run_dune build -p typed-endpoint-mapper @install
+run_dune install --prefix "$prefix" typed-endpoint-mapper
+run_dune build -p typed-endpoint-mapper-ppx @install @runtest
+run_dune install --prefix "$prefix" typed-endpoint-mapper-ppx
+
 run_dune build -p typed-endpoint-openapi @install
 run_dune install --prefix "$prefix" typed-endpoint-openapi
 run_dune build -p typed-endpoint-openapi @runtest
@@ -45,5 +50,8 @@ OCAMLPATH="$prefix/lib" opam exec --switch "$switch" -- dune build \
 
 OCAMLPATH="$prefix/lib" opam exec --switch "$switch" -- dune build \
   --root "$source_dir/release-smoke/typed-endpoint-openapi" @all
+
+OCAMLPATH="$prefix/lib" opam exec --switch "$switch" -- dune build \
+  --root "$source_dir/release-smoke/typed-endpoint-mapper" @all
 
 printf 'typed-endpoint-testing isolated installation check passed\n'
