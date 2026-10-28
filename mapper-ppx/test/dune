@@ -2,7 +2,7 @@
  (name mapper_test)
  (modules mapper_test)
  (inline_tests)
- (libraries base)
+ (libraries base typed-endpoint-mapper)
  (preprocess
   (pps typed-endpoint-mapper-ppx ppx_expect)))
 

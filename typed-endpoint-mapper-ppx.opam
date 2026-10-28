@@ -12,6 +12,7 @@ bug-reports: "https://github.com/prekel/typed-endpoint/issues"
 depends: [
   "dune" {>= "3.14"}
   "ocaml" {>= "4.14.1"}
+  "typed-endpoint-mapper" {= version}
   "base"
   "ppxlib" {>= "0.30.0"}
   "ppx_expect" {with-test}

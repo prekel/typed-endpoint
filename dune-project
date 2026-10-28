@@ -166,6 +166,13 @@
  (description "External record mapping declarations checked by the OCaml compiler.")
  (depends
   (ocaml (>= 4.14.1))
+  (typed-endpoint-mapper (= :version))
   base
   (ppxlib (>= 0.30.0))
   (ppx_expect :with-test)))
+
+(package
+ (name typed-endpoint-mapper)
+ (synopsis "Pure converters and structured mapping errors")
+ (description "Backend-independent helpers for explicit DTO mappings.")
+ (depends (ocaml (>= 4.14.1)) base (ppx_let (>= v0.16.0))))
