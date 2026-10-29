@@ -31,6 +31,9 @@ for package in \
   typed-endpoint \
   typed-endpoint-ppx \
   typed-endpoint-testing \
+  typed-endpoint-openapi \
+  typed-endpoint-mapper \
+  typed-endpoint-mapper-ppx \
   typed-endpoint-opium \
   typed-endpoint-cohttp-lwt \
   typed-endpoint-dream \

@@ -372,7 +372,7 @@ make release-install-check
 ```
 
 `make release-artifacts` создаёт в `_release` source archive, SHA-256 и
-заготовки семи пакетов для opam-repository с источником из Git-тега.
+заготовки десяти пакетов для opam-repository с источником из Git-тега.
 Релиз публикуется созданием и отправкой Git-тега `v<version>`; GitHub Release
 не создаётся. SHA-256 относится к локальному source archive.
 `make release-install-check`
